@@ -5,7 +5,7 @@ providing AI coding agents (Claude Code, Cursor, Windsurf, Zed, Antigravity) wit
 high-performance tools for Lean 4 formal verification, offline navigation, and C FFI
 inspection.
 
-Strict 7-bit ASCII only.
+NB! Still pre-alpha!
 
 ---
 
