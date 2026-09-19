@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: ["20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install dependencies
+        run: npm install @modelcontextprotocol/sdk@^1.6.0
+      - name: Type-check (tsc)
+        run: npx -y typescript@5 tsc --noEmit
+      - name: Test suite
+        run: node tests/test_lean_lsp_mcp.mjs
+      - name: ASCII invariant (INV-001)
+        run: |
+          ! grep -rPn "[^\x00-\x7F]" src/ bin/ tests/ README.md
