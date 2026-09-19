@@ -1,6 +1,13 @@
 name: lean-lsp-mcp
-version: 0.1.0
+version: 0.3.0
 description: Standalone Lean 4 + C FFI Model Context Protocol server
 dependencies:
     apm: []
-    mcp: []
+    mcp:
+        - name: lean-lsp
+          registry: false
+          transport: stdio
+          command: node
+          args:
+              - --experimental-strip-types
+              - src/index.ts
