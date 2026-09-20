@@ -1219,6 +1219,7 @@ export class McpServer {
             input: code,
             encoding: "utf-8",
             stdio: ["pipe", "pipe", "pipe"],
+            timeout: 15000,
           });
           return out.trim() || "No output";
         } catch (err: any) {
@@ -1231,7 +1232,10 @@ export class McpServer {
         if (!query) throw new Error("Missing required argument: 'query'");
         try {
           const url = `https://loogle.lean-lang.org/json?q=${encodeURIComponent(query)}`;
-          const res = await fetch(url);
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 15000);
+          const res = await fetch(url, { signal: controller.signal as any });
+          clearTimeout(timeoutId);
           if (!res.ok) throw new Error(`HTTP error ${res.status}`);
           const json = await res.json();
           return JSON.stringify(json, null, 2);
