@@ -1586,10 +1586,10 @@ export class McpServer {
         const modifiers = ["public", "protected", "private", "noncomputable", "partial", "unsafe", "scoped", "local"];
         const keywords = ["theorem", "lemma", "def", "axiom", "class", "instance", "structure", "inductive", "abbrev", "opaque"];
         
-        const declLead = "^\\\\s*(?:@\\\\[[^\\]]*\\\\]\\\\s*)*(?:(?:" + modifiers.join("|") + ")\\\\s+)*";
+        const declLead = "^\\s*(?:@\\[[^\\]]*\\]\\s*)*(?:(?:" + modifiers.join("|") + ")\\s+)*";
         const keywordAlt = keywords.join("|");
-        const escapedQuery = query.replace(/[.*+?^$\\\\{}()|[\\]\\\\]/g, "\\\\$&");
-        const pattern = declLead + "(?:" + keywordAlt + ")\\\\s+(?:[A-Za-z0-9_'.]+\\\\.)*" + escapedQuery + "[A-Za-z0-9_'.]*(?:\\\\s|:)";
+        const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const pattern = declLead + "(?:" + keywordAlt + ")\\s+(?:[A-Za-z0-9_'.]+\\.)*" + escapedQuery + "[A-Za-z0-9_'.]*(?:\\s|:)";
         
         try {
           const { execFileSync } = await import("node:child_process");
@@ -1602,13 +1602,13 @@ export class McpServer {
             stdio: ["ignore", "pipe", "ignore"],
           });
           const results: string[] = [];
-          for (const line of out.split("\\n")) {
+          for (const line of out.split("\n")) {
             if (!line) continue;
             try {
               const event = JSON.parse(line);
               if (event.type === "match") {
                 const text = event.data.lines.text;
-                const match = text.match(new RegExp(declLead + "(" + keywordAlt + ")\\\\s+([A-Za-z0-9_']+(?:\\\\.[A-Za-z0-9_']+)*)"));
+                const match = text.match(new RegExp(declLead + "(" + keywordAlt + ")\\s+([A-Za-z0-9_']+(?:\\.[A-Za-z0-9_']+)*)"));
                 if (match) {
                   results.push(`Name: ${match[2]}\nKind: ${match[1]}\nFile: ${event.data.path.text}\n`);
                   if (results.length >= limit) break;
@@ -1617,18 +1617,18 @@ export class McpServer {
             } catch { }
           }
           if (results.length === 0) return "No results found.";
-          return results.join("\\n");
+          return results.join("\n");
         } catch (err: any) {
           if (err.status === 1 && (!err.stdout || !err.stdout.trim())) return "No results found.";
           if (err.stdout && err.stdout.trim().length > 0) {
             const results: string[] = [];
-            for (const line of err.stdout.split("\\n")) {
+            for (const line of err.stdout.split("\n")) {
               if (!line) continue;
               try {
                 const event = JSON.parse(line);
                 if (event.type === "match") {
                   const text = event.data.lines.text;
-                  const match = text.match(new RegExp(declLead + "(" + keywordAlt + ")\\\\s+([A-Za-z0-9_']+(?:\\\\.[A-Za-z0-9_']+)*)"));
+                  const match = text.match(new RegExp(declLead + "(" + keywordAlt + ")\\s+([A-Za-z0-9_']+(?:\\.[A-Za-z0-9_']+)*)"));
                   if (match) {
                     results.push(`Name: ${match[2]}\nKind: ${match[1]}\nFile: ${event.data.path.text}\n`);
                     if (results.length >= limit) break;
@@ -1636,7 +1636,7 @@ export class McpServer {
                 }
               } catch { }
             }
-            if (results.length > 0) return results.join("\\n");
+            if (results.length > 0) return results.join("\n");
           }
           return `Search failed: ${err.message || String(err)}`;
         }
@@ -1668,7 +1668,7 @@ export class McpServer {
             results.push(`Name: ${name}\nModule: ${module_name}\nKind: ${r.kind || ""}\nType: ${r.type || ""}\n`);
           }
           if (results.length === 0) return "No results found.";
-          return results.join("\\n");
+          return results.join("\n");
         } catch (err: any) {
           return `LeanSearch API error: ${err.message || String(err)}`;
         }
