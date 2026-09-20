@@ -5,6 +5,7 @@
 import assert from "node:assert";
 import { spawn } from "node:child_process";
 import * as path from "node:path";
+import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 import {
     Lean4IleanIndex,
@@ -106,6 +107,29 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     assert(typeof status.isLocked === "boolean", "isLocked is a boolean");
     assert(typeof status.source === "string", "source is a string");
     console.log("  - LakeBuildGuard: PASS (isLocked=" + status.isLocked + ", source=" + status.source + ")");
+}
+
+
+// 6. SharedMemorySnapshotRing Lock-Free IPC
+{
+    const { SharedMemorySnapshotRing } = await import("../src/index.ts");
+    const testShmPath = path.join(os.tmpdir(), `test_lean_shm_${process.pid}.shm`);
+    const ring = SharedMemorySnapshotRing.create(testShmPath, 8, 4096);
+    assert(ring !== null, "SharedMemorySnapshotRing created successfully");
+
+    const seq = ring.writeSnapshot("/repo/Test.lean", 42, 10, "case intro\n|- True", 1, 1);
+    assert.strictEqual(seq, 1n, "First write sequence is 1");
+
+    const latest = ring.readLatest();
+    assert(latest !== null, "Latest snapshot is readable");
+    assert.strictEqual(latest.seq, 1n, "Snapshot sequence matches");
+    assert.strictEqual(latest.filePath, "/repo/Test.lean", "Snapshot filePath matches");
+    assert.strictEqual(latest.line, 42, "Snapshot line matches");
+    assert.strictEqual(latest.col, 10, "Snapshot col matches");
+    assert.strictEqual(latest.goalText, "case intro\n|- True", "Snapshot goalText matches");
+
+    ring.dispose();
+    console.log("  - SharedMemorySnapshotRing: PASS");
 }
 
 console.log("=== All lean4-lsp-mcp Tests Passed ===");

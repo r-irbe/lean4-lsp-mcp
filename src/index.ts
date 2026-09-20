@@ -4,6 +4,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import { execSync, spawn, ChildProcess } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -1044,6 +1045,246 @@ export class LakeBuildGuard {
   }
 }
 
+
+export interface SnapshotHeader {
+  magic: number;
+  version: number;
+  capacity: number;
+  slotSize: number;
+  writeSeq: bigint;
+  readSeq: bigint;
+  sessionId: bigint;
+  droppedCount: bigint;
+}
+
+export interface GoalSnapshot {
+  seq: bigint;
+  timestampNs: bigint;
+  fileHash: bigint;
+  filePath: string;
+  line: number;
+  col: number;
+  flags: number;
+  goalsCount: number;
+  goalText: string;
+}
+
+export class SharedMemorySnapshotRing {
+  public static readonly MAGIC = 0x4C45414E; // "LEAN"
+  public static readonly VERSION = 1;
+  public static readonly HEADER_SIZE = 64;
+  public static readonly SLOT_HEADER_SIZE = 64;
+  public static readonly DEFAULT_CAPACITY = 64;
+  public static readonly DEFAULT_SLOT_SIZE = 65536; // 64 KB per slot
+
+  private fd: number;
+  private buffer: Buffer;
+  private capacity: number;
+  private slotSize: number;
+  private totalSize: number;
+  private shmPath: string;
+  private isOwner: boolean;
+
+  private constructor(
+    shmPath: string,
+    fd: number,
+    buffer: Buffer,
+    capacity: number,
+    slotSize: number,
+    isOwner: boolean
+  ) {
+    this.shmPath = shmPath;
+    this.fd = fd;
+    this.buffer = buffer;
+    this.capacity = capacity;
+    this.slotSize = slotSize;
+    this.totalSize = buffer.length;
+    this.isOwner = isOwner;
+  }
+
+  public static create(
+    shmPath: string,
+    capacity: number = SharedMemorySnapshotRing.DEFAULT_CAPACITY,
+    slotSize: number = SharedMemorySnapshotRing.DEFAULT_SLOT_SIZE
+  ): SharedMemorySnapshotRing {
+    const totalSize = SharedMemorySnapshotRing.HEADER_SIZE + capacity * slotSize;
+    const dir = path.dirname(shmPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    const fd = fs.openSync(shmPath, "w+");
+    fs.ftruncateSync(fd, totalSize);
+    const buffer = Buffer.alloc(totalSize);
+
+    // Initialize Header
+    buffer.writeUInt32LE(SharedMemorySnapshotRing.MAGIC, 0);
+    buffer.writeUInt32LE(SharedMemorySnapshotRing.VERSION, 4);
+    buffer.writeUInt32LE(capacity, 8);
+    buffer.writeUInt32LE(slotSize, 12);
+    buffer.writeBigUInt64LE(0n, 16); // writeSeq
+    buffer.writeBigUInt64LE(0n, 24); // readSeq
+    buffer.writeBigUInt64LE(BigInt(process.pid), 32); // sessionId
+    buffer.writeBigUInt64LE(0n, 40); // droppedCount
+
+    fs.writeSync(fd, buffer, 0, totalSize, 0);
+
+    return new SharedMemorySnapshotRing(shmPath, fd, buffer, capacity, slotSize, true);
+  }
+
+  public static open(shmPath: string): SharedMemorySnapshotRing | null {
+    if (!fs.existsSync(shmPath)) return null;
+    try {
+      const fd = fs.openSync(shmPath, "r+");
+      const stat = fs.fstatSync(fd);
+      const buffer = Buffer.alloc(stat.size);
+      fs.readSync(fd, buffer, 0, stat.size, 0);
+
+      const magic = buffer.readUInt32LE(0);
+      if (magic !== SharedMemorySnapshotRing.MAGIC) {
+        fs.closeSync(fd);
+        return null;
+      }
+      const capacity = buffer.readUInt32LE(8);
+      const slotSize = buffer.readUInt32LE(12);
+
+      return new SharedMemorySnapshotRing(shmPath, fd, buffer, capacity, slotSize, false);
+    } catch {
+      return null;
+    }
+  }
+
+  public static computePathHash(filePath: string): bigint {
+    let hash = 0xcbf29ce484222325n;
+    const fnvPrime = 0x100000001b3n;
+    const buf = Buffer.from(filePath, "utf-8");
+    for (let i = 0; i < buf.length; i++) {
+      hash ^= BigInt(buf[i]);
+      hash = (hash * fnvPrime) & 0xffffffffffffffffn;
+    }
+    return hash;
+  }
+
+  public writeSnapshot(
+    filePath: string,
+    line: number,
+    col: number,
+    goalText: string,
+    flags: number = 1,
+    goalsCount: number = 1
+  ): bigint {
+    const curSeq = this.buffer.readBigUInt64LE(16);
+    const nextSeq = curSeq + 1n;
+    const slotIdx = Number((nextSeq - 1n) % BigInt(this.capacity));
+    const slotOffset = SharedMemorySnapshotRing.HEADER_SIZE + slotIdx * this.slotSize;
+
+    const fileHash = SharedMemorySnapshotRing.computePathHash(filePath);
+    const filePathBuf = Buffer.from(filePath, "utf-8");
+    const goalTextBuf = Buffer.from(goalText, "utf-8");
+
+    const maxPayload = this.slotSize - SharedMemorySnapshotRing.SLOT_HEADER_SIZE;
+    const availableGoalLen = Math.max(0, maxPayload - filePathBuf.length);
+    const finalGoalLen = Math.min(goalTextBuf.length, availableGoalLen);
+
+    // 1. Invalidate slot seqlock
+    this.buffer.writeBigUInt64LE(0n, slotOffset);
+
+    // 2. Populate slot metadata
+    const nowNs = process.hrtime.bigint();
+    this.buffer.writeBigUInt64LE(nowNs, slotOffset + 8);
+    this.buffer.writeBigUInt64LE(fileHash, slotOffset + 16);
+    this.buffer.writeUInt32LE(line, slotOffset + 24);
+    this.buffer.writeUInt32LE(col, slotOffset + 28);
+    this.buffer.writeUInt32LE(flags, slotOffset + 32);
+    this.buffer.writeUInt32LE(finalGoalLen, slotOffset + 36);
+    this.buffer.writeUInt32LE(goalsCount, slotOffset + 40);
+    this.buffer.writeUInt32LE(filePathBuf.length, slotOffset + 44);
+
+    // 3. Write payload (zero JSON escaping)
+    const payloadOffset = slotOffset + SharedMemorySnapshotRing.SLOT_HEADER_SIZE;
+    filePathBuf.copy(this.buffer, payloadOffset, 0, filePathBuf.length);
+    goalTextBuf.copy(this.buffer, payloadOffset + filePathBuf.length, 0, finalGoalLen);
+
+    // 4. Commit slot seqlock
+    this.buffer.writeBigUInt64LE(nextSeq, slotOffset);
+
+    // 5. Commit global writeSeq
+    this.buffer.writeBigUInt64LE(nextSeq, 16);
+
+    // Persist to underlying memory buffer
+    fs.writeSync(this.fd, this.buffer, slotOffset, this.slotSize, slotOffset);
+    fs.writeSync(this.fd, this.buffer, 16, 8, 16);
+
+    return nextSeq;
+  }
+
+  public readLatest(fileFilter?: string): GoalSnapshot | null {
+    fs.readSync(this.fd, this.buffer, 0, SharedMemorySnapshotRing.HEADER_SIZE, 0);
+    const writeSeq = this.buffer.readBigUInt64LE(16);
+    if (writeSeq === 0n) return null;
+
+    const filterHash = fileFilter ? SharedMemorySnapshotRing.computePathHash(fileFilter) : null;
+
+    const scanLimit = BigInt(this.capacity);
+    for (let i = 0n; i < scanLimit; i++) {
+      const targetSeq = writeSeq - i;
+      if (targetSeq <= 0n) break;
+
+      const slotIdx = Number((targetSeq - 1n) % BigInt(this.capacity));
+      const slotOffset = SharedMemorySnapshotRing.HEADER_SIZE + slotIdx * this.slotSize;
+
+      fs.readSync(this.fd, this.buffer, slotOffset, SharedMemorySnapshotRing.SLOT_HEADER_SIZE, slotOffset);
+
+      const seqBefore = this.buffer.readBigUInt64LE(slotOffset);
+      if (seqBefore !== targetSeq) continue;
+
+      const fileHash = this.buffer.readBigUInt64LE(slotOffset + 16);
+      if (filterHash !== null && fileHash !== filterHash) continue;
+
+      const filePathLen = this.buffer.readUInt32LE(slotOffset + 44);
+      const goalLen = this.buffer.readUInt32LE(slotOffset + 36);
+
+      const payloadOffset = slotOffset + SharedMemorySnapshotRing.SLOT_HEADER_SIZE;
+      fs.readSync(this.fd, this.buffer, payloadOffset, filePathLen + goalLen, payloadOffset);
+
+      const seqAfter = this.buffer.readBigUInt64LE(slotOffset);
+      if (seqAfter !== targetSeq) continue;
+
+      const timestampNs = this.buffer.readBigUInt64LE(slotOffset + 8);
+      const line = this.buffer.readUInt32LE(slotOffset + 24);
+      const col = this.buffer.readUInt32LE(slotOffset + 28);
+      const flags = this.buffer.readUInt32LE(slotOffset + 32);
+      const goalsCount = this.buffer.readUInt32LE(slotOffset + 40);
+
+      const filePath = this.buffer.toString("utf-8", payloadOffset, payloadOffset + filePathLen);
+      const goalText = this.buffer.toString("utf-8", payloadOffset + filePathLen, payloadOffset + filePathLen + goalLen);
+
+      return {
+        seq: targetSeq,
+        timestampNs,
+        fileHash,
+        filePath,
+        line,
+        col,
+        flags,
+        goalsCount,
+        goalText,
+      };
+    }
+
+    return null;
+  }
+
+  public dispose(): void {
+    try {
+      fs.closeSync(this.fd);
+      if (this.isOwner && fs.existsSync(this.shmPath)) {
+        fs.unlinkSync(this.shmPath);
+      }
+    } catch {}
+  }
+}
+
 export interface TrackedFileWorker {
   uri: string;
   absPath: string;
@@ -1064,6 +1305,7 @@ export interface FileWorkerSession {
 
 export class FileWorkerManager {
   private projectRoot: string;
+  private shmRing: SharedMemorySnapshotRing | null = null;
   private sessions: Map<string, FileWorkerSession> = new Map();
   private reaperTimer: NodeJS.Timeout | null = null;
   private readonly idleFileTimeoutMs: number = 60000;
@@ -1073,6 +1315,7 @@ export class FileWorkerManager {
   constructor(projectRoot: string) {
     this.projectRoot = path.resolve(projectRoot);
     this.startLifecycleReaper();
+    this.initShmRing();
   }
 
   public findLeanRoot(targetFile: string): string {
@@ -1090,6 +1333,20 @@ export class FileWorkerManager {
     return this.projectRoot;
   }
 
+
+  private initShmRing(): void {
+    const shmDir = fs.existsSync("/dev/shm") ? "/dev/shm" : os.tmpdir();
+    const shmPath = process.env.LEAN_SHM_PATH || path.join(shmDir, `lean_lsp_mcp_${process.pid}.shm`);
+    try {
+      this.shmRing = SharedMemorySnapshotRing.create(shmPath);
+    } catch {
+      this.shmRing = null;
+    }
+  }
+
+  public getShmRing(): SharedMemorySnapshotRing | null {
+    return this.shmRing;
+  }
   private startLifecycleReaper(): void {
     if (this.reaperTimer) return;
     this.reaperTimer = setInterval(() => {
@@ -1423,6 +1680,10 @@ export class FileWorkerManager {
   }
 
   public dispose(): void {
+    if (this.shmRing) {
+      this.shmRing.dispose();
+      this.shmRing = null;
+    }
     if (this.reaperTimer) {
       clearInterval(this.reaperTimer);
       this.reaperTimer = null;
