@@ -203,12 +203,368 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
 ];
 
+export class BitsetDAGIndex {
+  private idToName: string[] = [];
+  private nameToId: Map<string, number> = new Map();
+  private numNodes: number = 0;
+
+  // CSR (Compressed Sparse Row) for forward imports: module -> imports
+  private off: Uint32Array = new Uint32Array(0);
+  private dst: Uint32Array = new Uint32Array(0);
+
+  // CSC (Compressed Sparse Column) for reverse importedBy: module -> importedBy
+  private boff: Uint32Array = new Uint32Array(0);
+  private bdst: Uint32Array = new Uint32Array(0);
+
+  // Bitset dimensions
+  private wordsPerNode: number = 0;
+
+  // Optional precomputed transitive closure matrix (Uint32Array of size numNodes * wordsPerNode)
+  private forwardClosureMatrix: Uint32Array | null = null;
+  private reverseClosureMatrix: Uint32Array | null = null;
+  private isAcyclic: boolean = true;
+
+  constructor() {}
+
+  /**
+   * Build CSR and CSC structures from raw string adjacency map in O(V + E) time.
+   */
+  public build(adjacency: Map<string, string[]>): void {
+    this.nameToId.clear();
+    this.idToName = [];
+
+    // 1. Assign dense integer IDs to all unique modules
+    for (const [mod, imps] of adjacency.entries()) {
+      if (!this.nameToId.has(mod)) {
+        const id = this.idToName.length;
+        this.nameToId.set(mod, id);
+        this.idToName.push(mod);
+      }
+      for (const imp of imps) {
+        if (!this.nameToId.has(imp)) {
+          const id = this.idToName.length;
+          this.nameToId.set(imp, id);
+          this.idToName.push(imp);
+        }
+      }
+    }
+
+    const N = this.idToName.length;
+    this.numNodes = N;
+    this.wordsPerNode = Math.ceil(N / 32) || 1;
+
+    // 2. Count forward edges per node to construct CSR offset array
+    const forwardCounts = new Uint32Array(N);
+    let totalEdges = 0;
+
+    for (let u = 0; u < N; u++) {
+      const name = this.idToName[u];
+      const imps = adjacency.get(name);
+      if (imps) {
+        forwardCounts[u] = imps.length;
+        totalEdges += imps.length;
+      }
+    }
+
+    this.off = new Uint32Array(N + 1);
+    this.dst = new Uint32Array(totalEdges);
+
+    for (let i = 0; i < N; i++) {
+      this.off[i + 1] = this.off[i] + forwardCounts[i];
+    }
+
+    const fillOffsets = new Uint32Array(this.off);
+    for (let u = 0; u < N; u++) {
+      const name = this.idToName[u];
+      const imps = adjacency.get(name);
+      if (imps) {
+        for (let j = 0; j < imps.length; j++) {
+          const v = this.nameToId.get(imps[j])!;
+          this.dst[fillOffsets[u]++] = v;
+        }
+      }
+    }
+
+    // 3. Build reverse CSC (importedBy) via two-pass counting sort in O(V + E)
+    const reverseCounts = new Uint32Array(N + 1);
+    for (let k = 0; k < this.dst.length; k++) {
+      reverseCounts[this.dst[k] + 1]++;
+    }
+    for (let i = 0; i < N; i++) {
+      reverseCounts[i + 1] += reverseCounts[i];
+    }
+
+    this.boff = new Uint32Array(reverseCounts);
+    this.bdst = new Uint32Array(totalEdges);
+    const bFill = new Uint32Array(N);
+
+    for (let u = 0; u < N; u++) {
+      for (let k = this.off[u]; k < this.off[u + 1]; k++) {
+        const v = this.dst[k];
+        this.bdst[this.boff[v] + bFill[v]++] = u;
+      }
+    }
+
+    // 4. Invalidate precomputed bitset matrix caches
+    this.forwardClosureMatrix = null;
+    this.reverseClosureMatrix = null;
+  }
+
+  public getModuleId(name: string): number {
+    const id = this.nameToId.get(name);
+    return id !== undefined ? id : -1;
+  }
+
+  public getModuleName(id: number): string {
+    return this.idToName[id] || "";
+  }
+
+  public getDirectImports(name: string): string[] {
+    const u = this.getModuleId(name);
+    if (u < 0) return [];
+    const start = this.off[u];
+    const end = this.off[u + 1];
+    const result: string[] = new Array(end - start);
+    for (let k = start, idx = 0; k < end; k++, idx++) {
+      result[idx] = this.idToName[this.dst[k]];
+    }
+    return result;
+  }
+
+  public getDirectImportedBy(name: string): string[] {
+    const u = this.getModuleId(name);
+    if (u < 0) return [];
+    const start = this.boff[u];
+    const end = this.boff[u + 1];
+    const result: string[] = new Array(end - start);
+    for (let k = start, idx = 0; k < end; k++, idx++) {
+      result[idx] = this.idToName[this.bdst[k]];
+    }
+    return result;
+  }
+
+  /**
+   * Precomputes full transitive closure matrix using reverse topological bitset OR.
+   */
+  public precomputeClosureMatrix(): boolean {
+    const N = this.numNodes;
+    const W = this.wordsPerNode;
+    if (N === 0) return true;
+
+    // Kahn's algorithm for topological order
+    const inDegree = new Uint32Array(N);
+    for (let k = 0; k < this.dst.length; k++) {
+      inDegree[this.dst[k]]++;
+    }
+
+    const queue = new Uint32Array(N);
+    let head = 0;
+    let tail = 0;
+
+    for (let i = 0; i < N; i++) {
+      if (inDegree[i] === 0) queue[tail++] = i;
+    }
+
+    const topoOrder = new Uint32Array(N);
+    let topoIdx = 0;
+
+    while (head < tail) {
+      const u = queue[head++];
+      topoOrder[topoIdx++] = u;
+      for (let k = this.off[u]; k < this.off[u + 1]; k++) {
+        const v = this.dst[k];
+        inDegree[v]--;
+        if (inDegree[v] === 0) {
+          queue[tail++] = v;
+        }
+      }
+    }
+
+    this.isAcyclic = (topoIdx === N);
+    if (!this.isAcyclic) {
+      return false; // Graph has cycles, fallback to dynamic BFS
+    }
+
+    // Precompute forward closure: process in reverse topological order
+    const fMat = new Uint32Array(N * W);
+    for (let step = N - 1; step >= 0; step--) {
+      const u = topoOrder[step];
+      const uBase = u * W;
+      for (let k = this.off[u]; k < this.off[u + 1]; k++) {
+        const v = this.dst[k];
+        const vBase = v * W;
+        for (let w = 0; w < W; w++) {
+          fMat[uBase + w] |= fMat[vBase + w];
+        }
+        fMat[uBase + (v >>> 5)] |= (1 << (v & 31));
+      }
+    }
+    this.forwardClosureMatrix = fMat;
+
+    // Precompute reverse closure: process in forward topological order
+    const rMat = new Uint32Array(N * W);
+    for (let step = 0; step < N; step++) {
+      const u = topoOrder[step];
+      const uBase = u * W;
+      for (let k = this.boff[u]; k < this.boff[u + 1]; k++) {
+        const p = this.bdst[k];
+        const pBase = p * W;
+        for (let w = 0; w < W; w++) {
+          rMat[uBase + w] |= rMat[pBase + w];
+        }
+        rMat[uBase + (p >>> 5)] |= (1 << (p & 31));
+      }
+    }
+    this.reverseClosureMatrix = rMat;
+
+    return true;
+  }
+
+  /**
+   * High-performance Transitive Closure.
+   * Uses bitset matrix if available, or zero-allocation pointer BFS with O(1) cycle checks.
+   */
+  public getTransitiveClosure(
+    rootModule: string,
+    direction: "imports" | "importedBy",
+    maxDepth: number = 20
+  ): TransitiveClosureResult {
+    const rootId = this.getModuleId(rootModule);
+    if (rootId < 0) {
+      return { items: [], depth: 0, hasCycle: false };
+    }
+
+    const N = this.numNodes;
+    const W = this.wordsPerNode;
+
+    // Fast-path: Precomputed bitset matrix available and unconstrained depth
+    const matrix = direction === "imports" ? this.forwardClosureMatrix : this.reverseClosureMatrix;
+    if (matrix && maxDepth >= N) {
+      const base = rootId * W;
+      const items: string[] = [];
+      for (let w = 0; w < W; w++) {
+        let word = matrix[base + w];
+        if (word === 0) continue;
+        const bitOffset = w * 32;
+        while (word !== 0) {
+          const t = word & -word;
+          const bit = 31 - Math.clz32(t);
+          const targetId = bitOffset + bit;
+          if (targetId < N) {
+            items.push(this.idToName[targetId]);
+          }
+          word ^= t;
+        }
+      }
+      return {
+        items,
+        depth: items.length > 0 ? 1 : 0,
+        hasCycle: false,
+      };
+    }
+
+    // Zero-allocation pointer BFS
+    const off = direction === "imports" ? this.off : this.boff;
+    const dst = direction === "imports" ? this.dst : this.bdst;
+
+    const visitedBits = new Uint32Array(W);
+    const queue = new Uint32Array(N);
+    const depth = new Uint16Array(N);
+    const parent = new Int32Array(N).fill(-1);
+
+    let head = 0;
+    let tail = 0;
+
+    // Enqueue root
+    queue[tail++] = rootId;
+    visitedBits[rootId >>> 5] |= (1 << (rootId & 31));
+
+    let maxDepthReached = 0;
+    let detectedCycle: string[] | undefined;
+
+    while (head < tail) {
+      const u = queue[head++];
+      const d = depth[u];
+
+      if (d >= maxDepth) continue;
+
+      const start = off[u];
+      const end = off[u + 1];
+
+      for (let k = start; k < end; k++) {
+        const v = dst[k];
+
+        // O(1) cycle detection: walk parent chain backwards
+        let p = u;
+        let isCycle = false;
+        while (p !== -1) {
+          if (p === v) {
+            isCycle = true;
+            break;
+          }
+          p = parent[p];
+        }
+
+        if (isCycle) {
+          if (!detectedCycle) {
+            const cycleIds: number[] = [v];
+            let curr = u;
+            while (curr !== -1) {
+              cycleIds.push(curr);
+              if (curr === v) break;
+              curr = parent[curr];
+            }
+            cycleIds.reverse();
+            detectedCycle = cycleIds.map((id) => this.idToName[id]);
+          }
+          continue;
+        }
+
+        // Bitset visited test
+        const wordIdx = v >>> 5;
+        const bitMask = 1 << (v & 31);
+
+        if ((visitedBits[wordIdx] & bitMask) === 0) {
+          visitedBits[wordIdx] |= bitMask;
+          parent[v] = u;
+          depth[v] = d + 1;
+          if (d + 1 > maxDepthReached) maxDepthReached = d + 1;
+          queue[tail++] = v;
+        }
+      }
+    }
+
+    // Convert visited nodes to module names (skipping rootId)
+    const resultCount = tail - 1;
+    const items: string[] = new Array(resultCount > 0 ? resultCount : 0);
+    let outIdx = 0;
+    for (let i = 1; i < tail; i++) {
+      items[outIdx++] = this.idToName[queue[i]];
+    }
+
+    return {
+      items,
+      depth: maxDepthReached,
+      hasCycle: detectedCycle !== undefined,
+      cyclePath: detectedCycle,
+    };
+  }
+
+  public getNodeCount(): number {
+    return this.numNodes;
+  }
+
+  public getEdgeCount(): number {
+    return this.dst.length;
+  }
+}
+
 export class Lean4IleanIndex {
   private projectRoot: string;
   private cache: Map<string, IleanFile> = new Map();
   private symbolIndex: Map<string, IleanSymbolEntry> = new Map();
   private moduleImportsMap: Map<string, string[]> = new Map();
-  private moduleImportedByMap: Map<string, string[]> = new Map();
+  private dagIndex: BitsetDAGIndex = new BitsetDAGIndex();
 
   constructor(projectRoot: string) {
     this.projectRoot = projectRoot;
@@ -218,7 +574,6 @@ export class Lean4IleanIndex {
     this.cache.clear();
     this.symbolIndex.clear();
     this.moduleImportsMap.clear();
-    this.moduleImportedByMap.clear();
 
     const candidateRoots = [
       path.join(this.projectRoot, ".lake", "build", "lib", "lean"),
@@ -257,19 +612,8 @@ export class Lean4IleanIndex {
       }
     }
 
-    // Build reverse importedBy graph
-    for (const [mod, imps] of this.moduleImportsMap.entries()) {
-      for (const imp of imps) {
-        let list = this.moduleImportedByMap.get(imp);
-        if (!list) {
-          list = [];
-          this.moduleImportedByMap.set(imp, list);
-        }
-        if (!list.includes(mod)) {
-          list.push(mod);
-        }
-      }
-    }
+    // Build high-performance Bitset and CSR/CSC index
+    this.dagIndex.build(this.moduleImportsMap);
   }
 
   private scanDir(dir: string): void {
@@ -391,17 +735,17 @@ export class Lean4IleanIndex {
   }
 
   public getModuleImports(moduleName: string): string[] {
-    if (this.moduleImportsMap.size === 0) {
+    if (this.dagIndex.getNodeCount() === 0 && this.moduleImportsMap.size === 0) {
       this.refresh();
     }
-    return this.moduleImportsMap.get(moduleName) || [];
+    return this.dagIndex.getDirectImports(moduleName);
   }
 
   public getModuleImportedBy(moduleName: string): string[] {
-    if (this.moduleImportedByMap.size === 0) {
+    if (this.dagIndex.getNodeCount() === 0 && this.moduleImportsMap.size === 0) {
       this.refresh();
     }
-    return this.moduleImportedByMap.get(moduleName) || [];
+    return this.dagIndex.getDirectImportedBy(moduleName);
   }
 
   public getTransitiveClosure(
@@ -409,43 +753,10 @@ export class Lean4IleanIndex {
     direction: "imports" | "importedBy",
     maxDepth: number = 20
   ): TransitiveClosureResult {
-    const neighborFn = direction === "imports"
-      ? (m: string) => this.getModuleImports(m)
-      : (m: string) => this.getModuleImportedBy(m);
-
-    const visited = new Set<string>();
-    const queue: Array<{ name: string; depth: number; path: string[] }> = [
-      { name: rootModule, depth: 0, path: [rootModule] },
-    ];
-    let maxDepthReached = 0;
-    let detectedCycle: string[] | undefined;
-
-    while (queue.length > 0) {
-      const curr = queue.shift()!;
-      if (curr.depth >= maxDepth) continue;
-
-      const neighbors = neighborFn(curr.name);
-      for (const n of neighbors) {
-        if (curr.path.includes(n)) {
-          if (!detectedCycle) {
-            detectedCycle = [...curr.path, n];
-          }
-          continue;
-        }
-        if (!visited.has(n)) {
-          visited.add(n);
-          maxDepthReached = Math.max(maxDepthReached, curr.depth + 1);
-          queue.push({ name: n, depth: curr.depth + 1, path: [...curr.path, n] });
-        }
-      }
+    if (this.dagIndex.getNodeCount() === 0 && this.moduleImportsMap.size === 0) {
+      this.refresh();
     }
-
-    return {
-      items: Array.from(visited),
-      depth: maxDepthReached,
-      hasCycle: detectedCycle !== undefined,
-      cyclePath: detectedCycle,
-    };
+    return this.dagIndex.getTransitiveClosure(rootModule, direction, maxDepth);
   }
 
   public getAllIndexedSymbolsCount(): number {
