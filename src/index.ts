@@ -155,6 +155,28 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       },
     },
   },
+  {
+    name: "lean_run_code",
+    description: "Ephemeral standalone execution via lean --stdin without file pollution",
+    inputSchema: {
+      type: "object",
+      properties: {
+        code: { type: "string", description: "Lean code to execute" },
+      },
+      required: ["code"],
+    },
+  },
+  {
+    name: "lean_loogle_search",
+    description: "Type-based search querying Loogle API (https://loogle.lean-lang.org/json?q=...)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Loogle query string" },
+      },
+      required: ["query"],
+    },
+  },
 ];
 
 export class Lean4IleanIndex {
@@ -999,14 +1021,17 @@ export class McpServer {
             result: {},
           };
 
-        case "tools/list":
+        case "tools/list": {
+          const disabledTools = (process.env.LEAN_MCP_DISABLED_TOOLS || "").split(",").map(t => t.trim()).filter(Boolean);
+          const activeTools = TOOL_DEFINITIONS.filter(t => !disabledTools.includes(t.name));
           return {
             jsonrpc: "2.0",
             id,
             result: {
-              tools: TOOL_DEFINITIONS,
+              tools: activeTools,
             },
           };
+        }
 
         case "tools/call": {
           const toolName = params?.name;
@@ -1185,6 +1210,34 @@ export class McpServer {
       case "lean_c_ffi": {
         const externName = args.externName || args.symbol;
         return LeanSysrootBridge.inspectFFI(this.projectRoot, externName);
+      }
+      case "lean_run_code": {
+        const code = args.code;
+        if (!code) throw new Error("Missing required argument: 'code'");
+        try {
+          const out = execSync("lean --stdin", {
+            input: code,
+            encoding: "utf-8",
+            stdio: ["pipe", "pipe", "pipe"],
+          });
+          return out.trim() || "No output";
+        } catch (err: any) {
+          return `Error: ${err.message || String(err)}\nOutput: ${err.stdout || ""}\nError Output: ${err.stderr || ""}`;
+        }
+      }
+
+      case "lean_loogle_search": {
+        const query = args.query;
+        if (!query) throw new Error("Missing required argument: 'query'");
+        try {
+          const url = `https://loogle.lean-lang.org/json?q=${encodeURIComponent(query)}`;
+          const res = await fetch(url);
+          if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+          const json = await res.json();
+          return JSON.stringify(json, null, 2);
+        } catch (err: any) {
+          return `Loogle API error: ${err.message || String(err)}`;
+        }
       }
 
       default:

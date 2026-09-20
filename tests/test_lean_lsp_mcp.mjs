@@ -81,7 +81,7 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
         method: "tools/list",
     });
     assert(listRes && Array.isArray(listRes.result.tools), "tools list is array");
-    assert.strictEqual(listRes.result.tools.length, 6, "Exposes 6 tools (5 core + lean_filtered_goal)");
+    assert.strictEqual(listRes.result.tools.length, 8, "Exposes 8 tools (5 core + lean_filtered_goal + 2 new)");
 
     const toolNames = listRes.result.tools.map(t => t.name);
     assert(toolNames.includes("lean_goal"), "Includes lean_goal");
@@ -90,9 +90,11 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     assert(toolNames.includes("lean_module_hierarchy"), "Includes lean_module_hierarchy");
     assert(toolNames.includes("lean_c_ffi_inspect"), "Includes lean_c_ffi_inspect");
     assert(toolNames.includes("lean_filtered_goal"), "Includes lean_filtered_goal");
+    assert(toolNames.includes("lean_run_code"), "Includes lean_run_code");
+    assert(toolNames.includes("lean_loogle_search"), "Includes lean_loogle_search");
 
     server.dispose();
-    console.log("  - McpServer Dispatch (all 6 tools): PASS");
+    console.log("  - McpServer Dispatch (all 8 tools): PASS");
 }
 
 // 5. LakeBuildGuard Concurrency Check
