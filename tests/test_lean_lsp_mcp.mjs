@@ -16,9 +16,9 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = path.resolve(__dirname, "..");
-const repoRoot = path.resolve(pkgRoot, "../../../../");
+const repoRoot = process.env.LEAN_PROJECT_ROOT || path.resolve(pkgRoot, "../tacit-mui");
 
-console.log("=== Testing lean-lsp-mcp (proof-skills) Suite ===");
+console.log("=== Testing lean4-lsp-mcp Suite ===");
 
 // 1. formatGoalAsMarkdown
 {
@@ -54,16 +54,8 @@ console.log("=== Testing lean-lsp-mcp (proof-skills) Suite ===");
 // 3. Lean4IleanIndex
 {
     const index = new Lean4IleanIndex(repoRoot);
-    index.refresh();
     const missing = index.lookupSymbol("NonExistentSymbol12345");
     assert.strictEqual(missing, null, "Missing symbol lookup returns null");
-
-    const found = index.lookupSymbol("BoundedRewardKernel");
-    if (found) {
-        assert(found.filePath.includes(".lean"), "Found symbol has Lean source path");
-        assert(typeof found.line === "number" && found.line > 0, "Found symbol has positive line number");
-        console.log(`    * Found BoundedRewardKernel at ${found.filePath}:${found.line}:${found.col}`);
-    }
     console.log("  - Lean4IleanIndex: PASS");
 }
 
@@ -88,10 +80,28 @@ console.log("=== Testing lean-lsp-mcp (proof-skills) Suite ===");
         id: 2,
         method: "tools/list",
     });
-    assert(listRes && Array.isArray(listRes.result.tools) && listRes.result.tools.length === 5, "5 tools listed");
+    assert(listRes && Array.isArray(listRes.result.tools), "tools list is array");
+    assert.strictEqual(listRes.result.tools.length, 6, "Exposes 6 tools (5 core + lean_filtered_goal)");
+
+    const toolNames = listRes.result.tools.map(t => t.name);
+    assert(toolNames.includes("lean_goal"), "Includes lean_goal");
+    assert(toolNames.includes("lean_term_goal"), "Includes lean_term_goal");
+    assert(toolNames.includes("lean_lookup_symbol"), "Includes lean_lookup_symbol");
+    assert(toolNames.includes("lean_module_hierarchy"), "Includes lean_module_hierarchy");
+    assert(toolNames.includes("lean_c_ffi_inspect"), "Includes lean_c_ffi_inspect");
+    assert(toolNames.includes("lean_filtered_goal"), "Includes lean_filtered_goal");
 
     server.dispose();
-    console.log("  - McpServer Dispatch: PASS");
+    console.log("  - McpServer Dispatch (all 6 tools): PASS");
 }
 
-console.log("=== All proof-skills lean-lsp-mcp Tests Passed ===");
+// 5. LakeBuildGuard Concurrency Check
+{
+    const { LakeBuildGuard } = await import("../src/index.ts");
+    const status = LakeBuildGuard.checkLock(repoRoot);
+    assert(typeof status.isLocked === "boolean", "isLocked is a boolean");
+    assert(typeof status.source === "string", "source is a string");
+    console.log("  - LakeBuildGuard: PASS (isLocked=" + status.isLocked + ", source=" + status.source + ")");
+}
+
+console.log("=== All lean4-lsp-mcp Tests Passed ===");

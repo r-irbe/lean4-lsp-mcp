@@ -1,17 +1,23 @@
 {
-  "name": "lean-lsp-mcp",
+  "name": "lean4-lsp-mcp",
   "version": "0.1.0",
   "description": "Model Context Protocol (MCP) server for Lean 4 theorem proving, zero-latency .ilean navigation, and C FFI cross-language inspection",
   "main": "dist/index.js",
   "type": "module",
   "types": "dist/index.d.ts",
   "bin": {
-    "lean-lsp-mcp": "./bin/lean-lsp-mcp.js"
+    "lean-lsp-mcp": "./bin/lean-lsp-mcp.js",
+    "lean4-lsp-mcp": "./bin/lean-lsp-mcp.js"
   },
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "test": "node --experimental-strip-types tests/test_lean_lsp_mcp.mjs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/radu-irbe/lean4-lsp-mcp.git"
   },
   "keywords": [
     "lean4",
@@ -23,7 +29,7 @@
     "clangd",
     "ffi"
   ],
-  "author": "r-irbe",
+  "author": "radu-irbe",
   "license": "Apache-2.0",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.0"

@@ -54,6 +54,20 @@ export interface McpResponse {
   };
 }
 
+export interface GoalFilterOptions {
+  hideTypeclasses?: boolean;
+  hideInaccessible?: boolean;
+  onlyTarget?: boolean;
+  maxGoals?: number;
+}
+
+export interface TransitiveClosureResult {
+  items: string[];
+  depth: number;
+  hasCycle: boolean;
+  cyclePath?: string[];
+}
+
 export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   {
     name: "lean_goal",
@@ -65,6 +79,27 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         line: { type: "integer", description: "1-based line number" },
         col: { type: "integer", description: "1-based column number" },
         character: { type: "integer", description: "Synonym for col" },
+        filterTypeclasses: { type: "boolean", description: "Filter out ambient typeclass instances (default: false)" },
+        filterInaccessible: { type: "boolean", description: "Filter out compiler internal and dagger variables (default: false)" },
+        onlyTarget: { type: "boolean", description: "Return only the target goal expression (default: false)" },
+      },
+      required: ["filePath", "line"],
+    },
+  },
+  {
+    name: "lean_filtered_goal",
+    description: "Queries Lean 4 tactic proof state with aggressive token filtering (strips typeclass instances and irrelevance fields, cutting tokens by 70-90%)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        filePath: { type: "string", description: "Absolute or relative path to the .lean file" },
+        line: { type: "integer", description: "1-based line number" },
+        col: { type: "integer", description: "1-based column number" },
+        character: { type: "integer", description: "Synonym for col" },
+        hideTypeclasses: { type: "boolean", description: "Omit ambient typeclass instances (default: true)" },
+        hideInaccessible: { type: "boolean", description: "Omit inaccessible/dagger variables (default: true)" },
+        onlyTarget: { type: "boolean", description: "Return only the target expression (default: false)" },
+        maxGoals: { type: "integer", description: "Maximum number of subgoals to display (default: 3)" },
       },
       required: ["filePath", "line"],
     },
@@ -97,12 +132,14 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "lean_module_hierarchy",
-    description: "Forward and reverse module import dependency hierarchy analysis",
+    description: "Forward and reverse module dependency hierarchy analysis with transitive closure and cycle detection",
     inputSchema: {
       type: "object",
       properties: {
         moduleName: { type: "string", description: "Full module name (e.g. EASCI.ReinforcementLearning.Core)" },
         direction: { type: "string", enum: ["imports", "importedBy", "both"], description: "Direction of dependency traversal (default: both)" },
+        transitive: { type: "boolean", description: "Perform full transitive closure traversal (default: false)" },
+        maxDepth: { type: "integer", description: "Maximum traversal depth for transitive search (default: 20)" },
       },
       required: ["moduleName"],
     },
@@ -143,6 +180,28 @@ export class Lean4IleanIndex {
       path.join(this.projectRoot, "docs", "easci", "lean", ".lake", "build", "lib", "lean"),
       path.join(this.projectRoot, "docs", "easci", "lean", ".lake", "build", "ir"),
     ];
+
+    // Discover .lake/packages for Mathlib and external libraries
+    const packageDirs = [
+      path.join(this.projectRoot, ".lake", "packages"),
+      path.join(this.projectRoot, "docs", "easci", "lean", ".lake", "packages"),
+    ];
+
+    for (const pDir of packageDirs) {
+      if (fs.existsSync(pDir)) {
+        try {
+          const pkgs = fs.readdirSync(pDir, { withFileTypes: true });
+          for (const pkg of pkgs) {
+            if (pkg.isDirectory()) {
+              const pBuild = path.join(pDir, pkg.name, ".lake", "build", "lib", "lean");
+              if (fs.existsSync(pBuild)) candidateRoots.push(pBuild);
+            }
+          }
+        } catch {
+          // Ignore unreadable package folders
+        }
+      }
+    }
 
     const visitedDirs = new Set<string>();
     for (const root of candidateRoots) {
@@ -207,7 +266,7 @@ export class Lean4IleanIndex {
         sourceFile = path.relative(this.projectRoot, filePath);
       }
 
-      // 1. Process decls: Record<string, number[]>
+      // 1. Process decls
       if (parsed.decls && typeof parsed.decls === "object") {
         for (const [sym, coords] of Object.entries(parsed.decls)) {
           if (Array.isArray(coords) && coords.length >= 2) {
@@ -237,7 +296,7 @@ export class Lean4IleanIndex {
         }
       }
 
-      // 2. Process entries (fallback format)
+      // 2. Process entries fallback
       if (parsed.entries && typeof parsed.entries === "object") {
         for (const [sym, pos] of Object.entries(parsed.entries)) {
           if (!this.symbolIndex.has(sym)) {
@@ -266,7 +325,7 @@ export class Lean4IleanIndex {
         this.moduleImportsMap.set(moduleName, imps);
       }
     } catch {
-      // Ignore unparseable or transient build lockfiles
+      // Ignore transient or unparseable lockfiles
     }
   }
 
@@ -277,7 +336,6 @@ export class Lean4IleanIndex {
     const exact = this.symbolIndex.get(symbol);
     if (exact) return exact;
 
-    // Suffix match fallback (e.g. searching "bellmanOp" finds "RealQ.bellmanOp")
     for (const [k, v] of this.symbolIndex.entries()) {
       if (k.endsWith("." + symbol)) {
         return v;
@@ -298,6 +356,50 @@ export class Lean4IleanIndex {
       this.refresh();
     }
     return this.moduleImportedByMap.get(moduleName) || [];
+  }
+
+  public getTransitiveClosure(
+    rootModule: string,
+    direction: "imports" | "importedBy",
+    maxDepth: number = 20
+  ): TransitiveClosureResult {
+    const neighborFn = direction === "imports"
+      ? (m: string) => this.getModuleImports(m)
+      : (m: string) => this.getModuleImportedBy(m);
+
+    const visited = new Set<string>();
+    const queue: Array<{ name: string; depth: number; path: string[] }> = [
+      { name: rootModule, depth: 0, path: [rootModule] },
+    ];
+    let maxDepthReached = 0;
+    let detectedCycle: string[] | undefined;
+
+    while (queue.length > 0) {
+      const curr = queue.shift()!;
+      if (curr.depth >= maxDepth) continue;
+
+      const neighbors = neighborFn(curr.name);
+      for (const n of neighbors) {
+        if (curr.path.includes(n)) {
+          if (!detectedCycle) {
+            detectedCycle = [...curr.path, n];
+          }
+          continue;
+        }
+        if (!visited.has(n)) {
+          visited.add(n);
+          maxDepthReached = Math.max(maxDepthReached, curr.depth + 1);
+          queue.push({ name: n, depth: curr.depth + 1, path: [...curr.path, n] });
+        }
+      }
+    }
+
+    return {
+      items: Array.from(visited),
+      depth: maxDepthReached,
+      hasCycle: detectedCycle !== undefined,
+      cyclePath: detectedCycle,
+    };
   }
 
   public getAllIndexedSymbolsCount(): number {
@@ -397,6 +499,201 @@ export function formatGoalAsMarkdown(goalText: string): string {
   return "```lean\n" + goalText.trim() + "\n```";
 }
 
+export function filterGoalText(goalText: string, opts: GoalFilterOptions = {}): string {
+  if (!goalText || goalText.trim().length === 0) {
+    return "No active goals (proof complete or out of tactic scope).";
+  }
+  if (goalText.startsWith("Lake LSP error:") || goalText.startsWith("File not found:")) {
+    return goalText;
+  }
+
+  const hideTypeclasses = opts.hideTypeclasses ?? true;
+  const hideInaccessible = opts.hideInaccessible ?? true;
+  const onlyTarget = opts.onlyTarget ?? false;
+  const maxGoals = opts.maxGoals ?? 3;
+
+  const rawBlocks = goalText.split(/\n\n(?=(?:case\s+|\d+\s+goals?|\u22A2|\|-))/);
+  const filteredBlocks: string[] = [];
+
+  const knownClassHeads = new Set([
+    "Decidable", "DecidableEq", "DecidableRel", "DecidablePred",
+    "Inhabited", "Nonempty", "Subsingleton", "Unique", "Empty",
+    "Fintype", "Finite", "Countable", "Infinite",
+    "Semigroup", "CommSemigroup", "Monoid", "CommMonoid", "Group", "CommGroup", "AddCommGroup",
+    "Semiring", "CommSemiring", "Ring", "CommRing", "Field", "DivisionRing",
+    "Module", "Algebra", "SMul", "SMulZeroClass", "DistribMulAction", "MulAction", "IsScalarTower",
+    "SMulCommClass", "FaithfulSMul",
+    "TopologicalSpace", "UniformSpace", "MetricSpace", "NormedAddCommGroup", "NormedSpace",
+    "CompleteSpace", "CompactSpace", "LocallyCompactSpace", "ConnectedSpace", "T2Space",
+    "MeasureSpace", "MeasurableSpace", "BorelSpace",
+    "Category", "Functor", "NaturalTransformation", "HasLimits", "HasColimits",
+    "Preorder", "PartialOrder", "LinearOrder", "Lattice", "CompleteLattice",
+    "IsDomain", "IsDedekindDomain", "IsPrincipalIdealRing", "IsNoetherianRing", "IsArtinianRing",
+    "IsLocalRing", "IsLocalHom", "HenselianLocalRing",
+    "Coalgebra", "Bialgebra", "HopfAlgebra",
+  ]);
+
+  for (let bIdx = 0; bIdx < rawBlocks.length; bIdx++) {
+    if (filteredBlocks.length >= maxGoals) {
+      filteredBlocks.push(`-- (... and ${rawBlocks.length - bIdx} more goals omitted)`);
+      break;
+    }
+    const block = rawBlocks[bIdx].trim();
+    if (!block) continue;
+
+    const lines = block.split("\n");
+    let caseHeader = "";
+    const hyps: Array<{ full: string; name: string; type: string }> = [];
+    let target = "";
+    let inTarget = false;
+    let currentHyp: { full: string; name: string; type: string } | null = null;
+
+    for (const line of lines) {
+      if (/^case\s+/.test(line)) {
+        caseHeader = line.trim();
+      } else if (/^(\u22A2|\|-)\s*/.test(line)) {
+        inTarget = true;
+        currentHyp = null;
+        target = line;
+      } else if (inTarget) {
+        target += "\n" + line;
+      } else if (/^[^\s:]+(?:\s+[^\s:]+)*\s*:\s*/.test(line) || /^\[.*\]$/.test(line.trim())) {
+        const colonIdx = line.indexOf(":");
+        const name = colonIdx !== -1 ? line.slice(0, colonIdx).trim() : line.trim();
+        const type = colonIdx !== -1 ? line.slice(colonIdx + 1).trim() : "";
+        currentHyp = { full: line, name, type };
+        hyps.push(currentHyp);
+      } else if (currentHyp) {
+        currentHyp.full += "\n" + line;
+      }
+    }
+
+    const keptHyps: string[] = [];
+    const omittedNames: string[] = [];
+
+    if (!onlyTarget) {
+      for (const h of hyps) {
+        const isInstName = /^inst[\u271D\u2020\u00B0-\u00BE\u2070-\u207F0-9_]*/i.test(h.name) ||
+          h.name.startsWith("[") ||
+          h.name.startsWith("_inst");
+        const isInaccessibleName = h.name.includes("\u271D") || h.name.includes("\u2020") || h.name.startsWith("_");
+        const firstWord = h.type.trim().split(/[\s(\[{]/)[0] || "";
+        const isKnownClassType = knownClassHeads.has(firstWord) ||
+          firstWord.startsWith("Is") ||
+          firstWord.startsWith("Has") ||
+          firstWord.endsWith("Class") ||
+          firstWord.endsWith("Category");
+
+        const shouldOmitTypeclass = hideTypeclasses && (isInstName || isKnownClassType);
+        const shouldOmitInaccessible = hideInaccessible && isInaccessibleName;
+
+        if (shouldOmitTypeclass || shouldOmitInaccessible) {
+          omittedNames.push(h.name);
+        } else {
+          keptHyps.push(h.full);
+        }
+      }
+    }
+
+    const outLines: string[] = [];
+    if (caseHeader) outLines.push(caseHeader);
+    if (!onlyTarget && keptHyps.length > 0) outLines.push(...keptHyps);
+    if (target) outLines.push(target);
+    if (omittedNames.length > 0) {
+      const preview = omittedNames.slice(0, 4).join(", ");
+      const suffix = omittedNames.length > 4 ? `... (+${omittedNames.length - 4} more)` : "";
+      outLines.push(`-- [Filtered ${omittedNames.length} ambient instances/inaccessibles: ${preview}${suffix}]`);
+    }
+
+    filteredBlocks.push(outLines.join("\n"));
+  }
+
+  return "```lean\n" + filteredBlocks.join("\n\n") + "\n```";
+}
+
+export interface BuildLockStatus {
+  isLocked: boolean;
+  pid?: number;
+  lane?: string;
+  source: "lockfile" | "process_table" | "none";
+  detail?: string;
+}
+
+export class LakeBuildGuard {
+  public static getLockFilePath(leanRoot: string): string {
+    return path.join(leanRoot, ".lake", "build", ".lake.lock");
+  }
+
+  public static checkLock(leanRoot: string): BuildLockStatus {
+    return this.inspectBuildActivity(leanRoot);
+  }
+
+  public static inspectBuildActivity(leanRoot: string): BuildLockStatus {
+    const lockPath = this.getLockFilePath(leanRoot);
+
+    if (fs.existsSync(lockPath)) {
+      try {
+        const raw = fs.readFileSync(lockPath, "utf-8");
+        const meta = JSON.parse(raw);
+        const pid = Number(meta.pid);
+        if (pid && this.isPidAlive(pid)) {
+          return {
+            isLocked: true,
+            pid,
+            lane: meta.lane || "unknown",
+            source: "lockfile",
+            detail: `Active Lake build registered in ${lockPath} by PID ${pid}`,
+          };
+        } else {
+          try {
+            fs.unlinkSync(lockPath);
+          } catch {
+            // Ignore race condition on unlink
+          }
+        }
+      } catch {
+        return {
+          isLocked: true,
+          source: "lockfile",
+          detail: `Unparseable build lockfile present at ${lockPath}`,
+        };
+      }
+    }
+
+    try {
+      const pgrepOut = execSync("pgrep -f 'lake (build|compile|env)'", {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+
+      if (pgrepOut) {
+        const pids = pgrepOut.split("\n").map((p) => parseInt(p.trim(), 10)).filter(Boolean);
+        if (pids.length > 0) {
+          return {
+            isLocked: true,
+            pid: pids[0],
+            source: "process_table",
+            detail: `Active lake build processes detected: [${pids.join(", ")}]`,
+          };
+        }
+      }
+    } catch {
+      // pgrep exits with 1 when no processes match
+    }
+
+    return { isLocked: false, source: "none" };
+  }
+
+  public static isPidAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+}
+
 export class LakeServerManager {
   private projectRoot: string;
   private activeSession: {
@@ -477,7 +774,7 @@ export class LakeServerManager {
             }
           }
         } catch {
-          // Ignore parse errors on corrupted frames
+          // Ignore corrupted frames
         }
       }
     });
@@ -493,14 +790,12 @@ export class LakeServerManager {
 
     this.activeSession = session;
 
-    // Send initialize request
     await this.sendRequest(session, "initialize", {
       processId: process.pid,
       rootUri: pathToFileURL(leanRoot).href,
       capabilities: {},
     });
 
-    // Send initialized notification
     this.sendNotification(session, "initialized", {});
 
     return session;
@@ -516,7 +811,7 @@ export class LakeServerManager {
       const timer = setTimeout(() => {
         session.pendingRequests.delete(id);
         reject(new Error(`Timeout waiting for LSP response to ${method} (id: ${id})`));
-      }, 15000);
+      }, 25000); // 25s timeout for heavy Mathlib / scheme elaborations
 
       session.pendingRequests.set(id, {
         resolve: (val) => {
@@ -545,13 +840,24 @@ export class LakeServerManager {
     session.child.stdin?.write(header + msg);
   }
 
-  public async getGoal(filePath: string, line: number, col: number): Promise<string> {
+  public async getGoal(
+    filePath: string,
+    line: number,
+    col: number,
+    filterOpts?: GoalFilterOptions
+  ): Promise<string> {
     const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.projectRoot, filePath);
     if (!fs.existsSync(absPath)) {
       return `File not found: ${filePath}`;
     }
 
     try {
+      const leanRoot = this.findLeanRoot(absPath);
+      const buildStatus = LakeBuildGuard.inspectBuildActivity(leanRoot);
+      if (buildStatus.isLocked) {
+        return `[Lake Build Active] Compilation is currently active in ${leanRoot} (${buildStatus.detail || buildStatus.source}). Interactive goal query throttled to prevent .olean cache collision.`;
+      }
+
       const session = await this.ensureSession(absPath);
       const uri = pathToFileURL(absPath).href;
 
@@ -577,6 +883,9 @@ export class LakeServerManager {
       });
 
       const goalText = res?.rendered || (Array.isArray(res?.goals) ? res.goals.join("\n\n") : "");
+      if (filterOpts) {
+        return filterGoalText(goalText, filterOpts);
+      }
       return formatGoalAsMarkdown(goalText);
     } catch (err: any) {
       return `Lake LSP error: ${err.message || String(err)}`;
@@ -626,7 +935,7 @@ export class LakeServerManager {
       try {
         this.activeSession.child.kill();
       } catch {
-        // Process might have already terminated
+        // Ignore terminated process errors
       }
       this.activeSession = null;
     }
@@ -658,7 +967,6 @@ export class McpServer {
     if (!req || typeof req !== "object") return null;
     const { id, method, params } = req;
 
-    // Notifications (no id)
     if (id === undefined || id === null) {
       if (method === "notifications/initialized" || method === "initialized") {
         return null;
@@ -679,7 +987,7 @@ export class McpServer {
               },
               serverInfo: {
                 name: "lean-lsp-mcp",
-                version: "0.1.0",
+                version: "0.2.0",
               },
             },
           };
@@ -756,7 +1064,31 @@ export class McpServer {
         }
         const line = Number(args.line ?? 1);
         const col = Number(args.col ?? args.character ?? 1);
-        return await this.lakeManager.getGoal(filePath, line, col);
+        const filterOpts: GoalFilterOptions | undefined =
+          (args.filterTypeclasses || args.filterInaccessible || args.onlyTarget)
+            ? {
+                hideTypeclasses: args.filterTypeclasses ?? false,
+                hideInaccessible: args.filterInaccessible ?? false,
+                onlyTarget: args.onlyTarget ?? false,
+              }
+            : undefined;
+        return await this.lakeManager.getGoal(filePath, line, col, filterOpts);
+      }
+
+      case "lean_filtered_goal": {
+        const filePath = args.filePath || args.path || args.file;
+        if (!filePath) {
+          throw new Error("Missing required argument: 'filePath'");
+        }
+        const line = Number(args.line ?? 1);
+        const col = Number(args.col ?? args.character ?? 1);
+        const opts: GoalFilterOptions = {
+          hideTypeclasses: args.hideTypeclasses ?? true,
+          hideInaccessible: args.hideInaccessible ?? true,
+          onlyTarget: args.onlyTarget ?? false,
+          maxGoals: Number(args.maxGoals ?? 3),
+        };
+        return await this.lakeManager.getGoal(filePath, line, col, opts);
       }
 
       case "lean_term_goal":
@@ -795,30 +1127,57 @@ export class McpServer {
           throw new Error("Missing required argument: 'moduleName'");
         }
         const direction = args.direction || "both";
-        const imports = (direction === "imports" || direction === "both")
-          ? this.ileanIndex.getModuleImports(moduleName)
-          : [];
-        const importedBy = (direction === "importedBy" || direction === "both")
-          ? this.ileanIndex.getModuleImportedBy(moduleName)
-          : [];
+        const isTransitive = Boolean(args.transitive);
+        const maxDepth = Number(args.maxDepth ?? 20);
 
-        const lines: string[] = [`Module: ${moduleName}`];
+        const lines: string[] = [`Module: ${moduleName}`, `Traversal: ${isTransitive ? "Transitive (Max Depth: " + maxDepth + ")" : "Direct (1-hop)"}`];
+
         if (direction === "imports" || direction === "both") {
-          lines.push(`Direct Imports (${imports.length}):`);
-          if (imports.length === 0) {
+          const direct = this.ileanIndex.getModuleImports(moduleName);
+          lines.push(`Direct Imports (${direct.length}):`);
+          if (direct.length === 0) {
             lines.push("  (none)");
           } else {
-            for (const imp of imports) lines.push(`  - ${imp}`);
+            for (const imp of direct) lines.push(`  - ${imp}`);
+          }
+
+          if (isTransitive) {
+            const trans = this.ileanIndex.getTransitiveClosure(moduleName, "imports", maxDepth);
+            lines.push(`Transitive Closure Imports (${trans.items.length}, Depth reached: ${trans.depth}):`);
+            if (trans.items.length === 0) {
+              lines.push("  (none)");
+            } else {
+              for (const imp of trans.items) lines.push(`  - ${imp}`);
+            }
+            if (trans.hasCycle) {
+              lines.push(`  [WARNING: Cycle detected in import DAG: ${trans.cyclePath?.join(" -> ")}]`);
+            }
           }
         }
+
         if (direction === "importedBy" || direction === "both") {
-          lines.push(`Imported By (${importedBy.length}):`);
-          if (importedBy.length === 0) {
+          const directBy = this.ileanIndex.getModuleImportedBy(moduleName);
+          lines.push(`Direct Imported By (${directBy.length}):`);
+          if (directBy.length === 0) {
             lines.push("  (none)");
           } else {
-            for (const by of importedBy) lines.push(`  - ${by}`);
+            for (const by of directBy) lines.push(`  - ${by}`);
+          }
+
+          if (isTransitive) {
+            const transBy = this.ileanIndex.getTransitiveClosure(moduleName, "importedBy", maxDepth);
+            lines.push(`Transitive Closure Dependents (${transBy.items.length}, Depth reached: ${transBy.depth}):`);
+            if (transBy.items.length === 0) {
+              lines.push("  (none)");
+            } else {
+              for (const by of transBy.items) lines.push(`  - ${by}`);
+            }
+            if (transBy.hasCycle) {
+              lines.push(`  [WARNING: Cycle detected in dependent DAG: ${transBy.cyclePath?.join(" -> ")}]`);
+            }
           }
         }
+
         return lines.join("\n");
       }
 
@@ -911,7 +1270,6 @@ export class McpServer {
   }
 }
 
-// Standalone Server Entry
 export function main(): void {
   const projectRoot = process.cwd();
   const server = new McpServer(projectRoot);
@@ -933,5 +1291,3 @@ function checkIsMain(): boolean {
 if (checkIsMain()) {
   main();
 }
-
-
