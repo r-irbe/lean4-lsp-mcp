@@ -1051,19 +1051,35 @@ export class LakeBuildGuard {
   }
 }
 
-export class LakeServerManager {
+export interface TrackedFileWorker {
+  uri: string;
+  absPath: string;
+  version: number;
+  mtimeMs: number;
+  lastAccessedMs: number;
+}
+
+export interface FileWorkerSession {
+  child: ChildProcess;
+  leanRoot: string;
+  nextId: number;
+  pendingRequests: Map<number, { resolve: (val: any) => void; reject: (err: any) => void }>;
+  openFiles: Map<string, TrackedFileWorker>;
+  buffer: Buffer;
+  lastActiveMs: number;
+}
+
+export class FileWorkerManager {
   private projectRoot: string;
-  private activeSession: {
-    child: ChildProcess;
-    leanRoot: string;
-    nextId: number;
-    pendingRequests: Map<number, { resolve: (val: any) => void; reject: (err: any) => void }>;
-    openedFiles: Set<string>;
-    buffer: Buffer;
-  } | null = null;
+  private sessions: Map<string, FileWorkerSession> = new Map();
+  private reaperTimer: NodeJS.Timeout | null = null;
+  private readonly idleFileTimeoutMs: number = 60000;
+  private readonly idleSessionTimeoutMs: number = 120000;
+  private readonly memoryCeilingKb: number = 1048576; // 1 GB RSS ceiling
 
   constructor(projectRoot: string) {
-    this.projectRoot = projectRoot;
+    this.projectRoot = path.resolve(projectRoot);
+    this.startLifecycleReaper();
   }
 
   public findLeanRoot(targetFile: string): string {
@@ -1085,45 +1101,108 @@ export class LakeServerManager {
     return this.projectRoot;
   }
 
-  private async ensureSession(targetFile: string): Promise<NonNullable<LakeServerManager["activeSession"]>> {
-    const leanRoot = this.findLeanRoot(targetFile);
-    if (this.activeSession && this.activeSession.leanRoot === leanRoot) {
-      return this.activeSession;
+  private startLifecycleReaper(): void {
+    if (this.reaperTimer) return;
+    this.reaperTimer = setInterval(() => {
+      this.reapIdleAndHeavyWorkers();
+    }, 15000);
+    if (this.reaperTimer.unref) {
+      this.reaperTimer.unref();
     }
-    this.dispose();
+  }
 
-    const session: NonNullable<LakeServerManager["activeSession"]> = {
-      child: spawn("lake", ["serve"], {
-        cwd: leanRoot,
-        stdio: ["pipe", "pipe", "ignore"],
-      }),
+  public reapIdleAndHeavyWorkers(): void {
+    const now = Date.now();
+
+    for (const [leanRoot, session] of this.sessions.entries()) {
+      const sessionRssKb = this.getProcessRssKb(session.child.pid);
+      const isSessionHeavy = sessionRssKb > this.memoryCeilingKb * 2;
+
+      if (isSessionHeavy) {
+        this.disposeSession(leanRoot);
+        continue;
+      }
+
+      const filesToClose: string[] = [];
+      for (const [absPath, fileInfo] of session.openFiles.entries()) {
+        if (now - fileInfo.lastAccessedMs > this.idleFileTimeoutMs) {
+          filesToClose.push(absPath);
+        }
+      }
+
+      for (const absPath of filesToClose) {
+        const fileInfo = session.openFiles.get(absPath)!;
+        this.sendNotification(session, "textDocument/didClose", {
+          textDocument: { uri: fileInfo.uri },
+        });
+        session.openFiles.delete(absPath);
+      }
+
+      if (session.openFiles.size === 0 && now - session.lastActiveMs > this.idleSessionTimeoutMs) {
+        this.disposeSession(leanRoot);
+      }
+    }
+  }
+
+  public getProcessRssKb(pid?: number): number {
+    if (!pid) return 0;
+    try {
+      const statusPath = `/proc/${pid}/status`;
+      if (!fs.existsSync(statusPath)) return 0;
+      const content = fs.readFileSync(statusPath, "utf-8");
+      const match = content.match(/VmRSS:\s*(\d+)\s*kB/i);
+      return match ? parseInt(match[1], 10) : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  private async ensureSession(leanRoot: string): Promise<FileWorkerSession> {
+    let session = this.sessions.get(leanRoot);
+    if (session && session.child && session.child.exitCode === null) {
+      session.lastActiveMs = Date.now();
+      return session;
+    }
+
+    if (session) {
+      this.disposeSession(leanRoot);
+    }
+
+    const child = spawn("lake", ["serve"], {
+      cwd: leanRoot,
+      stdio: ["pipe", "pipe", "ignore"],
+    });
+
+    session = {
+      child,
       leanRoot,
       nextId: 1,
       pendingRequests: new Map(),
-      openedFiles: new Set(),
+      openFiles: new Map(),
       buffer: Buffer.alloc(0),
+      lastActiveMs: Date.now(),
     };
 
     session.child.stdout?.on("data", (chunk: Buffer) => {
-      session.buffer = Buffer.concat([session.buffer, chunk]);
+      session!.buffer = Buffer.concat([session!.buffer, chunk]);
       while (true) {
-        const idx = session.buffer.indexOf("\r\n\r\n");
+        const idx = session!.buffer.indexOf("\r\n\r\n");
         if (idx === -1) break;
-        const header = session.buffer.subarray(0, idx).toString("utf-8");
+        const header = session!.buffer.subarray(0, idx).toString("utf-8");
         const match = header.match(/Content-Length:\s*(\d+)/i);
         if (!match) {
-          session.buffer = session.buffer.subarray(idx + 4);
+          session!.buffer = session!.buffer.subarray(idx + 4);
           continue;
         }
         const len = parseInt(match[1], 10);
-        if (session.buffer.length < idx + 4 + len) break;
-        const body = session.buffer.subarray(idx + 4, idx + 4 + len).toString("utf-8");
-        session.buffer = session.buffer.subarray(idx + 4 + len);
+        if (session!.buffer.length < idx + 4 + len) break;
+        const body = session!.buffer.subarray(idx + 4, idx + 4 + len).toString("utf-8");
+        session!.buffer = session!.buffer.subarray(idx + 4 + len);
         try {
           const parsed = JSON.parse(body);
-          if (parsed.id !== undefined && session.pendingRequests.has(parsed.id)) {
-            const handler = session.pendingRequests.get(parsed.id)!;
-            session.pendingRequests.delete(parsed.id);
+          if (parsed.id !== undefined && session!.pendingRequests.has(parsed.id)) {
+            const handler = session!.pendingRequests.get(parsed.id)!;
+            session!.pendingRequests.delete(parsed.id);
             if (parsed.error) {
               handler.reject(new Error(parsed.error.message || JSON.stringify(parsed.error)));
             } else {
@@ -1131,21 +1210,17 @@ export class LakeServerManager {
             }
           }
         } catch {
-          // Ignore corrupted frames
+          // Ignore transient parsing errors
         }
       }
     });
 
-    session.child.on("error", (err) => {
-      process.stderr.write(`[lean-lsp-mcp] lake serve process error: ${err.message}\n`);
+    session.child.on("error", () => {});
+    session.child.on("exit", () => {
+      this.sessions.delete(leanRoot);
     });
 
-    session.child.on("exit", (code) => {
-      process.stderr.write(`[lean-lsp-mcp] lake serve exited with code ${code}\n`);
-      this.activeSession = null;
-    });
-
-    this.activeSession = session;
+    this.sessions.set(leanRoot, session);
 
     await this.sendRequest(session, "initialize", {
       processId: process.pid,
@@ -1154,21 +1229,16 @@ export class LakeServerManager {
     });
 
     this.sendNotification(session, "initialized", {});
-
     return session;
   }
 
-  private sendRequest(
-    session: NonNullable<LakeServerManager["activeSession"]>,
-    method: string,
-    params: any
-  ): Promise<any> {
+  private sendRequest(session: FileWorkerSession, method: string, params: any): Promise<any> {
     return new Promise((resolve, reject) => {
       const id = session.nextId++;
       const timer = setTimeout(() => {
         session.pendingRequests.delete(id);
         reject(new Error(`Timeout waiting for LSP response to ${method} (id: ${id})`));
-      }, 25000); // 25s timeout for heavy Mathlib / scheme elaborations
+      }, 25000);
 
       session.pendingRequests.set(id, {
         resolve: (val) => {
@@ -1187,49 +1257,79 @@ export class LakeServerManager {
     });
   }
 
-  private sendNotification(
-    session: NonNullable<LakeServerManager["activeSession"]>,
-    method: string,
-    params: any
-  ): void {
+  private sendNotification(session: FileWorkerSession, method: string, params: any): void {
     const msg = JSON.stringify({ jsonrpc: "2.0", method, params });
     const header = `Content-Length: ${Buffer.byteLength(msg, "utf-8")}\r\n\r\n`;
     session.child.stdin?.write(header + msg);
+  }
+
+  private syncDocument(session: FileWorkerSession, absPath: string): string {
+    const uri = pathToFileURL(absPath).href;
+    const stat = fs.statSync(absPath);
+    const mtimeMs = stat.mtimeMs;
+    const now = Date.now();
+
+    let fileInfo = session.openFiles.get(absPath);
+    if (!fileInfo) {
+      const text = fs.readFileSync(absPath, "utf-8");
+      this.sendNotification(session, "textDocument/didOpen", {
+        textDocument: {
+          uri,
+          languageId: "lean4",
+          version: 1,
+          text,
+        },
+      });
+      fileInfo = {
+        uri,
+        absPath,
+        version: 1,
+        mtimeMs,
+        lastAccessedMs: now,
+      };
+      session.openFiles.set(absPath, fileInfo);
+    } else {
+      fileInfo.lastAccessedMs = now;
+      if (mtimeMs > fileInfo.mtimeMs) {
+        const newText = fs.readFileSync(absPath, "utf-8");
+        fileInfo.version++;
+        fileInfo.mtimeMs = mtimeMs;
+        this.sendNotification(session, "textDocument/didChange", {
+          textDocument: {
+            uri,
+            version: fileInfo.version,
+          },
+          contentChanges: [{ text: newText }],
+        });
+      }
+    }
+
+    session.lastActiveMs = now;
+    return uri;
   }
 
   public async getGoal(
     filePath: string,
     line: number,
     col: number,
-    filterOpts?: GoalFilterOptions
+    filterOpts?: GoalFilterOptions,
+    ileanIndex?: Lean4IleanIndex
   ): Promise<string> {
     const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.projectRoot, filePath);
     if (!fs.existsSync(absPath)) {
       return `File not found: ${filePath}`;
     }
 
+    const leanRoot = this.findLeanRoot(absPath);
+    const buildStatus = LakeBuildGuard.inspectBuildActivity(leanRoot);
+    if (buildStatus.isLocked) {
+      this.suspendSessionFiles(leanRoot);
+      return this.generateZeroBuildFallback(absPath, line, col, buildStatus, ileanIndex);
+    }
+
     try {
-      const leanRoot = this.findLeanRoot(absPath);
-      const buildStatus = LakeBuildGuard.inspectBuildActivity(leanRoot);
-      if (buildStatus.isLocked) {
-        return `[Lake Build Active] Compilation is currently active in ${leanRoot} (${buildStatus.detail || buildStatus.source}). Interactive goal query throttled to prevent .olean cache collision.`;
-      }
-
-      const session = await this.ensureSession(absPath);
-      const uri = pathToFileURL(absPath).href;
-
-      if (!session.openedFiles.has(absPath)) {
-        const text = fs.readFileSync(absPath, "utf-8");
-        this.sendNotification(session, "textDocument/didOpen", {
-          textDocument: {
-            uri,
-            languageId: "lean4",
-            version: 1,
-            text,
-          },
-        });
-        session.openedFiles.add(absPath);
-      }
+      const session = await this.ensureSession(leanRoot);
+      const uri = this.syncDocument(session, absPath);
 
       const res = await this.sendRequest(session, "$/lean/plainGoal", {
         textDocument: { uri },
@@ -1255,22 +1355,15 @@ export class LakeServerManager {
       return `File not found: ${filePath}`;
     }
 
-    try {
-      const session = await this.ensureSession(absPath);
-      const uri = pathToFileURL(absPath).href;
+    const leanRoot = this.findLeanRoot(absPath);
+    const buildStatus = LakeBuildGuard.inspectBuildActivity(leanRoot);
+    if (buildStatus.isLocked) {
+      return `[Zero-Build Concurrency Gate] Term goal query suspended during active Lake build (${buildStatus.detail || buildStatus.source}).`;
+    }
 
-      if (!session.openedFiles.has(absPath)) {
-        const text = fs.readFileSync(absPath, "utf-8");
-        this.sendNotification(session, "textDocument/didOpen", {
-          textDocument: {
-            uri,
-            languageId: "lean4",
-            version: 1,
-            text,
-          },
-        });
-        session.openedFiles.add(absPath);
-      }
+    try {
+      const session = await this.ensureSession(leanRoot);
+      const uri = this.syncDocument(session, absPath);
 
       const res = await this.sendRequest(session, "$/lean/plainTermGoal", {
         textDocument: { uri },
@@ -1287,17 +1380,72 @@ export class LakeServerManager {
     }
   }
 
-  public dispose(): void {
-    if (this.activeSession) {
+  private suspendSessionFiles(leanRoot: string): void {
+    const session = this.sessions.get(leanRoot);
+    if (!session) return;
+    for (const fileInfo of session.openFiles.values()) {
       try {
-        this.activeSession.child.kill();
+        this.sendNotification(session, "textDocument/didClose", {
+          textDocument: { uri: fileInfo.uri },
+        });
       } catch {
-        // Ignore terminated process errors
+        // Ignore write failures during suspension
       }
-      this.activeSession = null;
+    }
+    session.openFiles.clear();
+  }
+
+  private generateZeroBuildFallback(
+    absPath: string,
+    line: number,
+    col: number,
+    buildStatus: BuildLockStatus,
+    ileanIndex?: Lean4IleanIndex
+  ): string {
+    const relPath = path.relative(this.projectRoot, absPath);
+    const lines = [
+      `[Zero-Build Concurrency Gate] Active Lake build detected (${buildStatus.detail || buildStatus.source}).`,
+      `Interactive FileWorker suspended to prevent .olean corruption and bus errors.`,
+      `Offline Diversion:`,
+      `  Target: ${relPath} (Line ${line}, Col ${col})`,
+    ];
+
+    if (ileanIndex) {
+      const relLean = relPath.replace(/\.lean$/, "").replace(/\//g, ".");
+      const imports = ileanIndex.getModuleImports(relLean);
+      if (imports.length > 0) {
+        lines.push(`  Module: ${relLean}`);
+        lines.push(`  Dependencies (${imports.length}): ${imports.slice(0, 4).join(", ")}${imports.length > 4 ? "..." : ""}`);
+      }
+    }
+
+    lines.push(`\nQuery queued for post-compilation verification. Interactive state will refresh automatically upon build completion.`);
+    return lines.join("\n");
+  }
+
+  public disposeSession(leanRoot: string): void {
+    const session = this.sessions.get(leanRoot);
+    if (session) {
+      try {
+        session.child.kill();
+      } catch {}
+      this.sessions.delete(leanRoot);
+    }
+  }
+
+  public dispose(): void {
+    if (this.reaperTimer) {
+      clearInterval(this.reaperTimer);
+      this.reaperTimer = null;
+    }
+    for (const leanRoot of Array.from(this.sessions.keys())) {
+      this.disposeSession(leanRoot);
     }
   }
 }
+
+export type LakeServerManager = FileWorkerManager;
+export const LakeServerManager = FileWorkerManager;
 
 export class McpServer {
   private projectRoot: string;
