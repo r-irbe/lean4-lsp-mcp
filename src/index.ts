@@ -177,6 +177,30 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       required: ["query"],
     },
   },
+  {
+    name: "lean_local_search",
+    description: "Fast local declaration search using ripgrep. Use BEFORE trying a lemma name.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Declaration name or prefix" },
+        limit: { type: "integer", description: "Max matches (default 10)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "lean_search",
+    description: "Search Mathlib via leansearch.net using natural language.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Natural language or Lean term query" },
+        num_results: { type: "integer", description: "Max results (default 5)" },
+      },
+      required: ["query"],
+    },
+  },
 ];
 
 export class Lean4IleanIndex {
@@ -1241,6 +1265,101 @@ export class McpServer {
           return JSON.stringify(json, null, 2);
         } catch (err: any) {
           return `Loogle API error: ${err.message || String(err)}`;
+        }
+      }
+
+      case "lean_local_search": {
+        const query = args.query;
+        if (!query) throw new Error("Missing required argument: 'query'");
+        const limit = Number(args.limit ?? 10);
+        const modifiers = ["public", "protected", "private", "noncomputable", "partial", "unsafe", "scoped", "local"];
+        const keywords = ["theorem", "lemma", "def", "axiom", "class", "instance", "structure", "inductive", "abbrev", "opaque"];
+        
+        const declLead = "^\\\\s*(?:@\\\\[[^\\]]*\\\\]\\\\s*)*(?:(?:" + modifiers.join("|") + ")\\\\s+)*";
+        const keywordAlt = keywords.join("|");
+        const escapedQuery = query.replace(/[.*+?^$\\\\{}()|[\\]\\\\]/g, "\\\\$&");
+        const pattern = declLead + "(?:" + keywordAlt + ")\\\\s+(?:[A-Za-z0-9_'.]+\\\\.)*" + escapedQuery + "[A-Za-z0-9_'.]*(?:\\\\s|:)";
+        
+        try {
+          const { execFileSync } = await import("node:child_process");
+          const out = execFileSync("rg", [
+            "--json", "--no-ignore", "--smart-case", "--hidden", "--color", "never", "--no-messages",
+            "-g", "*.lean", "-g", "!.git/**", "-g", "!.lake/build/**", "-e", pattern
+          ], {
+            cwd: this.projectRoot,
+            encoding: "utf-8",
+            stdio: ["ignore", "pipe", "ignore"],
+          });
+          const results: string[] = [];
+          for (const line of out.split("\\n")) {
+            if (!line) continue;
+            try {
+              const event = JSON.parse(line);
+              if (event.type === "match") {
+                const text = event.data.lines.text;
+                const match = text.match(new RegExp(declLead + "(" + keywordAlt + ")\\\\s+([A-Za-z0-9_']+(?:\\\\.[A-Za-z0-9_']+)*)"));
+                if (match) {
+                  results.push(`Name: ${match[2]}\nKind: ${match[1]}\nFile: ${event.data.path.text}\n`);
+                  if (results.length >= limit) break;
+                }
+              }
+            } catch { }
+          }
+          if (results.length === 0) return "No results found.";
+          return results.join("\\n");
+        } catch (err: any) {
+          if (err.status === 1 && (!err.stdout || !err.stdout.trim())) return "No results found.";
+          if (err.stdout && err.stdout.trim().length > 0) {
+            const results: string[] = [];
+            for (const line of err.stdout.split("\\n")) {
+              if (!line) continue;
+              try {
+                const event = JSON.parse(line);
+                if (event.type === "match") {
+                  const text = event.data.lines.text;
+                  const match = text.match(new RegExp(declLead + "(" + keywordAlt + ")\\\\s+([A-Za-z0-9_']+(?:\\\\.[A-Za-z0-9_']+)*)"));
+                  if (match) {
+                    results.push(`Name: ${match[2]}\nKind: ${match[1]}\nFile: ${event.data.path.text}\n`);
+                    if (results.length >= limit) break;
+                  }
+                }
+              } catch { }
+            }
+            if (results.length > 0) return results.join("\\n");
+          }
+          return `Search failed: ${err.message || String(err)}`;
+        }
+      }
+
+      case "lean_search": {
+        const query = args.query;
+        if (!query) throw new Error("Missing required argument: 'query'");
+        const num_results = Number(args.num_results ?? 5);
+        try {
+          const payload = JSON.stringify({ num_results: String(num_results), query: [query] });
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 15000);
+          const res = await fetch("https://leansearch.net/search", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "User-Agent": "lean-lsp-mcp/0.1" },
+            body: payload,
+            signal: controller.signal as any,
+          });
+          clearTimeout(timeoutId);
+          if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+          const json: any = await res.json();
+          if (!json || !json[0]) return "No results found.";
+          const results: string[] = [];
+          for (const item of json[0].slice(0, num_results)) {
+            const r = item.result;
+            const name = (r.name || []).join(".");
+            const module_name = (r.module_name || []).join(".");
+            results.push(`Name: ${name}\nModule: ${module_name}\nKind: ${r.kind || ""}\nType: ${r.type || ""}\n`);
+          }
+          if (results.length === 0) return "No results found.";
+          return results.join("\\n");
+        } catch (err: any) {
+          return `LeanSearch API error: ${err.message || String(err)}`;
         }
       }
 
