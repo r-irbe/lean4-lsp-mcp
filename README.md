@@ -9,6 +9,32 @@ NB! Still pre-alpha!
 
 ---
 
+## Install
+
+From npm (published bin `lean-lsp-mcp` / `lean4-lsp-mcp`):
+
+```bash
+npx lean4-lsp-mcp
+# or
+npm install -g lean4-lsp-mcp
+lean-lsp-mcp
+```
+
+From a clone:
+
+```bash
+git clone https://github.com/r-irbe/lean4-lsp-mcp.git
+cd lean4-lsp-mcp
+npm install
+npm run build
+node dist/index.js
+```
+
+The server speaks MCP over stdio. Point your Lean 4 project at the process
+working directory (or set `LEAN_PROJECT_ROOT`); `elan` / `lake` should be on `PATH`.
+
+---
+
 ## 1. Key Capabilities
 
 1. **Interactive Proof State (`lean_plain_goal`)**: Queries `$/lean/plainGoal` via
@@ -73,14 +99,14 @@ NB! Still pre-alpha!
 
 ### `lean_jump_definition`
 - **Arguments**:
-  - `symbol` (string, required): Qualified symbol name (e.g. `Simplex.volume`).
+  - `symbol` (string, required): Qualified symbol name (e.g. `List.length`).
   - `sourceFile` (string, optional): Context file for relative namespace resolution.
   - `preferOfflineIlean` (boolean, default `true`): Use sub-millisecond `.ilean` cache.
 - **Returns**: Target file path, line number, and character range.
 
 ### `lean_module_dag`
 - **Arguments**:
-  - `moduleName` (string, required): Dot-separated module name (e.g. `EASCI.Simplex`).
+  - `moduleName` (string, required): Dot-separated module name (e.g. `Mathlib.Data.List`).
   - `direction` (enum: `"imports" | "importedBy"`, default `"imports"`).
 - **Returns**: List of direct and transitive module dependencies.
 
@@ -94,15 +120,18 @@ NB! Still pre-alpha!
 
 ## 4. Configuration Across Agent Hosts
 
+Prefer the published bin. After a local clone and `npm run build`, you can
+also use `node dist/index.js`.
+
 ### Claude Code (`~/.claude/claude_desktop_config.json` or project `.mcp.json`)
 ```json
 {
   "mcpServers": {
     "lean-lsp": {
-      "command": "node",
-      "args": ["/absolute/path/to/tacit-mui/tools/lean_lsp_mcp/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "lean4-lsp-mcp"],
       "env": {
-        "PATH": "/home/radu/.elan/bin:/usr/bin:/bin"
+        "PATH": "${HOME}/.elan/bin:/usr/bin:/bin"
       }
     }
   }
@@ -114,8 +143,20 @@ NB! Still pre-alpha!
 {
   "mcpServers": {
     "lean-lsp": {
+      "command": "lean-lsp-mcp"
+    }
+  }
+}
+```
+
+From a clone, after `npm run build`:
+
+```json
+{
+  "mcpServers": {
+    "lean-lsp": {
       "command": "node",
-      "args": ["/absolute/path/to/tacit-mui/tools/lean_lsp_mcp/dist/index.js"]
+      "args": ["dist/index.js"]
     }
   }
 }

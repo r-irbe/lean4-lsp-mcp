@@ -16,7 +16,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = path.resolve(__dirname, "..");
-const repoRoot = process.env.LEAN_PROJECT_ROOT || path.resolve(pkgRoot, "../tacit-mui");
+const repoRoot = process.env.LEAN_PROJECT_ROOT || pkgRoot;
 
 console.log("=== Testing lean4-lsp-mcp Suite ===");
 

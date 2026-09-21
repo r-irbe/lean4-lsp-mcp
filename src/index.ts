@@ -136,7 +136,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        moduleName: { type: "string", description: "Full module name (e.g. EASCI.ReinforcementLearning.Core)" },
+        moduleName: { type: "string", description: "Full module name (e.g. Mathlib.Data.List)" },
         direction: { type: "string", enum: ["imports", "importedBy", "both"], description: "Direction of dependency traversal (default: both)" },
         transitive: { type: "boolean", description: "Perform full transitive closure traversal (default: false)" },
         maxDepth: { type: "integer", description: "Maximum traversal depth for transitive search (default: 20)" },
@@ -578,14 +578,11 @@ export class Lean4IleanIndex {
     const candidateRoots = [
       path.join(this.projectRoot, ".lake", "build", "lib", "lean"),
       path.join(this.projectRoot, ".lake", "build", "ir"),
-      path.join(this.projectRoot, "docs", "easci", "lean", ".lake", "build", "lib", "lean"),
-      path.join(this.projectRoot, "docs", "easci", "lean", ".lake", "build", "ir"),
     ];
 
     // Discover .lake/packages for Mathlib and external libraries
     const packageDirs = [
       path.join(this.projectRoot, ".lake", "packages"),
-      path.join(this.projectRoot, "docs", "easci", "lean", ".lake", "packages"),
     ];
 
     for (const pDir of packageDirs) {
@@ -644,12 +641,9 @@ export class Lean4IleanIndex {
       let sourceFile = "";
       if (moduleName) {
         const relLean = moduleName.replace(/\./g, "/") + ".lean";
-        const candidate1 = path.join(this.projectRoot, "docs", "easci", "lean", relLean);
-        const candidate2 = path.join(this.projectRoot, relLean);
-        if (fs.existsSync(candidate1)) {
-          sourceFile = path.relative(this.projectRoot, candidate1);
-        } else if (fs.existsSync(candidate2)) {
-          sourceFile = path.relative(this.projectRoot, candidate2);
+        const candidate = path.join(this.projectRoot, relLean);
+        if (fs.existsSync(candidate)) {
+          sourceFile = path.relative(this.projectRoot, candidate);
         }
       }
       if (!sourceFile) {
@@ -834,8 +828,7 @@ export class LeanSysrootBridge {
           }
         }
       };
-      scanLeanDir(path.join(projectRoot, "docs", "easci", "lean"));
-      scanLeanDir(path.join(projectRoot, "src"));
+      scanLeanDir(projectRoot);
 
       if (matches.length > 0) {
         lines.push(`Found references in ${matches.length} file(s):`);
@@ -1093,10 +1086,6 @@ export class FileWorkerManager {
         return curr;
       }
       curr = path.dirname(curr);
-    }
-    const easciLean = path.join(this.projectRoot, "docs", "easci", "lean");
-    if (fs.existsSync(path.join(easciLean, "lakefile.lean"))) {
-      return easciLean;
     }
     return this.projectRoot;
   }
