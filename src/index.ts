@@ -215,6 +215,18 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       required: ["query"],
     },
   },
+  {
+    name: "lean_reservoir_search",
+    description: "Find Lean/Lake packages in the Reservoir registry. An exact owner/pkg query uses the documented registry API (the same call Lake makes); a plain-text query searches the published reservoir-index package names (public GitHub API, cached 30 min in-process). Returns registry/site links.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Name search (e.g. sat solver, automata) or an exact owner/pkg (e.g. leanprover-community/mathlib)" },
+        limit: { type: "integer", description: "Maximum name-search matches (default 10, max 30)" },
+      },
+      required: ["query"],
+    },
+  },
 ];
 
 export class BitsetDAGIndex {
@@ -1810,6 +1822,43 @@ export class FileWorkerManager {
 export type LakeServerManager = FileWorkerManager;
 export const LakeServerManager = FileWorkerManager;
 
+let reservoirIndexCache: { at: number; packages: string[] } | null = null;
+
+/** Package names (owner/name) from the published reservoir-index tree, cached 30 min. */
+async function reservoirIndexPackages(): Promise<string[]> {
+  const now = Date.now();
+  if (reservoirIndexCache && now - reservoirIndexCache.at < 30 * 60 * 1000) {
+    return reservoirIndexCache.packages;
+  }
+  const headers: Record<string, string> = {
+    "User-Agent": "lean-lsp-mcp/0.1",
+    "Accept": "application/vnd.github+json",
+  };
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  const res = await fetch(
+    "https://api.github.com/repos/leanprover/reservoir-index/git/trees/master?recursive=1",
+    { signal: controller.signal as any, headers },
+  );
+  clearTimeout(timeoutId);
+  if (!res.ok) throw new Error(`reservoir-index fetch failed: HTTP ${res.status}`);
+  const json: any = await res.json();
+  const seen = new Set<string>();
+  const packages: string[] = [];
+  for (const t of json.tree || []) {
+    const parts = String(t.path).split("/");
+    if (parts.length === 2) {
+      const key = `${parts[0]}/${parts[1]}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        packages.push(key);
+      }
+    }
+  }
+  reservoirIndexCache = { at: now, packages };
+  return packages;
+}
+
 export class McpServer {
   private projectRoot: string;
   private ileanIndex: Lean4IleanIndex;
@@ -2226,6 +2275,63 @@ export class McpServer {
           return out.join("\n\n");
         } catch (err: any) {
           return `arXiv API error: ${err.message || String(err)}`;
+        }
+      }
+
+      case "lean_reservoir_search": {
+        const query = String(args.query ?? "").trim();
+        if (!query) throw new Error("Missing required argument: 'query'");
+        const limit = Math.max(1, Math.min(30, Number(args.limit ?? 10)));
+        const reqHeaders: Record<string, string> = { "User-Agent": "lean-lsp-mcp/0.1" };
+        try {
+          // exact owner/pkg: the documented registry API (identical to Lake's fetchPkg)
+          if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(query)) {
+            const [owner, pkg] = query.split("/");
+            const url =
+              `https://reservoir.lean-lang.org/api/v1/packages/` +
+              `${encodeURIComponent(owner)}/${encodeURIComponent(pkg)}`;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 20000);
+            const res = await fetch(url, { signal: controller.signal as any, headers: reqHeaders });
+            clearTimeout(timeoutId);
+            if (res.ok) {
+              const json: any = await res.json();
+              const data = json && json.data ? json.data : json;
+              const desc = typeof data.description === "string" ? data.description : "";
+              const srcUrl = data.repoUrl || data.githubUrl || data.homepage || "";
+              return (
+                `Registry record: ${owner}/${pkg}\n` +
+                `  name: ${data.name ?? pkg}\n` +
+                `  description: ${desc}\n` +
+                `  source: ${srcUrl}\n` +
+                `  site: https://reservoir.lean-lang.org/packages/${owner}/${pkg}`
+              );
+            }
+          }
+          // name search over the published index tree (cached in-process)
+          const paths = await reservoirIndexPackages();
+          const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+          let matches = paths.filter((p) => terms.every((t) => p.toLowerCase().includes(t)));
+          let partial = false;
+          if (matches.length === 0 && terms.length > 1) {
+            matches = paths.filter((p) => terms.some((t) => p.toLowerCase().includes(t)));
+            partial = true;
+          }
+          matches = matches.slice(0, limit);
+          if (matches.length === 0) {
+            return `No Reservoir packages match '${query}'.`;
+          }
+          const header = partial
+            ? `No exact match for '${query}'; partial matches (any term):\n`
+            : "";
+          return (
+            header +
+            matches
+              .map((p) => `${p}  ->  https://reservoir.lean-lang.org/packages/${p}`)
+              .join("\n")
+          );
+        } catch (err: any) {
+          return `Reservoir error: ${err.message || String(err)}`;
         }
       }
 
