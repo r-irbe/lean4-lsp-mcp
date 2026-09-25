@@ -227,6 +227,18 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       required: ["query"],
     },
   },
+  {
+    name: "lean_dataset_search",
+    description: "Search Hugging Face for formal-math and Lean proof corpora (Proof-Pile-2, NuminaMath, Lean-STaR, ...). Returns dataset ids with download counts, likes, last-update dates and links; gated datasets are flagged.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search terms, e.g. proof-pile, formal proof, Lean 4 tactic" },
+        limit: { type: "integer", description: "Maximum results (default 10, max 30)" },
+      },
+      required: ["query"],
+    },
+  },
 ];
 
 export class BitsetDAGIndex {
@@ -2332,6 +2344,50 @@ export class McpServer {
           );
         } catch (err: any) {
           return `Reservoir error: ${err.message || String(err)}`;
+        }
+      }
+
+      case "lean_dataset_search": {
+        const query = String(args.query ?? "").trim();
+        if (!query) throw new Error("Missing required argument: 'query'");
+        const limit = Math.max(1, Math.min(30, Number(args.limit ?? 10)));
+        try {
+          const url =
+            `https://huggingface.co/api/datasets?search=${encodeURIComponent(query)}` +
+            `&limit=${limit * 3}`;
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 20000);
+          const res = await fetch(url, {
+            signal: controller.signal as any,
+            headers: { "User-Agent": "lean-lsp-mcp/0.1" },
+          });
+          clearTimeout(timeoutId);
+          if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+          const json: any = await res.json();
+          if (!Array.isArray(json) || json.length === 0) {
+            return `No Hugging Face datasets match '${query}'.`;
+          }
+          const rows = json
+            .filter((d: any) => !d.disabled && !d.private)
+            .sort((a: any, b: any) => (b.downloads ?? 0) - (a.downloads ?? 0))
+            .slice(0, limit);
+          if (rows.length === 0) {
+            return `No public Hugging Face datasets match '${query}'.`;
+          }
+          return rows
+            .map((d: any) => {
+              const gate = d.gated ? " [gated]" : "";
+              const when =
+                typeof d.lastModified === "string" ? d.lastModified.slice(0, 10) : "";
+              return (
+                `${d.id}${gate}\n` +
+                `   downloads: ${d.downloads ?? 0} | likes: ${d.likes ?? 0} | updated: ${when}\n` +
+                `   https://huggingface.co/datasets/${d.id}`
+              );
+            })
+            .join("\n");
+        } catch (err: any) {
+          return `Hugging Face API error: ${err.message || String(err)}`;
         }
       }
 
