@@ -966,7 +966,7 @@ export interface BuildLockStatus {
   isLocked: boolean;
   pid?: number;
   lane?: string;
-  source: "lockfile" | "process_table" | "none";
+  source: "lockfile" | "process_table" | "global_workspace_lock" | "none";
   detail?: string;
 }
 
@@ -1032,6 +1032,38 @@ export class LakeBuildGuard {
       // pgrep exits with 1 when no processes match
     }
 
+    // Check global workspace build lock across all parallel packages
+    const globalLockPaths = [
+      "/dev/shm/lean_global_workspace.lock",
+      path.join(os.tmpdir(), "lean_global_workspace.lock"),
+    ];
+    for (const gLock of globalLockPaths) {
+      if (fs.existsSync(gLock)) {
+        try {
+          const raw = fs.readFileSync(gLock, "utf-8");
+          const meta = JSON.parse(raw);
+          const pid = Number(meta.pid);
+          if (pid && this.isPidAlive(pid)) {
+            return {
+              isLocked: true,
+              pid,
+              lane: meta.packageName || meta.lane || "multi-package-build",
+              source: "global_workspace_lock",
+              detail: `Active workspace build in package '${meta.packageName || "unknown"}' by PID ${pid}`,
+            };
+          } else {
+            try {
+              fs.unlinkSync(gLock);
+            } catch {
+              // Ignore unlink race
+            }
+          }
+        } catch {
+          // Ignore parse errors on transient lockfiles
+        }
+      }
+    }
+
     return { isLocked: false, source: "none" };
   }
 
@@ -1042,6 +1074,74 @@ export class LakeBuildGuard {
     } catch {
       return false;
     }
+  }
+}
+
+/**
+ * MultiPackageWorkspaceCoordinator
+ *
+ * Implements Lane FFF (ACT-FLT-64).
+ * Auto-discovers and indexes all parallel Lean 4 packages within the workspace:
+ * - Root package: docs/easci/lean
+ * - Mini-projects: packages/tacit-foundations, packages/stochastic-ccv,
+ *   packages/cusp-catastrophe, packages/phase-portrait,
+ *   packages/reinforcement-learning, packages/agentic-safety,
+ *   packages/provenance-chain.
+ * Resolves document URIs to their owning package root.
+ */
+export class MultiPackageWorkspaceCoordinator {
+  private projectRoot: string;
+  private knownPackages: Map<string, string> = new Map();
+
+  constructor(projectRoot: string) {
+    this.projectRoot = projectRoot;
+    this.discoverPackages();
+  }
+
+  public discoverPackages(): Map<string, string> {
+    this.knownPackages.clear();
+    const easciLean = path.join(this.projectRoot, "docs", "easci", "lean");
+    if (fs.existsSync(path.join(easciLean, "lakefile.lean"))) {
+      this.knownPackages.set("docs/easci/lean", easciLean);
+    }
+    const packagesDir = path.join(this.projectRoot, "packages");
+    if (fs.existsSync(packagesDir)) {
+      try {
+        const entries = fs.readdirSync(packagesDir, { withFileTypes: true });
+        for (const ent of entries) {
+          if (ent.isDirectory()) {
+            const pkgPath = path.join(packagesDir, ent.name);
+            if (
+              fs.existsSync(path.join(pkgPath, "lakefile.lean")) ||
+              fs.existsSync(path.join(pkgPath, "lakefile.toml"))
+            ) {
+              this.knownPackages.set(ent.name, pkgPath);
+            }
+          }
+        }
+      } catch {
+        // Ignore read errors
+      }
+    }
+    return this.knownPackages;
+  }
+
+  public getPackageCount(): number {
+    return this.knownPackages.size;
+  }
+
+  public getKnownPackages(): Map<string, string> {
+    return new Map(this.knownPackages);
+  }
+
+  public resolvePackageForFile(filePath: string): { name: string; root: string } | null {
+    const abs = path.resolve(filePath);
+    for (const [name, root] of this.knownPackages.entries()) {
+      if (abs.startsWith(root + path.sep) || abs === root) {
+        return { name, root };
+      }
+    }
+    return null;
   }
 }
 
