@@ -202,6 +202,19 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       required: ["query"],
     },
   },
+  {
+    name: "lean_arxiv_search",
+    description: "Search arXiv (math.PR, math.NT, math.AG, cs.LO, cs.AI, cs.LG) for mathematical papers, lemma formulations, and proof sketches to ground formalization work. Returns title/authors/identifier/date/abstract per result.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "arXiv search query, e.g. stationary distribution Markov chain ergodic" },
+        category: { type: "string", description: "Optional arXiv category filter, e.g. math.PR, math.NT, cs.LO" },
+        maxResults: { type: "integer", description: "Maximum results (default 5, max 20)" },
+      },
+      required: ["query"],
+    },
+  },
 ];
 
 export class BitsetDAGIndex {
@@ -2169,6 +2182,50 @@ export class McpServer {
           return results.join("\n");
         } catch (err: any) {
           return `LeanSearch API error: ${err.message || String(err)}`;
+        }
+      }
+
+      case "lean_arxiv_search": {
+        const query = args.query;
+        if (!query) throw new Error("Missing required argument: 'query'");
+        const maxResults = Math.max(1, Math.min(20, Number(args.maxResults ?? 5)));
+        const category =
+          typeof args.category === "string" && args.category.trim().length > 0
+            ? ` AND cat:${args.category.trim()}`
+            : "";
+        try {
+          const searchExpr = `all:${query}${category}`;
+          const url =
+            `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(searchExpr)}` +
+            `&start=0&max_results=${maxResults}&sortBy=relevance&sortOrder=descending`;
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 20000);
+          const res = await fetch(url, { signal: controller.signal as any });
+          clearTimeout(timeoutId);
+          if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+          const xml = await res.text();
+          const entries = xml.split("<entry>").slice(1);
+          if (entries.length === 0) return "No arXiv results.";
+          const strip = (s: string) => s.replace(/\s+/g, " ").trim();
+          const pick = (block: string, tag: string): string => {
+            const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`));
+            return m ? strip(m[1]) : "";
+          };
+          const out: string[] = [];
+          for (let i = 0; i < entries.length; i++) {
+            const e = entries[i];
+            const id = pick(e, "id");
+            const title = pick(e, "title");
+            const published = pick(e, "published").slice(0, 10);
+            const authors = [...e.matchAll(/<name>([^<]+)<\/name>/g)]
+              .map((a) => strip(a[1]))
+              .join(", ");
+            const summary = pick(e, "summary").slice(0, 500);
+            out.push(`${i + 1}. ${title}\n   ${authors}\n   ${id} (${published})\n   ${summary}`);
+          }
+          return out.join("\n\n");
+        } catch (err: any) {
+          return `arXiv API error: ${err.message || String(err)}`;
         }
       }
 
