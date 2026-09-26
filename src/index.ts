@@ -2413,10 +2413,10 @@ export class McpServer {
         const proverFilter = args.prover ? String(args.prover).trim().toLowerCase() : undefined;
 
         const candidatePaths = [
-          path.resolve(__dirname, "../../tacit-mui/docs/investigation-garden/source-materials/indexes/master-authority-index.json"),
-          path.resolve(__dirname, "../../../docs/investigation-garden/source-materials/indexes/master-authority-index.json"),
+          path.resolve(__dirname, "../data/itp-ontology/master-authority-index.json"),
+          path.resolve(__dirname, "../../data/itp-ontology/master-authority-index.json"),
+          path.resolve(process.cwd(), "data/itp-ontology/master-authority-index.json"),
           path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes/master-authority-index.json"),
-          path.resolve(os.homedir(), "code/tacit-mui/docs/investigation-garden/source-materials/indexes/master-authority-index.json"),
         ];
 
         let indexPath: string | undefined;
