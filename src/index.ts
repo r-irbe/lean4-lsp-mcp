@@ -8,6 +8,9 @@ import * as os from "node:os";
 import { execSync, spawn, ChildProcess } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 export interface IleanSymbolEntry {
   filePath: string;
   line: number;
@@ -203,6 +206,43 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
+    name: "lean_arxiv_search",
+    description: "Search arXiv (math.PR, math.NT, math.AG, cs.LO, cs.AI, cs.LG) for mathematical papers, lemma formulations, and proof sketches to ground formalization work. Returns title/authors/identifier/date/abstract per result.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "arXiv search query, e.g. stationary distribution Markov chain ergodic" },
+        category: { type: "string", description: "Optional arXiv category filter, e.g. math.PR, math.NT, cs.LO" },
+        maxResults: { type: "integer", description: "Maximum results (default 5, max 20)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "lean_reservoir_search",
+    description: "Find Lean/Lake packages in the Reservoir registry. An exact owner/pkg query uses the documented registry API (the same call Lake makes); a plain-text query searches the published reservoir-index package names (public GitHub API, cached 30 min in-process). Returns registry/site links.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Name search (e.g. sat solver, automata) or an exact owner/pkg (e.g. leanprover-community/mathlib)" },
+        limit: { type: "integer", description: "Maximum name-search matches (default 10, max 30)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "lean_dataset_search",
+    description: "Search Hugging Face for formal-math and Lean proof corpora (Proof-Pile-2, NuminaMath, Lean-STaR, ...). Returns dataset ids with download counts, likes, last-update dates and links; gated datasets are flagged.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search terms, e.g. proof-pile, formal proof, Lean 4 tactic" },
+        limit: { type: "integer", description: "Maximum results (default 10, max 30)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
     name: "lean_ontology_search",
     description: "Search canonical ITP Master Authority Ontology for mathematical concepts, cross-prover tactic mappings (Lean 4, Coq, Isabelle, HOL Light, Metamath), MSC2020 classifications, and statutory book intervals.",
     inputSchema: {
@@ -212,6 +252,29 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         prover: { type: "string", description: "Optional prover filter (lean4, coq, isabelle_hol, hol_light, metamath)" },
       },
       required: ["query"],
+    },
+  },
+  {
+    name: "lean_book_index_lookup",
+    description: "Look up a term in the author-curated book indexes (the librarian pipeline's per-book index JSON under source-materials/indexes/), returning the term's primary references (book, section anchors, pages) and cross-references - the directed query routing per the corpus plan section 3.3.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        term: { type: "string", description: "The index term (e.g. calculation block, inversion, well-founded)" },
+        book: { type: "string", description: "Optional book filter (corpus_id or file stem, e.g. avigad-massot-mathematics-in-lean)" },
+      },
+      required: ["term"],
+    },
+  },
+  {
+    name: "lean_cross_itp_concordance",
+    description: "Translate a concept across the proof assistants using the librarian corpus's cross-prover concordance (e.g. Lean rcases <-> Coq inversion <-> Isabelle cases); lists each prover's tactic with the book anchor that motivated it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        concept: { type: "string", description: "The concept or tactic to translate (e.g. inversion, induction, rewrite)" },
+      },
+      required: ["concept"],
     },
   },
 ];
@@ -588,14 +651,18 @@ export class Lean4IleanIndex {
     this.symbolIndex.clear();
     this.moduleImportsMap.clear();
 
+    const easciLean = path.join(this.projectRoot, "docs", "easci", "lean");
     const candidateRoots = [
       path.join(this.projectRoot, ".lake", "build", "lib", "lean"),
       path.join(this.projectRoot, ".lake", "build", "ir"),
+      path.join(easciLean, ".lake", "build", "lib", "lean"),
+      path.join(easciLean, ".lake", "build", "ir"),
     ];
 
     // Discover .lake/packages for Mathlib and external libraries
     const packageDirs = [
       path.join(this.projectRoot, ".lake", "packages"),
+      path.join(easciLean, ".lake", "packages"),
     ];
 
     for (const pDir of packageDirs) {
@@ -655,8 +722,11 @@ export class Lean4IleanIndex {
       if (moduleName) {
         const relLean = moduleName.replace(/\./g, "/") + ".lean";
         const candidate = path.join(this.projectRoot, relLean);
+        const candidateEasci = path.join(this.projectRoot, "docs", "easci", "lean", relLean);
         if (fs.existsSync(candidate)) {
           sourceFile = path.relative(this.projectRoot, candidate);
+        } else if (fs.existsSync(candidateEasci)) {
+          sourceFile = path.relative(this.projectRoot, candidateEasci);
         }
       }
       if (!sourceFile) {
@@ -1112,6 +1182,12 @@ export class MultiPackageWorkspaceCoordinator {
 
   public discoverPackages(): Map<string, string> {
     this.knownPackages.clear();
+    if (
+      fs.existsSync(path.join(this.projectRoot, "lakefile.lean")) ||
+      fs.existsSync(path.join(this.projectRoot, "lakefile.toml"))
+    ) {
+      this.knownPackages.set(path.basename(this.projectRoot) || "root", this.projectRoot);
+    }
     const easciLean = path.join(this.projectRoot, "docs", "easci", "lean");
     if (fs.existsSync(path.join(easciLean, "lakefile.lean"))) {
       this.knownPackages.set("docs/easci/lean", easciLean);
@@ -1809,6 +1885,43 @@ export class FileWorkerManager {
 export type LakeServerManager = FileWorkerManager;
 export const LakeServerManager = FileWorkerManager;
 
+let reservoirIndexCache: { at: number; packages: string[] } | null = null;
+
+/** Package names (owner/name) from the published reservoir-index tree, cached 30 min. */
+async function reservoirIndexPackages(): Promise<string[]> {
+  const now = Date.now();
+  if (reservoirIndexCache && now - reservoirIndexCache.at < 30 * 60 * 1000) {
+    return reservoirIndexCache.packages;
+  }
+  const headers: Record<string, string> = {
+    "User-Agent": "lean-lsp-mcp/0.1",
+    "Accept": "application/vnd.github+json",
+  };
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  const res = await fetch(
+    "https://api.github.com/repos/leanprover/reservoir-index/git/trees/master?recursive=1",
+    { signal: controller.signal as any, headers },
+  );
+  clearTimeout(timeoutId);
+  if (!res.ok) throw new Error(`reservoir-index fetch failed: HTTP ${res.status}`);
+  const json: any = await res.json();
+  const seen = new Set<string>();
+  const packages: string[] = [];
+  for (const t of json.tree || []) {
+    const parts = String(t.path).split("/");
+    if (parts.length === 2) {
+      const key = `${parts[0]}/${parts[1]}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        packages.push(key);
+      }
+    }
+  }
+  reservoirIndexCache = { at: now, packages };
+  return packages;
+}
+
 export class McpServer {
   private projectRoot: string;
   private ileanIndex: Lean4IleanIndex;
@@ -2184,6 +2297,151 @@ export class McpServer {
         }
       }
 
+      case "lean_arxiv_search": {
+        const query = args.query;
+        if (!query) throw new Error("Missing required argument: 'query'");
+        const maxResults = Math.max(1, Math.min(20, Number(args.maxResults ?? 5)));
+        const category =
+          typeof args.category === "string" && args.category.trim().length > 0
+            ? ` AND cat:${args.category.trim()}`
+            : "";
+        try {
+          const searchExpr = `all:${query}${category}`;
+          const url =
+            `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(searchExpr)}` +
+            `&start=0&max_results=${maxResults}&sortBy=relevance&sortOrder=descending`;
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 20000);
+          const res = await fetch(url, { signal: controller.signal as any });
+          clearTimeout(timeoutId);
+          if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+          const xml = await res.text();
+          const entries = xml.split("<entry>").slice(1);
+          if (entries.length === 0) return "No arXiv results.";
+          const strip = (s: string) => s.replace(/\s+/g, " ").trim();
+          const pick = (block: string, tag: string): string => {
+            const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`));
+            return m ? strip(m[1]) : "";
+          };
+          const out: string[] = [];
+          for (let i = 0; i < entries.length; i++) {
+            const e = entries[i];
+            const id = pick(e, "id");
+            const title = pick(e, "title");
+            const published = pick(e, "published").slice(0, 10);
+            const authors = [...e.matchAll(/<name>([^<]+)<\/name>/g)]
+              .map((a) => strip(a[1]))
+              .join(", ");
+            const summary = pick(e, "summary").slice(0, 500);
+            out.push(`${i + 1}. ${title}\n   ${authors}\n   ${id} (${published})\n   ${summary}`);
+          }
+          return out.join("\n\n");
+        } catch (err: any) {
+          return `arXiv API error: ${err.message || String(err)}`;
+        }
+      }
+
+      case "lean_reservoir_search": {
+        const query = String(args.query ?? "").trim();
+        if (!query) throw new Error("Missing required argument: 'query'");
+        const limit = Math.max(1, Math.min(30, Number(args.limit ?? 10)));
+        const reqHeaders: Record<string, string> = { "User-Agent": "lean-lsp-mcp/0.1" };
+        try {
+          // exact owner/pkg: the documented registry API (identical to Lake's fetchPkg)
+          if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(query)) {
+            const [owner, pkg] = query.split("/");
+            const url =
+              `https://reservoir.lean-lang.org/api/v1/packages/` +
+              `${encodeURIComponent(owner)}/${encodeURIComponent(pkg)}`;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 20000);
+            const res = await fetch(url, { signal: controller.signal as any, headers: reqHeaders });
+            clearTimeout(timeoutId);
+            if (res.ok) {
+              const json: any = await res.json();
+              const data = json && json.data ? json.data : json;
+              const desc = typeof data.description === "string" ? data.description : "";
+              const srcUrl = data.repoUrl || data.githubUrl || data.homepage || "";
+              return (
+                `Registry record: ${owner}/${pkg}\n` +
+                `  name: ${data.name ?? pkg}\n` +
+                `  description: ${desc}\n` +
+                `  source: ${srcUrl}\n` +
+                `  site: https://reservoir.lean-lang.org/packages/${owner}/${pkg}`
+              );
+            }
+          }
+          // name search over the published index tree (cached in-process)
+          const paths = await reservoirIndexPackages();
+          const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+          let matches = paths.filter((p) => terms.every((t) => p.toLowerCase().includes(t)));
+          let partial = false;
+          if (matches.length === 0 && terms.length > 1) {
+            matches = paths.filter((p) => terms.some((t) => p.toLowerCase().includes(t)));
+            partial = true;
+          }
+          matches = matches.slice(0, limit);
+          if (matches.length === 0) {
+            return `No Reservoir packages match '${query}'.`;
+          }
+          const header = partial
+            ? `No exact match for '${query}'; partial matches (any term):\n`
+            : "";
+          return (
+            header +
+            matches
+              .map((p) => `${p}  ->  https://reservoir.lean-lang.org/packages/${p}`)
+              .join("\n")
+          );
+        } catch (err: any) {
+          return `Reservoir error: ${err.message || String(err)}`;
+        }
+      }
+
+      case "lean_dataset_search": {
+        const query = String(args.query ?? "").trim();
+        if (!query) throw new Error("Missing required argument: 'query'");
+        const limit = Math.max(1, Math.min(30, Number(args.limit ?? 10)));
+        try {
+          const url =
+            `https://huggingface.co/api/datasets?search=${encodeURIComponent(query)}` +
+            `&limit=${limit * 3}`;
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 20000);
+          const res = await fetch(url, {
+            signal: controller.signal as any,
+            headers: { "User-Agent": "lean-lsp-mcp/0.1" },
+          });
+          clearTimeout(timeoutId);
+          if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+          const json: any = await res.json();
+          if (!Array.isArray(json) || json.length === 0) {
+            return `No Hugging Face datasets match '${query}'.`;
+          }
+          const rows = json
+            .filter((d: any) => !d.disabled && !d.private)
+            .sort((a: any, b: any) => (b.downloads ?? 0) - (a.downloads ?? 0))
+            .slice(0, limit);
+          if (rows.length === 0) {
+            return `No public Hugging Face datasets match '${query}'.`;
+          }
+          return rows
+            .map((d: any) => {
+              const gate = d.gated ? " [gated]" : "";
+              const when =
+                typeof d.lastModified === "string" ? d.lastModified.slice(0, 10) : "";
+              return (
+                `${d.id}${gate}\n` +
+                `   downloads: ${d.downloads ?? 0} | likes: ${d.likes ?? 0} | updated: ${when}\n` +
+                `   https://huggingface.co/datasets/${d.id}`
+              );
+            })
+            .join("\n");
+        } catch (err: any) {
+          return `Hugging Face API error: ${err.message || String(err)}`;
+        }
+      }
+
       case "lean_ontology_search": {
         const query = String(args.query ?? "").trim().toLowerCase();
         if (!query) throw new Error("Missing required argument: 'query'");
@@ -2258,6 +2516,120 @@ export class McpServer {
         } catch (err: any) {
           return `Error searching ITP ontology: ${err.message || String(err)}`;
         }
+      }
+
+      case "lean_book_index_lookup": {
+        const term = String(args.term ?? "").trim().toLowerCase();
+        if (!term) throw new Error("Missing required argument: 'term'");
+        const bookFilter = args.book ? String(args.book).trim().toLowerCase() : undefined;
+
+        const candidateIndexDirs = [
+          path.resolve(__dirname, "../data/itp-ontology/book-indexes"),
+          path.resolve(__dirname, "../../data/itp-ontology/book-indexes"),
+          path.resolve(process.cwd(), "data/itp-ontology/book-indexes"),
+          path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes"),
+        ];
+        const indexesDir = candidateIndexDirs.find(p => fs.existsSync(p));
+        if (!indexesDir) {
+          return `Book indexes not found in candidate paths.`;
+        }
+
+        const results: string[] = [];
+        for (const indexFile of fs.readdirSync(indexesDir).filter(f => f.endsWith(".index.json"))) {
+          const corpusId = indexFile.replace(".index.json", "");
+          if (bookFilter && !corpusId.includes(bookFilter)) continue;
+          try {
+            const data = JSON.parse(fs.readFileSync(path.join(indexesDir, indexFile), "utf-8"));
+            const entries: any[] = data.entries || (data.index_metadata && data.index_metadata.entries) || [];
+            for (const e of entries) {
+              const t = (e.term || "").toLowerCase();
+              if (t.includes(term)) {
+                const refs = (e.primary_references || []).map((r: any) => {
+                  const page = r.page ? `, p. ${r.page}` : "";
+                  const anchor = r.section_anchor ? ` [${r.section_anchor}]` : "";
+                  const def = r.is_definitive ? " (definitive)" : "";
+                  return `${corpusId}${page}${anchor}${def}`;
+                });
+                const xr = (e.cross_references || []).slice(0, 3);
+                results.push(
+                  `- ${e.term || t} (${e.category || "term"}) in ${corpusId}: ${refs.join("; ")}` +
+                  (xr.length ? ` | cross-refs: ${xr.join(", ")}` : "")
+                );
+              }
+            }
+          } catch (err) {
+            results.push(`- ${indexFile}: unreadable (${String(err).slice(0, 60)})`);
+          }
+        }
+
+        return results.length
+          ? `Book index matches for "${term}":\n` + results.join("\n")
+          : `No book index matches for "${term}".`;
+      }
+
+      case "lean_cross_itp_concordance": {
+        const concept = String(args.concept ?? "").trim().toLowerCase();
+        if (!concept) throw new Error("Missing required argument: 'concept'");
+
+        const candidateConcordancePaths = [
+          path.resolve(__dirname, "../data/itp-ontology/master-authority-index.json"),
+          path.resolve(__dirname, "../../data/itp-ontology/master-authority-index.json"),
+          path.resolve(process.cwd(), "data/itp-ontology/master-authority-index.json"),
+          path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes/master-authority-index.json"),
+        ];
+        const concordancePath = candidateConcordancePaths.find(p => fs.existsSync(p));
+        if (!concordancePath) {
+          return `Master authority index not found in candidate paths.`;
+        }
+
+        const data = JSON.parse(fs.readFileSync(concordancePath, "utf-8"));
+        const concepts = data.master_concepts || [];
+        const lines: string[] = [];
+
+        for (const c of concepts) {
+          const tactics = c.prover_tactics || {};
+          const synonyms = (c.synonyms || []).map((s: string) => s.toLowerCase());
+          const cname = (c.canonical_name || "").toLowerCase();
+          if (cname.includes(concept) || synonyms.some((s: string) => s.includes(concept))) {
+            lines.push(`## ${c.canonical_name} (${c.concept_id})`);
+            for (const [prover, tactic] of Object.entries(tactics)) {
+              lines.push(`  - ${prover}: ${tactic}`);
+            }
+          }
+        }
+
+        if (!lines.length) {
+          // fall back: search the per-book indexes' cross-references for the concept
+          const candidateIndexDirs = [
+            path.resolve(__dirname, "../data/itp-ontology/book-indexes"),
+            path.resolve(__dirname, "../../data/itp-ontology/book-indexes"),
+            path.resolve(process.cwd(), "data/itp-ontology/book-indexes"),
+            path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes"),
+          ];
+          const indexesDir = candidateIndexDirs.find(p => fs.existsSync(p));
+          if (indexesDir) {
+            for (const f of fs.readdirSync(indexesDir).filter(f => f.endsWith(".index.json"))) {
+              try {
+                const d = JSON.parse(fs.readFileSync(path.join(indexesDir, f), "utf-8"));
+                const entries: any[] = d.entries || (d.index_metadata && d.index_metadata.entries) || [];
+                for (const e of entries) {
+                  if ((e.term || "").toLowerCase().includes(concept)) {
+                    lines.push(`- ${e.term} (${f.replace(".index.json", "")})`);
+                    for (const r of e.primary_references || []) {
+                      if (r.prover_anchor) {
+                        lines.push(`  ${r.section_anchor ? `${r.section_anchor}: ` : ""}${r.prover_anchor}`);
+                      }
+                    }
+                  }
+                }
+              } catch { /* skip */ }
+            }
+          }
+        }
+
+        return lines.length
+          ? `Cross-ITP concordance for "${concept}":\n` + lines.join("\n")
+          : `No concordance entry for "${concept}" yet (the master authority catalog is under construction).`;
       }
 
       default:

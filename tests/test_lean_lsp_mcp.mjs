@@ -112,9 +112,34 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     assert(toolNames.includes("lean_arxiv_search"), "Includes lean_arxiv_search");
     assert(toolNames.includes("lean_reservoir_search"), "Includes lean_reservoir_search");
     assert(toolNames.includes("lean_dataset_search"), "Includes lean_dataset_search");
+    assert(toolNames.includes("lean_ontology_search"), "Includes lean_ontology_search");
+    assert(toolNames.includes("lean_book_index_lookup"), "Includes lean_book_index_lookup");
+    assert(toolNames.includes("lean_cross_itp_concordance"), "Includes lean_cross_itp_concordance");
+
+    const bookRes = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+            name: "lean_book_index_lookup",
+            arguments: { term: "induction" },
+        },
+    });
+    assert(bookRes && !bookRes.result.isError, "lean_book_index_lookup dispatch ok");
+
+    const concRes = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: {
+            name: "lean_cross_itp_concordance",
+            arguments: { concept: "induction" },
+        },
+    });
+    assert(concRes && !concRes.result.isError, "lean_cross_itp_concordance dispatch ok");
 
     server.dispose();
-    console.log("  - McpServer Dispatch (all 13 tools): PASS");
+    console.log("  - McpServer Dispatch (all 16 tools): PASS");
 }
 
 // 5. LakeBuildGuard Concurrency Check
