@@ -96,7 +96,7 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
         method: "tools/list",
     });
     assert(listRes && Array.isArray(listRes.result.tools), "tools list is array");
-    assert.strictEqual(listRes.result.tools.length, 13, "Exposes 13 tools (5 core + lean_filtered_goal + 2 old + 5 search/discovery: loogle/local/leansearch/arxiv/reservoir/datasets)");
+    assert.strictEqual(listRes.result.tools.length, 16, "Exposes 16 tools (5 core + lean_filtered_goal + 2 old + 5 search/discovery + ontology + 2 book-index: lookup/concordance)");
 
     const toolNames = listRes.result.tools.map(t => t.name);
     assert(toolNames.includes("lean_goal"), "Includes lean_goal");

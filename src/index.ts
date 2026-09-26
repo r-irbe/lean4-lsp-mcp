@@ -8,6 +8,9 @@ import * as os from "node:os";
 import { execSync, spawn, ChildProcess } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 export interface IleanSymbolEntry {
   filePath: string;
   line: number;
@@ -249,6 +252,29 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         prover: { type: "string", description: "Optional prover filter (lean4, coq, isabelle_hol, hol_light, metamath)" },
       },
       required: ["query"],
+    },
+  },
+  {
+    name: "lean_book_index_lookup",
+    description: "Look up a term in the author-curated book indexes (the librarian pipeline's per-book index JSON under source-materials/indexes/), returning the term's primary references (book, section anchors, pages) and cross-references - the directed query routing per the corpus plan section 3.3.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        term: { type: "string", description: "The index term (e.g. calculation block, inversion, well-founded)" },
+        book: { type: "string", description: "Optional book filter (corpus_id or file stem, e.g. avigad-massot-mathematics-in-lean)" },
+      },
+      required: ["term"],
+    },
+  },
+  {
+    name: "lean_cross_itp_concordance",
+    description: "Translate a concept across the proof assistants using the librarian corpus's cross-prover concordance (e.g. Lean rcases <-> Coq inversion <-> Isabelle cases); lists each prover's tactic with the book anchor that motivated it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        concept: { type: "string", description: "The concept or tactic to translate (e.g. inversion, induction, rewrite)" },
+      },
+      required: ["concept"],
     },
   },
 ];
@@ -1978,7 +2004,101 @@ export class McpServer {
           };
         }
 
-        default:
+        case "lean_book_index_lookup": {
+        const term = String(args.term ?? "").trim().toLowerCase();
+        if (!term) throw new Error("Missing required argument: 'term'");
+        const bookFilter = args.book ? String(args.book).trim().toLowerCase() : undefined;
+
+        const indexesDir = path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes");
+        if (!fs.existsSync(indexesDir)) {
+          return `Book indexes not found at ${indexesDir}.`;
+        }
+
+        const results: string[] = [];
+        for (const indexFile of fs.readdirSync(indexesDir).filter(f => f.endsWith(".index.json"))) {
+          const corpusId = indexFile.replace(".index.json", "");
+          if (bookFilter && !corpusId.includes(bookFilter)) continue;
+          try {
+            const data = JSON.parse(fs.readFileSync(path.join(indexesDir, indexFile), "utf-8"));
+            const entries: any[] = data.entries || (data.index_metadata && data.index_metadata.entries) || [];
+            for (const e of entries) {
+              const t = (e.term || "").toLowerCase();
+              if (t.includes(term)) {
+                const refs = (e.primary_references || []).map((r: any) => {
+                  const page = r.page ? `, p. ${r.page}` : "";
+                  const anchor = r.section_anchor ? ` [${r.section_anchor}]` : "";
+                  const def = r.is_definitive ? " (definitive)" : "";
+                  return `${corpusId}${page}${anchor}${def}`;
+                });
+                const xr = (e.cross_references || []).slice(0, 3);
+                results.push(
+                  `- ${e.term || t} (${e.category || "term"}) in ${corpusId}: ${refs.join("; ")}` +
+                  (xr.length ? ` | cross-refs: ${xr.join(", ")}` : "")
+                );
+              }
+            }
+          } catch (err) {
+            results.push(`- ${indexFile}: unreadable (${String(err).slice(0, 60)})`);
+          }
+        }
+
+        return results.length
+          ? `Book index matches for "${term}":\n` + results.join("\n")
+          : `No book index matches for "${term}".`;
+      }
+
+      case "lean_cross_itp_concordance": {
+        const concept = String(args.concept ?? "").trim().toLowerCase();
+        if (!concept) throw new Error("Missing required argument: 'concept'");
+
+        const concordancePath = path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes/master-authority-index.json");
+        if (!fs.existsSync(concordancePath)) {
+          return `Master authority index not found at ${concordancePath}.`;
+        }
+
+        const data = JSON.parse(fs.readFileSync(concordancePath, "utf-8"));
+        const concepts = data.master_concepts || [];
+        const lines: string[] = [];
+
+        for (const c of concepts) {
+          const tactics = c.prover_tactics || {};
+          const synonyms = (c.synonyms || []).map((s: string) => s.toLowerCase());
+          const cname = (c.canonical_name || "").toLowerCase();
+          if (cname.includes(concept) || synonyms.some((s: string) => s.includes(concept))) {
+            lines.push(`## ${c.canonical_name} (${c.concept_id})`);
+            for (const [prover, tactic] of Object.entries(tactics)) {
+              lines.push(`  - ${prover}: ${tactic}`);
+            }
+          }
+        }
+
+        if (!lines.length) {
+          // fall back: search the per-book indexes' cross-references for the concept
+          const indexesDir = path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes");
+          for (const f of fs.readdirSync(indexesDir).filter(f => f.endsWith(".index.json"))) {
+            try {
+              const d = JSON.parse(fs.readFileSync(path.join(indexesDir, f), "utf-8"));
+              const entries: any[] = d.entries || (d.index_metadata && d.index_metadata.entries) || [];
+              for (const e of entries) {
+                if ((e.term || "").toLowerCase().includes(concept)) {
+                  lines.push(`- ${e.term} (${f.replace(".index.json", "")})`);
+                  for (const r of e.primary_references || []) {
+                    if (r.prover_anchor) {
+                      lines.push(`  ${r.section_anchor ? `${r.section_anchor}: ` : ""}${r.prover_anchor}`);
+                    }
+                  }
+                }
+              }
+            } catch { /* skip */ }
+          }
+        }
+
+        return lines.length
+          ? `Cross-ITP concordance for "${concept}":\n` + lines.join("\n")
+          : `No concordance entry for "${concept}" yet (the master authority catalog is under construction).`;
+      }
+
+      default:
           return {
             jsonrpc: "2.0",
             id,
