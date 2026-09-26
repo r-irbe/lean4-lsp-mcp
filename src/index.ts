@@ -239,6 +239,18 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       required: ["query"],
     },
   },
+  {
+    name: "lean_ontology_search",
+    description: "Search canonical ITP Master Authority Ontology for mathematical concepts, cross-prover tactic mappings (Lean 4, Coq, Isabelle, HOL Light, Metamath), MSC2020 classifications, and statutory book intervals.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Concept name, keyword, or tactic (e.g. Presburger, Separation, Kan, omega, decide)" },
+        prover: { type: "string", description: "Optional prover filter (lean4, coq, isabelle_hol, hol_light, metamath)" },
+      },
+      required: ["query"],
+    },
+  },
 ];
 
 export class BitsetDAGIndex {
@@ -613,14 +625,18 @@ export class Lean4IleanIndex {
     this.symbolIndex.clear();
     this.moduleImportsMap.clear();
 
+    const easciLean = path.join(this.projectRoot, "docs", "easci", "lean");
     const candidateRoots = [
       path.join(this.projectRoot, ".lake", "build", "lib", "lean"),
       path.join(this.projectRoot, ".lake", "build", "ir"),
+      path.join(easciLean, ".lake", "build", "lib", "lean"),
+      path.join(easciLean, ".lake", "build", "ir"),
     ];
 
     // Discover .lake/packages for Mathlib and external libraries
     const packageDirs = [
       path.join(this.projectRoot, ".lake", "packages"),
+      path.join(easciLean, ".lake", "packages"),
     ];
 
     for (const pDir of packageDirs) {
@@ -680,8 +696,11 @@ export class Lean4IleanIndex {
       if (moduleName) {
         const relLean = moduleName.replace(/\./g, "/") + ".lean";
         const candidate = path.join(this.projectRoot, relLean);
+        const candidateEasci = path.join(this.projectRoot, "docs", "easci", "lean", relLean);
         if (fs.existsSync(candidate)) {
           sourceFile = path.relative(this.projectRoot, candidate);
+        } else if (fs.existsSync(candidateEasci)) {
+          sourceFile = path.relative(this.projectRoot, candidateEasci);
         }
       }
       if (!sourceFile) {
@@ -2388,6 +2407,83 @@ export class McpServer {
             .join("\n");
         } catch (err: any) {
           return `Hugging Face API error: ${err.message || String(err)}`;
+        }
+      }
+
+      case "lean_ontology_search": {
+        const query = String(args.query ?? "").trim().toLowerCase();
+        if (!query) throw new Error("Missing required argument: 'query'");
+        const proverFilter = args.prover ? String(args.prover).trim().toLowerCase() : undefined;
+
+        const candidatePaths = [
+          path.resolve(__dirname, "../../../../../investigation-garden/source-materials/indexes/master-authority-index.json"),
+          path.resolve(__dirname, "../../../docs/investigation-garden/source-materials/indexes/master-authority-index.json"),
+          path.resolve(__dirname, "../../tacit-mui/docs/investigation-garden/source-materials/indexes/master-authority-index.json"),
+          path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes/master-authority-index.json"),
+          path.resolve(os.homedir(), "code/tacit-mui/docs/investigation-garden/source-materials/indexes/master-authority-index.json"),
+        ];
+
+        let indexPath: string | undefined;
+        for (const p of candidatePaths) {
+          if (fs.existsSync(p)) {
+            indexPath = p;
+            break;
+          }
+        }
+
+        if (!indexPath) {
+          return `ITP Master Authority Ontology index not found in candidate paths.`;
+        }
+
+        try {
+          const raw = fs.readFileSync(indexPath, "utf-8");
+          const data = JSON.parse(raw);
+          const concepts = data.master_concepts || [];
+          const matches: string[] = [];
+
+          for (const c of concepts) {
+            const cid = (c.concept_id || "").toLowerCase();
+            const cname = (c.canonical_name || "").toLowerCase();
+            const domain = (c.ranganathan_facet?.domain_theory || "").toLowerCase();
+            const synonyms = (c.synonyms || []).map((s: string) => s.toLowerCase());
+
+            let tacticMatch = false;
+            if (c.prover_mappings) {
+              for (const [pName, pVal] of Object.entries<any>(c.prover_mappings)) {
+                if (!proverFilter || pName.toLowerCase() === proverFilter) {
+                  const tacs = (pVal.primary_tactics || []).join(" ").toLowerCase();
+                  if (tacs.includes(query)) {
+                    tacticMatch = true;
+                    break;
+                  }
+                }
+              }
+            }
+
+            if (cid.includes(query) || cname.includes(query) || domain.includes(query) || synonyms.some((s: string) => s.includes(query)) || tacticMatch) {
+              let out = `Concept: ${c.concept_id}\nName: ${c.canonical_name}\nDomain: ${c.ranganathan_facet?.domain_theory || "ITP"}\nMSC2020: ${(c.msc2020 || []).join(", ")}\n`;
+              out += `Prover Tactics:\n`;
+              for (const [pName, pVal] of Object.entries<any>(c.prover_mappings || {})) {
+                if (!proverFilter || pName.toLowerCase() === proverFilter) {
+                  out += `  - [${pName}]: tactics="${(pVal.primary_tactics || []).join("; ")}", pattern="${pVal.syntax_pattern || ""}"\n`;
+                }
+              }
+              if (c.authoritative_intervals && c.authoritative_intervals.length > 0) {
+                out += `Statutory Intervals:\n`;
+                for (const urn of c.authoritative_intervals) {
+                  out += `  - ${urn}\n`;
+                }
+              }
+              matches.push(out);
+            }
+          }
+
+          if (matches.length === 0) {
+            return `No matching concepts found in ITP Ontology for query: "${args.query}"`;
+          }
+          return `Found ${matches.length} matching concept(s) in ITP Master Authority Ontology:\n\n` + matches.join("\n---\n");
+        } catch (err: any) {
+          return `Error searching ITP ontology: ${err.message || String(err)}`;
         }
       }
 
