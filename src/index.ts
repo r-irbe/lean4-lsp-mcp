@@ -277,6 +277,59 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       required: ["concept"],
     },
   },
+  {
+    name: "lean_proof_skeleton",
+    description: "Extract logical milestone proof skeleton (have, obtain, calc, induction, cases) from a theorem in a .lean file without tactic micro-steps",
+    inputSchema: {
+      type: "object",
+      properties: {
+        filePath: { type: "string", description: "Path to the .lean file (relative or absolute)" },
+        symbol: { type: "string", description: "Optional symbol or theorem name to extract skeleton for" },
+        startLine: { type: "integer", description: "Optional 1-based start line of proof" },
+        endLine: { type: "integer", description: "Optional 1-based end line of proof" },
+      },
+      required: ["filePath"],
+    },
+  },
+  {
+    name: "lean_blueprint_scaffold",
+    description: "Generate Lean Blueprint LaTeX environment (theorem, lemma, definition) with \\lean{...}, \\uses{...}, and \\leanok tags from declaration metadata",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "Lean declaration name (e.g. EulerPacketPiola.matrixAntisym_congruence)" },
+        filePath: { type: "string", description: "Optional path to the .lean file if symbol is not in .ilean cache" },
+        line: { type: "integer", description: "Optional 1-based line number" },
+        title: { type: "string", description: "Optional human-readable title for the theorem/definition" },
+      },
+      required: ["symbol"],
+    },
+  },
+  {
+    name: "lean_dependency_subgraph",
+    description: "Extract transitive dependency subgraph for a declaration or module formatted as JSON, Mermaid graph, or Graphviz DOT",
+    inputSchema: {
+      type: "object",
+      properties: {
+        moduleName: { type: "string", description: "Full module name (e.g. Euler.PacketPiolaAlgebra)" },
+        maxDepth: { type: "integer", description: "Maximum traversal depth (default: 5)" },
+        format: { type: "string", enum: ["json", "mermaid", "dot"], description: "Output format (default: mermaid)" },
+      },
+      required: ["moduleName"],
+    },
+  },
+  {
+    name: "lean_module_census",
+    description: "Run an instant static census on a Lean file or directory, returning line counts, theorems, definitions, structures, axioms, and sorries",
+    inputSchema: {
+      type: "object",
+      properties: {
+        targetPath: { type: "string", description: "Path to file or directory relative to project root" },
+        format: { type: "string", enum: ["summary", "markdown", "json"], description: "Output format (default: markdown)" },
+      },
+      required: ["targetPath"],
+    },
+  },
 ];
 
 export class BitsetDAGIndex {
@@ -2630,6 +2683,290 @@ export class McpServer {
         return lines.length
           ? `Cross-ITP concordance for "${concept}":\n` + lines.join("\n")
           : `No concordance entry for "${concept}" yet (the master authority catalog is under construction).`;
+      }
+
+      case "lean_proof_skeleton": {
+        let filePath = String(args.filePath || "").trim();
+        if (!filePath && args.symbol) {
+          const sym = this.ileanIndex.lookupSymbol(args.symbol);
+          if (sym) filePath = sym.filePath;
+        }
+        if (!filePath) {
+          throw new Error("Missing required argument: 'filePath' (or valid 'symbol')");
+        }
+        const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.projectRoot, filePath);
+        if (!fs.existsSync(absPath)) {
+          return `File not found: ${filePath}`;
+        }
+        const content = fs.readFileSync(absPath, "utf-8");
+        const lines = content.split(/\r?\n/);
+
+        let startLine = Number(args.startLine ?? 1);
+        let endLine = Number(args.endLine ?? lines.length);
+
+        if (args.symbol && !args.startLine) {
+          const symName = String(args.symbol).split(".").pop()!;
+          const declRegex = new RegExp(`^(?:(?:noncomputable|scoped|protected|private)\\s+)*(?:theorem|lemma|def)\\s+${symName}\\b`);
+          for (let i = 0; i < lines.length; i++) {
+            if (declRegex.test(lines[i].trim())) {
+              startLine = i + 1;
+              for (let j = i + 1; j < lines.length; j++) {
+                const trimmed = lines[j].trim();
+                if (/^(?:(?:noncomputable|scoped|protected|private)\s+)*(?:theorem|lemma|def|structure|class)\s+[A-Za-z0-9_.]+\b/.test(trimmed) ||
+                    /^end\s+[A-Za-z0-9_.]+\b/.test(trimmed)) {
+                  endLine = j;
+                  break;
+                }
+              }
+              break;
+            }
+          }
+        }
+
+        const skeleton: string[] = [
+          `# Proof Skeleton for ${args.symbol || path.basename(filePath)} (${path.relative(this.projectRoot, absPath)}: lines ${startLine}-${endLine})`,
+          "",
+        ];
+
+        const milestoneRegex = /^\s*(?:have\b|obtain\b|calc\b|induction\b|rcases\b|cases\b|constructor\b|by_contra\b|ext\b)/;
+        for (let idx = startLine - 1; idx < endLine; idx++) {
+          const rawLine = lines[idx];
+          const trimmed = rawLine.trim();
+          if (idx === startLine - 1) {
+            skeleton.push(`[Line ${idx + 1}] Statement: ${trimmed}`);
+          } else if (milestoneRegex.test(trimmed)) {
+            skeleton.push(`  - [Line ${idx + 1}] ${trimmed}`);
+          }
+        }
+
+        if (skeleton.length <= 2) {
+          skeleton.push("  (Single-tactic or term-mode proof; no nested have/obtain milestones detected)");
+        }
+
+        return skeleton.join("\n");
+      }
+
+      case "lean_blueprint_scaffold": {
+        const symbol = String(args.symbol || "").trim();
+        if (!symbol) throw new Error("Missing required argument: 'symbol'");
+
+        let filePath = args.filePath ? String(args.filePath) : "";
+        let line = Number(args.line ?? 0);
+        let modName = "";
+
+        const match = this.ileanIndex.lookupSymbol(symbol);
+        if (match) {
+          filePath = match.filePath;
+          line = match.line;
+          modName = match.module || "";
+        }
+
+        const title = args.title || symbol.split(".").pop() || symbol;
+        const safeLabel = symbol.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+
+        let kind = "theorem";
+        let usesDirect: string[] = [];
+
+        if (filePath) {
+          const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.projectRoot, filePath);
+          if (fs.existsSync(absPath)) {
+            const content = fs.readFileSync(absPath, "utf-8");
+            const lines = content.split(/\r?\n/);
+            if (line > 0 && line <= lines.length) {
+              const declLine = lines[line - 1];
+              if (/\bdef\b|\bstructure\b/.test(declLine)) kind = "definition";
+              else if (/\blemma\b/.test(declLine)) kind = "lemma";
+            }
+          }
+        }
+
+        if (modName) {
+          const imps = this.ileanIndex.getModuleImports(modName);
+          usesDirect = imps.slice(0, 3).map(imp => "def:" + imp.toLowerCase().replace(/[^a-z0-9]+/g, "-"));
+        }
+
+        const usesAttr = usesDirect.length ? `\\uses{${usesDirect.join(", ")}}` : "% \\uses{...}";
+
+        return [
+          `% Lean Blueprint Scaffold for ${symbol}`,
+          `\\begin{${kind}}[${title}]`,
+          `\\label{${kind}:${safeLabel}}`,
+          usesAttr,
+          `\\lean{${symbol}}`,
+          `\\leanok`,
+          `Mathematical statement for \\texttt{${title}}.`,
+          `\\end{${kind}}`,
+          "",
+          `\\begin{proof}`,
+          usesAttr,
+          `\\leanok`,
+          `Informal mathematical proof sketch for \\texttt{${title}}.`,
+          `\\end{proof}`,
+        ].join("\n");
+      }
+
+      case "lean_dependency_subgraph": {
+        const moduleName = String(args.moduleName || "").trim();
+        if (!moduleName) throw new Error("Missing required argument: 'moduleName'");
+
+        const maxDepth = Number(args.maxDepth ?? 5);
+        const format = String(args.format || "mermaid").toLowerCase();
+
+        const trans = this.ileanIndex.getTransitiveClosure(moduleName, "imports", maxDepth);
+        const allNodes = new Set<string>([moduleName, ...trans.items]);
+
+        if (format === "json") {
+          const edges: Array<{ from: string; to: string }> = [];
+          for (const node of allNodes) {
+            const direct = this.ileanIndex.getModuleImports(node);
+            for (const d of direct) {
+              if (allNodes.has(d)) edges.push({ from: node, to: d });
+            }
+          }
+          return JSON.stringify({ root: moduleName, nodes: Array.from(allNodes), edges, depth: trans.depth }, null, 2);
+        } else if (format === "dot") {
+          const lines = [`digraph "${moduleName}" {`, `  rankdir=BT;`];
+          for (const node of allNodes) {
+            lines.push(`  "${node}";`);
+            const direct = this.ileanIndex.getModuleImports(node);
+            for (const d of direct) {
+              if (allNodes.has(d)) lines.push(`  "${node}" -> "${d}";`);
+            }
+          }
+          lines.push("}");
+          return lines.join("\n");
+        } else {
+          const lines = ["```mermaid", "graph TD"];
+          const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_]/g, "_");
+          for (const node of allNodes) {
+            const direct = this.ileanIndex.getModuleImports(node);
+            for (const d of direct) {
+              if (allNodes.has(d)) {
+                lines.push(`  ${sanitize(node)}["${node}"] --> ${sanitize(d)}["${d}"]`);
+              }
+            }
+          }
+          if (lines.length === 2) {
+            lines.push(`  ${sanitize(moduleName)}["${moduleName} (leaf / no internal imports)"]`);
+          }
+          lines.push("```");
+          return lines.join("\n");
+        }
+      }
+
+      case "lean_module_census": {
+        const targetPath = String(args.targetPath || "").trim();
+        if (!targetPath) throw new Error("Missing required argument: 'targetPath'");
+
+        const absTarget = path.isAbsolute(targetPath) ? targetPath : path.resolve(this.projectRoot, targetPath);
+        if (!fs.existsSync(absTarget)) {
+          return `Target path not found: ${targetPath}`;
+        }
+
+        const filesToScan: string[] = [];
+        const stat = fs.statSync(absTarget);
+        if (stat.isDirectory()) {
+          const walk = (dir: string) => {
+            for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, ent.name);
+              if (ent.isDirectory() && ent.name !== ".lake" && ent.name !== ".git") {
+                walk(full);
+              } else if (ent.isFile() && ent.name.endsWith(".lean")) {
+                filesToScan.push(full);
+              }
+            }
+          };
+          walk(absTarget);
+        } else if (stat.isFile() && absTarget.endsWith(".lean")) {
+          filesToScan.push(absTarget);
+        }
+
+        let totalLines = 0;
+        let codeLines = 0;
+        let blankLines = 0;
+        let commentLines = 0;
+        let theorems = 0;
+        let lemmas = 0;
+        let defs = 0;
+        let structures = 0;
+        let classes = 0;
+        let axioms = 0;
+        let sorries = 0;
+
+        for (const file of filesToScan) {
+          const content = fs.readFileSync(file, "utf-8");
+          const lines = content.split(/\r?\n/);
+          totalLines += lines.length;
+          let inBlockComment = false;
+
+          for (const l of lines) {
+            const stripped = l.trim();
+            if (!stripped) {
+              blankLines++;
+              continue;
+            }
+            if (inBlockComment) {
+              commentLines++;
+              if (l.includes("-/")) inBlockComment = false;
+              continue;
+            } else if (stripped.startsWith("/-")) {
+              commentLines++;
+              if (!l.includes("-/")) inBlockComment = true;
+              continue;
+            } else if (stripped.startsWith("--")) {
+              commentLines++;
+              continue;
+            }
+
+            codeLines++;
+
+            const declMatch = l.match(/^(?:(?:noncomputable|scoped|protected|private)\s+)*(theorem|lemma|def|structure|class|axiom)\s+([A-Za-z0-9_.]+)/);
+            if (declMatch) {
+              const k = declMatch[1];
+              if (k === "theorem") theorems++;
+              else if (k === "lemma") lemmas++;
+              else if (k === "def") defs++;
+              else if (k === "structure") structures++;
+              else if (k === "class") classes++;
+              else if (k === "axiom") axioms++;
+            }
+
+            if (/\b(sorry|admit|sorryAx)\b/.test(l)) {
+              sorries++;
+            }
+          }
+        }
+
+        const format = String(args.format || "markdown").toLowerCase();
+        if (format === "json") {
+          return JSON.stringify({
+            target: targetPath,
+            modules: filesToScan.length,
+            totalLines,
+            codeLines,
+            commentLines,
+            blankLines,
+            theorems,
+            lemmas,
+            defs,
+            structures,
+            classes,
+            axioms,
+            sorries,
+          }, null, 2);
+        } else if (format === "summary") {
+          return `Modules: ${filesToScan.length} | Lines: ${totalLines} (code: ${codeLines}) | Theorems: ${theorems + lemmas} | Defs: ${defs + structures} | Sorries: ${sorries} | Axioms: ${axioms}`;
+        } else {
+          return [
+            `# Lean Module Census: ${targetPath}`,
+            `- **Scanned Modules**: ${filesToScan.length}`,
+            `- **Total Lines**: ${totalLines.toLocaleString()} (${codeLines.toLocaleString()} code, ${commentLines.toLocaleString()} comments, ${blankLines.toLocaleString()} blank)`,
+            `- **Theorems & Lemmas**: ${(theorems + lemmas).toLocaleString()} (${theorems} theorems, ${lemmas} lemmas)`,
+            `- **Definitions & Structures**: ${(defs + structures).toLocaleString()} (${defs} defs, ${structures} structures, ${classes} classes)`,
+            `- **Custom Axioms**: ${axioms}`,
+            `- **Sorries**: ${sorries}`,
+          ].join("\n");
+        }
       }
 
       default:
