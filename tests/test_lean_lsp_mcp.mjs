@@ -85,7 +85,7 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     });
     assert(listRes && Array.isArray(listRes.result.tools), "tools list is array");
     const toolNames = listRes.result.tools.map(t => t.name);
-    assert.strictEqual(toolNames.length, 20, "Exposes exactly 20 tools");
+    assert.strictEqual(toolNames.length, 23, "Exposes exactly 23 tools");
 
     assert(toolNames.includes("lean_goal"), "Includes lean_goal");
     assert(toolNames.includes("lean_term_goal"), "Includes lean_term_goal");
@@ -107,6 +107,9 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     assert(toolNames.includes("lean_blueprint_scaffold"), "Includes lean_blueprint_scaffold");
     assert(toolNames.includes("lean_dependency_subgraph"), "Includes lean_dependency_subgraph");
     assert(toolNames.includes("lean_module_census"), "Includes lean_module_census");
+    assert(toolNames.includes("lean_pedagogical_walkthrough"), "Includes lean_pedagogical_walkthrough");
+    assert(toolNames.includes("lean_blueprint_status"), "Includes lean_blueprint_status");
+    assert(toolNames.includes("lean_zettel_scaffold"), "Includes lean_zettel_scaffold");
 
     const callOnto = await server.handleMessage({
         jsonrpc: "2.0",
