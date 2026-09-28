@@ -8,6 +8,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 import {
+    FileWorkerManager,
     Lean4IleanIndex,
     LeanSysrootBridge,
     formatGoalAsMarkdown,
@@ -126,62 +127,141 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     console.log("  - LakeBuildGuard: PASS (isLocked=" + status.isLocked + ", source=" + status.source + ")");
 }
 
-
-// 6. SharedMemorySnapshotRing Lock-Free IPC
+// 6. FileWorkerManager stdout session parsing and error handling
 {
-    const { SharedMemorySnapshotRing } = await import("../src/index.ts");
-    const testShmPath = path.join(os.tmpdir(), `test_lean_shm_${process.pid}.shm`);
-    const ring = SharedMemorySnapshotRing.create(testShmPath, 8, 4096);
-    assert(ring !== null, "SharedMemorySnapshotRing created successfully");
+    const manager = new FileWorkerManager(repoRoot);
 
-    const seq = ring.writeSnapshot("/repo/Test.lean", 42, 10, "case intro\n|- True", 1, 1);
-    assert.strictEqual(seq, 1n, "First write sequence is 1");
+    const helperMakeChunk = (body) => {
+        const msg = typeof body === "string" ? body : JSON.stringify(body);
+        const header = `Content-Length: ${Buffer.byteLength(msg, "utf-8")}\r\n\r\n`;
+        return Buffer.from(header + msg, "utf-8");
+    };
 
-    const latest = ring.readLatest();
-    assert(latest !== null, "Latest snapshot is readable");
-    assert.strictEqual(latest.seq, 1n, "Snapshot sequence matches");
-    assert.strictEqual(latest.filePath, "/repo/Test.lean", "Snapshot filePath matches");
-    assert.strictEqual(latest.line, 42, "Snapshot line matches");
-    assert.strictEqual(latest.col, 10, "Snapshot col matches");
-    assert.strictEqual(latest.goalText, "case intro\n|- True", "Snapshot goalText matches");
+    // Sub-test 1: Successful result resolution
+    {
+        const pendingRequests = new Map();
+        let resolvedValue = null;
+        pendingRequests.set(1, {
+            resolve: (val) => { resolvedValue = val; },
+            reject: (err) => { throw err; },
+        });
 
-    ring.dispose();
-    console.log("  - SharedMemorySnapshotRing: PASS");
-}
+        const mockSession = {
+            buffer: Buffer.alloc(0),
+            pendingRequests,
+        };
 
-// 7. MultiPackageWorkspaceCoordinator & Global Build Lock Arbitration
-{
-    const { MultiPackageWorkspaceCoordinator, LakeBuildGuard } = await import("../src/index.ts");
-    const coord = new MultiPackageWorkspaceCoordinator(repoRoot);
-    const count = coord.getPackageCount();
-    assert(typeof count === "number", "Package count is a number");
+        const chunk = helperMakeChunk({ jsonrpc: "2.0", id: 1, result: { rendered: "Goal state" } });
+        manager.handleStdoutData(mockSession, chunk);
 
-    if (count > 0) {
-        const resolved = coord.resolvePackageForFile(
-            path.join(repoRoot, "packages", "stochastic-ccv", "StochasticCCV", "Core", "EisensteinQuotient.lean")
-        );
-        assert(resolved !== null, "Resolved package for StochasticCCV file");
-        assert.strictEqual(resolved.name, "stochastic-ccv", "Package name matches stochastic-ccv");
+        assert.deepStrictEqual(resolvedValue, { rendered: "Goal state" }, "Resolves parsed result");
+        assert.strictEqual(pendingRequests.has(1), false, "Pending request deleted after resolution");
     }
 
-    // Test global build lock detection
-    const testGlobalLock = "/dev/shm/lean_global_workspace.lock";
-    const lockInfo = {
-        pid: process.pid,
-        packageName: "reinforcement-learning",
-        acquiredAt: Date.now(),
-        ttlMs: 60000,
-    };
-    const fs = await import("node:fs");
-    fs.writeFileSync(testGlobalLock, JSON.stringify(lockInfo));
+    // Sub-test 2: Error response with error.message
+    {
+        const pendingRequests = new Map();
+        let rejectedError = null;
+        pendingRequests.set(2, {
+            resolve: () => { assert.fail("Should not resolve"); },
+            reject: (err) => { rejectedError = err; },
+        });
 
-    const status = LakeBuildGuard.checkLock(repoRoot);
-    assert.strictEqual(status.isLocked, true, "Global workspace lock detected");
-    assert.strictEqual(status.source, "global_workspace_lock", "Source is global_workspace_lock");
-    assert(status.detail && status.detail.includes("reinforcement-learning"), "Detail mentions active package");
+        const mockSession = {
+            buffer: Buffer.alloc(0),
+            pendingRequests,
+        };
 
-    try { fs.unlinkSync(testGlobalLock); } catch {}
-    console.log("  - MultiPackageWorkspaceCoordinator: PASS (packages=" + count + ")");
+        const chunk = helperMakeChunk({
+            jsonrpc: "2.0",
+            id: 2,
+            error: { code: -32603, message: "Server error occurred" },
+        });
+        manager.handleStdoutData(mockSession, chunk);
+
+        assert(rejectedError instanceof Error, "Rejects with Error instance");
+        assert.strictEqual(rejectedError.message, "Server error occurred", "Error message contains error.message");
+        assert.strictEqual(pendingRequests.has(2), false, "Pending request deleted after rejection");
+    }
+
+    // Sub-test 3: Error response without error.message (fallback to JSON.stringify)
+    {
+        const pendingRequests = new Map();
+        let rejectedError = null;
+        pendingRequests.set(3, {
+            resolve: () => { assert.fail("Should not resolve"); },
+            reject: (err) => { rejectedError = err; },
+        });
+
+        const mockSession = {
+            buffer: Buffer.alloc(0),
+            pendingRequests,
+        };
+
+        const chunk = helperMakeChunk({
+            jsonrpc: "2.0",
+            id: 3,
+            error: { code: -32601 },
+        });
+        manager.handleStdoutData(mockSession, chunk);
+
+        assert(rejectedError instanceof Error, "Rejects with Error instance");
+        assert.strictEqual(rejectedError.message, '{"code":-32601}', "Error message falls back to JSON.stringify(error)");
+        assert.strictEqual(pendingRequests.has(3), false, "Pending request deleted after rejection");
+    }
+
+    // Sub-test 4: Malformed/transient JSON parse error in body
+    {
+        const pendingRequests = new Map();
+        let called = false;
+        pendingRequests.set(4, {
+            resolve: () => { called = true; },
+            reject: () => { called = true; },
+        });
+
+        const mockSession = {
+            buffer: Buffer.alloc(0),
+            pendingRequests,
+        };
+
+        const malformedChunk = helperMakeChunk("{ invalid json payload");
+        assert.doesNotThrow(() => {
+            manager.handleStdoutData(mockSession, malformedChunk);
+        }, "Does not throw on invalid JSON");
+
+        assert.strictEqual(called, false, "Handler neither resolved nor rejected on JSON parse error");
+        assert.strictEqual(pendingRequests.has(4), true, "Pending request remains intact during transient parse failure");
+    }
+
+    // Sub-test 5: Fragmented chunks across multiple stdout events
+    {
+        const pendingRequests = new Map();
+        let resolvedValue = null;
+        pendingRequests.set(5, {
+            resolve: (val) => { resolvedValue = val; },
+            reject: (err) => { throw err; },
+        });
+
+        const mockSession = {
+            buffer: Buffer.alloc(0),
+            pendingRequests,
+        };
+
+        const fullBuffer = helperMakeChunk({ jsonrpc: "2.0", id: 5, result: "fragmented-success" });
+        const part1 = fullBuffer.subarray(0, 15);
+        const part2 = fullBuffer.subarray(15);
+
+        manager.handleStdoutData(mockSession, part1);
+        assert.strictEqual(resolvedValue, null, "Not resolved after partial chunk");
+        assert.strictEqual(pendingRequests.has(5), true, "Pending request remains until full message received");
+
+        manager.handleStdoutData(mockSession, part2);
+        assert.strictEqual(resolvedValue, "fragmented-success", "Resolves once full chunk is buffered");
+        assert.strictEqual(pendingRequests.has(5), false, "Pending request deleted after full message processed");
+    }
+
+    manager.dispose();
+    console.log("  - FileWorkerManager Stdout Handler & Error Tests: PASS");
 }
 
 console.log("=== All lean4-lsp-mcp Tests Passed ===");

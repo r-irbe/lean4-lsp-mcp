@@ -1567,35 +1567,7 @@ export class FileWorkerManager {
     };
 
     session.child.stdout?.on("data", (chunk: Buffer) => {
-      session!.buffer = Buffer.concat([session!.buffer, chunk]);
-      while (true) {
-        const idx = session!.buffer.indexOf("\r\n\r\n");
-        if (idx === -1) break;
-        const header = session!.buffer.subarray(0, idx).toString("utf-8");
-        const match = header.match(/Content-Length:\s*(\d+)/i);
-        if (!match) {
-          session!.buffer = session!.buffer.subarray(idx + 4);
-          continue;
-        }
-        const len = parseInt(match[1], 10);
-        if (session!.buffer.length < idx + 4 + len) break;
-        const body = session!.buffer.subarray(idx + 4, idx + 4 + len).toString("utf-8");
-        session!.buffer = session!.buffer.subarray(idx + 4 + len);
-        try {
-          const parsed = JSON.parse(body);
-          if (parsed.id !== undefined && session!.pendingRequests.has(parsed.id)) {
-            const handler = session!.pendingRequests.get(parsed.id)!;
-            session!.pendingRequests.delete(parsed.id);
-            if (parsed.error) {
-              handler.reject(new Error(parsed.error.message || JSON.stringify(parsed.error)));
-            } else {
-              handler.resolve(parsed.result);
-            }
-          }
-        } catch {
-          // Ignore transient parsing errors
-        }
-      }
+      this.handleStdoutData(session!, chunk);
     });
 
     session.child.on("error", () => {});
@@ -1613,6 +1585,38 @@ export class FileWorkerManager {
 
     this.sendNotification(session, "initialized", {});
     return session;
+  }
+
+  public handleStdoutData(session: FileWorkerSession, chunk: Buffer): void {
+    session.buffer = Buffer.concat([session.buffer, chunk]);
+    while (true) {
+      const idx = session.buffer.indexOf("\r\n\r\n");
+      if (idx === -1) break;
+      const header = session.buffer.subarray(0, idx).toString("utf-8");
+      const match = header.match(/Content-Length:\s*(\d+)/i);
+      if (!match) {
+        session.buffer = session.buffer.subarray(idx + 4);
+        continue;
+      }
+      const len = parseInt(match[1], 10);
+      if (session.buffer.length < idx + 4 + len) break;
+      const body = session.buffer.subarray(idx + 4, idx + 4 + len).toString("utf-8");
+      session.buffer = session.buffer.subarray(idx + 4 + len);
+      try {
+        const parsed = JSON.parse(body);
+        if (parsed.id !== undefined && session.pendingRequests.has(parsed.id)) {
+          const handler = session.pendingRequests.get(parsed.id)!;
+          session.pendingRequests.delete(parsed.id);
+          if (parsed.error) {
+            handler.reject(new Error(parsed.error.message || JSON.stringify(parsed.error)));
+          } else {
+            handler.resolve(parsed.result);
+          }
+        }
+      } catch {
+        // Ignore transient parsing errors
+      }
+    }
   }
 
   private sendRequest(session: FileWorkerSession, method: string, params: any): Promise<any> {
