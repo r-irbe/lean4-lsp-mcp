@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+    FileWorkerManager,
     Lean4IleanIndex,
     LeanSysrootBridge,
     formatGoalAsMarkdown,
@@ -106,6 +107,143 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     assert(typeof status.isLocked === "boolean", "isLocked is a boolean");
     assert(typeof status.source === "string", "source is a string");
     console.log("  - LakeBuildGuard: PASS (isLocked=" + status.isLocked + ", source=" + status.source + ")");
+}
+
+// 6. FileWorkerManager stdout session parsing and error handling
+{
+    const manager = new FileWorkerManager(repoRoot);
+
+    const helperMakeChunk = (body) => {
+        const msg = typeof body === "string" ? body : JSON.stringify(body);
+        const header = `Content-Length: ${Buffer.byteLength(msg, "utf-8")}\r\n\r\n`;
+        return Buffer.from(header + msg, "utf-8");
+    };
+
+    // Sub-test 1: Successful result resolution
+    {
+        const pendingRequests = new Map();
+        let resolvedValue = null;
+        pendingRequests.set(1, {
+            resolve: (val) => { resolvedValue = val; },
+            reject: (err) => { throw err; },
+        });
+
+        const mockSession = {
+            buffer: Buffer.alloc(0),
+            pendingRequests,
+        };
+
+        const chunk = helperMakeChunk({ jsonrpc: "2.0", id: 1, result: { rendered: "Goal state" } });
+        manager.handleStdoutData(mockSession, chunk);
+
+        assert.deepStrictEqual(resolvedValue, { rendered: "Goal state" }, "Resolves parsed result");
+        assert.strictEqual(pendingRequests.has(1), false, "Pending request deleted after resolution");
+    }
+
+    // Sub-test 2: Error response with error.message
+    {
+        const pendingRequests = new Map();
+        let rejectedError = null;
+        pendingRequests.set(2, {
+            resolve: () => { assert.fail("Should not resolve"); },
+            reject: (err) => { rejectedError = err; },
+        });
+
+        const mockSession = {
+            buffer: Buffer.alloc(0),
+            pendingRequests,
+        };
+
+        const chunk = helperMakeChunk({
+            jsonrpc: "2.0",
+            id: 2,
+            error: { code: -32603, message: "Server error occurred" },
+        });
+        manager.handleStdoutData(mockSession, chunk);
+
+        assert(rejectedError instanceof Error, "Rejects with Error instance");
+        assert.strictEqual(rejectedError.message, "Server error occurred", "Error message contains error.message");
+        assert.strictEqual(pendingRequests.has(2), false, "Pending request deleted after rejection");
+    }
+
+    // Sub-test 3: Error response without error.message (fallback to JSON.stringify)
+    {
+        const pendingRequests = new Map();
+        let rejectedError = null;
+        pendingRequests.set(3, {
+            resolve: () => { assert.fail("Should not resolve"); },
+            reject: (err) => { rejectedError = err; },
+        });
+
+        const mockSession = {
+            buffer: Buffer.alloc(0),
+            pendingRequests,
+        };
+
+        const chunk = helperMakeChunk({
+            jsonrpc: "2.0",
+            id: 3,
+            error: { code: -32601 },
+        });
+        manager.handleStdoutData(mockSession, chunk);
+
+        assert(rejectedError instanceof Error, "Rejects with Error instance");
+        assert.strictEqual(rejectedError.message, '{"code":-32601}', "Error message falls back to JSON.stringify(error)");
+        assert.strictEqual(pendingRequests.has(3), false, "Pending request deleted after rejection");
+    }
+
+    // Sub-test 4: Malformed/transient JSON parse error in body
+    {
+        const pendingRequests = new Map();
+        let called = false;
+        pendingRequests.set(4, {
+            resolve: () => { called = true; },
+            reject: () => { called = true; },
+        });
+
+        const mockSession = {
+            buffer: Buffer.alloc(0),
+            pendingRequests,
+        };
+
+        const malformedChunk = helperMakeChunk("{ invalid json payload");
+        assert.doesNotThrow(() => {
+            manager.handleStdoutData(mockSession, malformedChunk);
+        }, "Does not throw on invalid JSON");
+
+        assert.strictEqual(called, false, "Handler neither resolved nor rejected on JSON parse error");
+        assert.strictEqual(pendingRequests.has(4), true, "Pending request remains intact during transient parse failure");
+    }
+
+    // Sub-test 5: Fragmented chunks across multiple stdout events
+    {
+        const pendingRequests = new Map();
+        let resolvedValue = null;
+        pendingRequests.set(5, {
+            resolve: (val) => { resolvedValue = val; },
+            reject: (err) => { throw err; },
+        });
+
+        const mockSession = {
+            buffer: Buffer.alloc(0),
+            pendingRequests,
+        };
+
+        const fullBuffer = helperMakeChunk({ jsonrpc: "2.0", id: 5, result: "fragmented-success" });
+        const part1 = fullBuffer.subarray(0, 15);
+        const part2 = fullBuffer.subarray(15);
+
+        manager.handleStdoutData(mockSession, part1);
+        assert.strictEqual(resolvedValue, null, "Not resolved after partial chunk");
+        assert.strictEqual(pendingRequests.has(5), true, "Pending request remains until full message received");
+
+        manager.handleStdoutData(mockSession, part2);
+        assert.strictEqual(resolvedValue, "fragmented-success", "Resolves once full chunk is buffered");
+        assert.strictEqual(pendingRequests.has(5), false, "Pending request deleted after full message processed");
+    }
+
+    manager.dispose();
+    console.log("  - FileWorkerManager Stdout Handler & Error Tests: PASS");
 }
 
 console.log("=== All lean4-lsp-mcp Tests Passed ===");
