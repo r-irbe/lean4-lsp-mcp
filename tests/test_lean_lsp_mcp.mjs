@@ -5,6 +5,7 @@
 import assert from "node:assert";
 import { spawn } from "node:child_process";
 import * as path from "node:path";
+import * as os from "node:os";
 import { fileURLToPath } from "node:url";
 import {
     FileWorkerManager,
@@ -15,9 +16,23 @@ import {
     TOOL_DEFINITIONS,
 } from "../src/index.ts";
 
+import * as fs from "node:fs";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = path.resolve(__dirname, "..");
-const repoRoot = process.env.LEAN_PROJECT_ROOT || pkgRoot;
+let repoRoot = process.env.LEAN_PROJECT_ROOT;
+if (!repoRoot) {
+    let curr = pkgRoot;
+    while (curr !== path.dirname(curr)) {
+        if (fs.existsSync(path.join(curr, "packages")) && fs.existsSync(path.join(curr, "docs", "easci", "lean"))) {
+            repoRoot = curr;
+            break;
+        }
+        curr = path.dirname(curr);
+    }
+}
+if (!repoRoot) repoRoot = path.resolve(pkgRoot, "../tacit-mui");
+if (!fs.existsSync(repoRoot)) repoRoot = pkgRoot;
 
 console.log("=== Testing lean4-lsp-mcp Suite ===");
 
@@ -82,7 +97,7 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
         method: "tools/list",
     });
     assert(listRes && Array.isArray(listRes.result.tools), "tools list is array");
-    assert.strictEqual(listRes.result.tools.length, 10, "Exposes 10 tools (5 core + lean_filtered_goal + 2 old + 2 new search)");
+    assert.strictEqual(listRes.result.tools.length, 13, "Exposes 13 tools (5 core + lean_filtered_goal + 2 old + 5 search/discovery: loogle/local/leansearch/arxiv/reservoir/datasets)");
 
     const toolNames = listRes.result.tools.map(t => t.name);
     assert(toolNames.includes("lean_goal"), "Includes lean_goal");
@@ -95,9 +110,12 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     assert(toolNames.includes("lean_loogle_search"), "Includes lean_loogle_search");
     assert(toolNames.includes("lean_local_search"), "Includes lean_local_search");
     assert(toolNames.includes("lean_search"), "Includes lean_search");
+    assert(toolNames.includes("lean_arxiv_search"), "Includes lean_arxiv_search");
+    assert(toolNames.includes("lean_reservoir_search"), "Includes lean_reservoir_search");
+    assert(toolNames.includes("lean_dataset_search"), "Includes lean_dataset_search");
 
     server.dispose();
-    console.log("  - McpServer Dispatch (all 10 tools): PASS");
+    console.log("  - McpServer Dispatch (all 13 tools): PASS");
 }
 
 // 5. LakeBuildGuard Concurrency Check

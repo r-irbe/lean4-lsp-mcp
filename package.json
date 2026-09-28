@@ -13,7 +13,7 @@
     "build": "tsc",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
-    "test": "node --experimental-strip-types tests/test_lean_lsp_mcp.mjs"
+    "test": "node --experimental-strip-types tests/test_lean_lsp_mcp.mjs && node --experimental-strip-types tests/test_file_worker_manager.mjs"
   },
   "repository": {
     "type": "git",

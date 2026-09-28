@@ -4,6 +4,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as os from "node:os";
 import { execSync, spawn, ChildProcess } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -197,6 +198,43 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       properties: {
         query: { type: "string", description: "Natural language or Lean term query" },
         num_results: { type: "integer", description: "Max results (default 5)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "lean_arxiv_search",
+    description: "Search arXiv (math.PR, math.NT, math.AG, cs.LO, cs.AI, cs.LG) for mathematical papers, lemma formulations, and proof sketches to ground formalization work. Returns title/authors/identifier/date/abstract per result.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "arXiv search query, e.g. stationary distribution Markov chain ergodic" },
+        category: { type: "string", description: "Optional arXiv category filter, e.g. math.PR, math.NT, cs.LO" },
+        maxResults: { type: "integer", description: "Maximum results (default 5, max 20)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "lean_reservoir_search",
+    description: "Find Lean/Lake packages in the Reservoir registry. An exact owner/pkg query uses the documented registry API (the same call Lake makes); a plain-text query searches the published reservoir-index package names (public GitHub API, cached 30 min in-process). Returns registry/site links.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Name search (e.g. sat solver, automata) or an exact owner/pkg (e.g. leanprover-community/mathlib)" },
+        limit: { type: "integer", description: "Maximum name-search matches (default 10, max 30)" },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "lean_dataset_search",
+    description: "Search Hugging Face for formal-math and Lean proof corpora (Proof-Pile-2, NuminaMath, Lean-STaR, ...). Returns dataset ids with download counts, likes, last-update dates and links; gated datasets are flagged.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "Search terms, e.g. proof-pile, formal proof, Lean 4 tactic" },
+        limit: { type: "integer", description: "Maximum results (default 10, max 30)" },
       },
       required: ["query"],
     },
@@ -965,7 +1003,7 @@ export interface BuildLockStatus {
   isLocked: boolean;
   pid?: number;
   lane?: string;
-  source: "lockfile" | "process_table" | "none";
+  source: "lockfile" | "process_table" | "global_workspace_lock" | "none";
   detail?: string;
 }
 
@@ -1031,6 +1069,38 @@ export class LakeBuildGuard {
       // pgrep exits with 1 when no processes match
     }
 
+    // Check global workspace build lock across all parallel packages
+    const globalLockPaths = [
+      "/dev/shm/lean_global_workspace.lock",
+      path.join(os.tmpdir(), "lean_global_workspace.lock"),
+    ];
+    for (const gLock of globalLockPaths) {
+      if (fs.existsSync(gLock)) {
+        try {
+          const raw = fs.readFileSync(gLock, "utf-8");
+          const meta = JSON.parse(raw);
+          const pid = Number(meta.pid);
+          if (pid && this.isPidAlive(pid)) {
+            return {
+              isLocked: true,
+              pid,
+              lane: meta.packageName || meta.lane || "multi-package-build",
+              source: "global_workspace_lock",
+              detail: `Active workspace build in package '${meta.packageName || "unknown"}' by PID ${pid}`,
+            };
+          } else {
+            try {
+              fs.unlinkSync(gLock);
+            } catch {
+              // Ignore unlink race
+            }
+          }
+        } catch {
+          // Ignore parse errors on transient lockfiles
+        }
+      }
+    }
+
     return { isLocked: false, source: "none" };
   }
 
@@ -1041,6 +1111,314 @@ export class LakeBuildGuard {
     } catch {
       return false;
     }
+  }
+}
+
+/**
+ * MultiPackageWorkspaceCoordinator
+ *
+ * Implements Lane FFF (ACT-FLT-64).
+ * Auto-discovers and indexes all parallel Lean 4 packages within the workspace:
+ * - Root package: docs/easci/lean
+ * - Mini-projects: packages/tacit-foundations, packages/stochastic-ccv,
+ *   packages/cusp-catastrophe, packages/phase-portrait,
+ *   packages/reinforcement-learning, packages/agentic-safety,
+ *   packages/provenance-chain.
+ * Resolves document URIs to their owning package root.
+ */
+export class MultiPackageWorkspaceCoordinator {
+  private projectRoot: string;
+  private knownPackages: Map<string, string> = new Map();
+
+  constructor(projectRoot: string) {
+    this.projectRoot = projectRoot;
+    this.discoverPackages();
+  }
+
+  public discoverPackages(): Map<string, string> {
+    this.knownPackages.clear();
+    const easciLean = path.join(this.projectRoot, "docs", "easci", "lean");
+    if (fs.existsSync(path.join(easciLean, "lakefile.lean"))) {
+      this.knownPackages.set("docs/easci/lean", easciLean);
+    }
+    const packagesDir = path.join(this.projectRoot, "packages");
+    if (fs.existsSync(packagesDir)) {
+      try {
+        const entries = fs.readdirSync(packagesDir, { withFileTypes: true });
+        for (const ent of entries) {
+          if (ent.isDirectory()) {
+            const pkgPath = path.join(packagesDir, ent.name);
+            if (
+              fs.existsSync(path.join(pkgPath, "lakefile.lean")) ||
+              fs.existsSync(path.join(pkgPath, "lakefile.toml"))
+            ) {
+              this.knownPackages.set(ent.name, pkgPath);
+            }
+          }
+        }
+      } catch {
+        // Ignore read errors
+      }
+    }
+    return this.knownPackages;
+  }
+
+  public getPackageCount(): number {
+    return this.knownPackages.size;
+  }
+
+  public getKnownPackages(): Map<string, string> {
+    return new Map(this.knownPackages);
+  }
+
+  public resolvePackageForFile(filePath: string): { name: string; root: string } | null {
+    const abs = path.resolve(filePath);
+    for (const [name, root] of this.knownPackages.entries()) {
+      if (abs.startsWith(root + path.sep) || abs === root) {
+        return { name, root };
+      }
+    }
+    return null;
+  }
+}
+
+
+export interface SnapshotHeader {
+  magic: number;
+  version: number;
+  capacity: number;
+  slotSize: number;
+  writeSeq: bigint;
+  readSeq: bigint;
+  sessionId: bigint;
+  droppedCount: bigint;
+}
+
+export interface GoalSnapshot {
+  seq: bigint;
+  timestampNs: bigint;
+  fileHash: bigint;
+  filePath: string;
+  line: number;
+  col: number;
+  flags: number;
+  goalsCount: number;
+  goalText: string;
+}
+
+export class SharedMemorySnapshotRing {
+  public static readonly MAGIC = 0x4C45414E; // "LEAN"
+  public static readonly VERSION = 1;
+  public static readonly HEADER_SIZE = 64;
+  public static readonly SLOT_HEADER_SIZE = 64;
+  public static readonly DEFAULT_CAPACITY = 64;
+  public static readonly DEFAULT_SLOT_SIZE = 65536; // 64 KB per slot
+
+  private fd: number;
+  private buffer: Buffer;
+  private capacity: number;
+  private slotSize: number;
+  private totalSize: number;
+  private shmPath: string;
+  private isOwner: boolean;
+
+  private constructor(
+    shmPath: string,
+    fd: number,
+    buffer: Buffer,
+    capacity: number,
+    slotSize: number,
+    isOwner: boolean
+  ) {
+    this.shmPath = shmPath;
+    this.fd = fd;
+    this.buffer = buffer;
+    this.capacity = capacity;
+    this.slotSize = slotSize;
+    this.totalSize = buffer.length;
+    this.isOwner = isOwner;
+  }
+
+  public static create(
+    shmPath: string,
+    capacity: number = SharedMemorySnapshotRing.DEFAULT_CAPACITY,
+    slotSize: number = SharedMemorySnapshotRing.DEFAULT_SLOT_SIZE
+  ): SharedMemorySnapshotRing {
+    const totalSize = SharedMemorySnapshotRing.HEADER_SIZE + capacity * slotSize;
+    const dir = path.dirname(shmPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    const fd = fs.openSync(shmPath, "w+");
+    fs.ftruncateSync(fd, totalSize);
+    const buffer = Buffer.alloc(totalSize);
+
+    // Initialize Header
+    buffer.writeUInt32LE(SharedMemorySnapshotRing.MAGIC, 0);
+    buffer.writeUInt32LE(SharedMemorySnapshotRing.VERSION, 4);
+    buffer.writeUInt32LE(capacity, 8);
+    buffer.writeUInt32LE(slotSize, 12);
+    buffer.writeBigUInt64LE(0n, 16); // writeSeq
+    buffer.writeBigUInt64LE(0n, 24); // readSeq
+    buffer.writeBigUInt64LE(BigInt(process.pid), 32); // sessionId
+    buffer.writeBigUInt64LE(0n, 40); // droppedCount
+
+    fs.writeSync(fd, buffer, 0, totalSize, 0);
+
+    return new SharedMemorySnapshotRing(shmPath, fd, buffer, capacity, slotSize, true);
+  }
+
+  public static open(shmPath: string): SharedMemorySnapshotRing | null {
+    if (!fs.existsSync(shmPath)) return null;
+    try {
+      const fd = fs.openSync(shmPath, "r+");
+      const stat = fs.fstatSync(fd);
+      const buffer = Buffer.alloc(stat.size);
+      fs.readSync(fd, buffer, 0, stat.size, 0);
+
+      const magic = buffer.readUInt32LE(0);
+      if (magic !== SharedMemorySnapshotRing.MAGIC) {
+        fs.closeSync(fd);
+        return null;
+      }
+      const capacity = buffer.readUInt32LE(8);
+      const slotSize = buffer.readUInt32LE(12);
+
+      return new SharedMemorySnapshotRing(shmPath, fd, buffer, capacity, slotSize, false);
+    } catch {
+      return null;
+    }
+  }
+
+  public static computePathHash(filePath: string): bigint {
+    let hash = 0xcbf29ce484222325n;
+    const fnvPrime = 0x100000001b3n;
+    const buf = Buffer.from(filePath, "utf-8");
+    for (let i = 0; i < buf.length; i++) {
+      hash ^= BigInt(buf[i]);
+      hash = (hash * fnvPrime) & 0xffffffffffffffffn;
+    }
+    return hash;
+  }
+
+  public writeSnapshot(
+    filePath: string,
+    line: number,
+    col: number,
+    goalText: string,
+    flags: number = 1,
+    goalsCount: number = 1
+  ): bigint {
+    const curSeq = this.buffer.readBigUInt64LE(16);
+    const nextSeq = curSeq + 1n;
+    const slotIdx = Number((nextSeq - 1n) % BigInt(this.capacity));
+    const slotOffset = SharedMemorySnapshotRing.HEADER_SIZE + slotIdx * this.slotSize;
+
+    const fileHash = SharedMemorySnapshotRing.computePathHash(filePath);
+    const filePathBuf = Buffer.from(filePath, "utf-8");
+    const goalTextBuf = Buffer.from(goalText, "utf-8");
+
+    const maxPayload = this.slotSize - SharedMemorySnapshotRing.SLOT_HEADER_SIZE;
+    const availableGoalLen = Math.max(0, maxPayload - filePathBuf.length);
+    const finalGoalLen = Math.min(goalTextBuf.length, availableGoalLen);
+
+    // 1. Invalidate slot seqlock
+    this.buffer.writeBigUInt64LE(0n, slotOffset);
+
+    // 2. Populate slot metadata
+    const nowNs = process.hrtime.bigint();
+    this.buffer.writeBigUInt64LE(nowNs, slotOffset + 8);
+    this.buffer.writeBigUInt64LE(fileHash, slotOffset + 16);
+    this.buffer.writeUInt32LE(line, slotOffset + 24);
+    this.buffer.writeUInt32LE(col, slotOffset + 28);
+    this.buffer.writeUInt32LE(flags, slotOffset + 32);
+    this.buffer.writeUInt32LE(finalGoalLen, slotOffset + 36);
+    this.buffer.writeUInt32LE(goalsCount, slotOffset + 40);
+    this.buffer.writeUInt32LE(filePathBuf.length, slotOffset + 44);
+
+    // 3. Write payload (zero JSON escaping)
+    const payloadOffset = slotOffset + SharedMemorySnapshotRing.SLOT_HEADER_SIZE;
+    filePathBuf.copy(this.buffer, payloadOffset, 0, filePathBuf.length);
+    goalTextBuf.copy(this.buffer, payloadOffset + filePathBuf.length, 0, finalGoalLen);
+
+    // 4. Commit slot seqlock
+    this.buffer.writeBigUInt64LE(nextSeq, slotOffset);
+
+    // 5. Commit global writeSeq
+    this.buffer.writeBigUInt64LE(nextSeq, 16);
+
+    // Persist to underlying memory buffer
+    fs.writeSync(this.fd, this.buffer, slotOffset, this.slotSize, slotOffset);
+    fs.writeSync(this.fd, this.buffer, 16, 8, 16);
+
+    return nextSeq;
+  }
+
+  public readLatest(fileFilter?: string): GoalSnapshot | null {
+    fs.readSync(this.fd, this.buffer, 0, SharedMemorySnapshotRing.HEADER_SIZE, 0);
+    const writeSeq = this.buffer.readBigUInt64LE(16);
+    if (writeSeq === 0n) return null;
+
+    const filterHash = fileFilter ? SharedMemorySnapshotRing.computePathHash(fileFilter) : null;
+
+    const scanLimit = BigInt(this.capacity);
+    for (let i = 0n; i < scanLimit; i++) {
+      const targetSeq = writeSeq - i;
+      if (targetSeq <= 0n) break;
+
+      const slotIdx = Number((targetSeq - 1n) % BigInt(this.capacity));
+      const slotOffset = SharedMemorySnapshotRing.HEADER_SIZE + slotIdx * this.slotSize;
+
+      fs.readSync(this.fd, this.buffer, slotOffset, SharedMemorySnapshotRing.SLOT_HEADER_SIZE, slotOffset);
+
+      const seqBefore = this.buffer.readBigUInt64LE(slotOffset);
+      if (seqBefore !== targetSeq) continue;
+
+      const fileHash = this.buffer.readBigUInt64LE(slotOffset + 16);
+      if (filterHash !== null && fileHash !== filterHash) continue;
+
+      const filePathLen = this.buffer.readUInt32LE(slotOffset + 44);
+      const goalLen = this.buffer.readUInt32LE(slotOffset + 36);
+
+      const payloadOffset = slotOffset + SharedMemorySnapshotRing.SLOT_HEADER_SIZE;
+      fs.readSync(this.fd, this.buffer, payloadOffset, filePathLen + goalLen, payloadOffset);
+
+      const seqAfter = this.buffer.readBigUInt64LE(slotOffset);
+      if (seqAfter !== targetSeq) continue;
+
+      const timestampNs = this.buffer.readBigUInt64LE(slotOffset + 8);
+      const line = this.buffer.readUInt32LE(slotOffset + 24);
+      const col = this.buffer.readUInt32LE(slotOffset + 28);
+      const flags = this.buffer.readUInt32LE(slotOffset + 32);
+      const goalsCount = this.buffer.readUInt32LE(slotOffset + 40);
+
+      const filePath = this.buffer.toString("utf-8", payloadOffset, payloadOffset + filePathLen);
+      const goalText = this.buffer.toString("utf-8", payloadOffset + filePathLen, payloadOffset + filePathLen + goalLen);
+
+      return {
+        seq: targetSeq,
+        timestampNs,
+        fileHash,
+        filePath,
+        line,
+        col,
+        flags,
+        goalsCount,
+        goalText,
+      };
+    }
+
+    return null;
+  }
+
+  public dispose(): void {
+    try {
+      fs.closeSync(this.fd);
+      if (this.isOwner && fs.existsSync(this.shmPath)) {
+        fs.unlinkSync(this.shmPath);
+      }
+    } catch {}
   }
 }
 
@@ -1064,6 +1442,7 @@ export interface FileWorkerSession {
 
 export class FileWorkerManager {
   private projectRoot: string;
+  private shmRing: SharedMemorySnapshotRing | null = null;
   private sessions: Map<string, FileWorkerSession> = new Map();
   private reaperTimer: NodeJS.Timeout | null = null;
   private readonly idleFileTimeoutMs: number = 60000;
@@ -1073,6 +1452,7 @@ export class FileWorkerManager {
   constructor(projectRoot: string) {
     this.projectRoot = path.resolve(projectRoot);
     this.startLifecycleReaper();
+    this.initShmRing();
   }
 
   public findLeanRoot(targetFile: string): string {
@@ -1090,6 +1470,20 @@ export class FileWorkerManager {
     return this.projectRoot;
   }
 
+
+  private initShmRing(): void {
+    const shmDir = fs.existsSync("/dev/shm") ? "/dev/shm" : os.tmpdir();
+    const shmPath = process.env.LEAN_SHM_PATH || path.join(shmDir, `lean_lsp_mcp_${process.pid}.shm`);
+    try {
+      this.shmRing = SharedMemorySnapshotRing.create(shmPath);
+    } catch {
+      this.shmRing = null;
+    }
+  }
+
+  public getShmRing(): SharedMemorySnapshotRing | null {
+    return this.shmRing;
+  }
   private startLifecycleReaper(): void {
     if (this.reaperTimer) return;
     this.reaperTimer = setInterval(() => {
@@ -1427,6 +1821,10 @@ export class FileWorkerManager {
   }
 
   public dispose(): void {
+    if (this.shmRing) {
+      this.shmRing.dispose();
+      this.shmRing = null;
+    }
     if (this.reaperTimer) {
       clearInterval(this.reaperTimer);
       this.reaperTimer = null;
@@ -1439,6 +1837,43 @@ export class FileWorkerManager {
 
 export type LakeServerManager = FileWorkerManager;
 export const LakeServerManager = FileWorkerManager;
+
+let reservoirIndexCache: { at: number; packages: string[] } | null = null;
+
+/** Package names (owner/name) from the published reservoir-index tree, cached 30 min. */
+async function reservoirIndexPackages(): Promise<string[]> {
+  const now = Date.now();
+  if (reservoirIndexCache && now - reservoirIndexCache.at < 30 * 60 * 1000) {
+    return reservoirIndexCache.packages;
+  }
+  const headers: Record<string, string> = {
+    "User-Agent": "lean-lsp-mcp/0.1",
+    "Accept": "application/vnd.github+json",
+  };
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  const res = await fetch(
+    "https://api.github.com/repos/leanprover/reservoir-index/git/trees/master?recursive=1",
+    { signal: controller.signal as any, headers },
+  );
+  clearTimeout(timeoutId);
+  if (!res.ok) throw new Error(`reservoir-index fetch failed: HTTP ${res.status}`);
+  const json: any = await res.json();
+  const seen = new Set<string>();
+  const packages: string[] = [];
+  for (const t of json.tree || []) {
+    const parts = String(t.path).split("/");
+    if (parts.length === 2) {
+      const key = `${parts[0]}/${parts[1]}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        packages.push(key);
+      }
+    }
+  }
+  reservoirIndexCache = { at: now, packages };
+  return packages;
+}
 
 export class McpServer {
   private projectRoot: string;
@@ -1812,6 +2247,151 @@ export class McpServer {
           return results.join("\n");
         } catch (err: any) {
           return `LeanSearch API error: ${err.message || String(err)}`;
+        }
+      }
+
+      case "lean_arxiv_search": {
+        const query = args.query;
+        if (!query) throw new Error("Missing required argument: 'query'");
+        const maxResults = Math.max(1, Math.min(20, Number(args.maxResults ?? 5)));
+        const category =
+          typeof args.category === "string" && args.category.trim().length > 0
+            ? ` AND cat:${args.category.trim()}`
+            : "";
+        try {
+          const searchExpr = `all:${query}${category}`;
+          const url =
+            `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(searchExpr)}` +
+            `&start=0&max_results=${maxResults}&sortBy=relevance&sortOrder=descending`;
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 20000);
+          const res = await fetch(url, { signal: controller.signal as any });
+          clearTimeout(timeoutId);
+          if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+          const xml = await res.text();
+          const entries = xml.split("<entry>").slice(1);
+          if (entries.length === 0) return "No arXiv results.";
+          const strip = (s: string) => s.replace(/\s+/g, " ").trim();
+          const pick = (block: string, tag: string): string => {
+            const m = block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`));
+            return m ? strip(m[1]) : "";
+          };
+          const out: string[] = [];
+          for (let i = 0; i < entries.length; i++) {
+            const e = entries[i];
+            const id = pick(e, "id");
+            const title = pick(e, "title");
+            const published = pick(e, "published").slice(0, 10);
+            const authors = [...e.matchAll(/<name>([^<]+)<\/name>/g)]
+              .map((a) => strip(a[1]))
+              .join(", ");
+            const summary = pick(e, "summary").slice(0, 500);
+            out.push(`${i + 1}. ${title}\n   ${authors}\n   ${id} (${published})\n   ${summary}`);
+          }
+          return out.join("\n\n");
+        } catch (err: any) {
+          return `arXiv API error: ${err.message || String(err)}`;
+        }
+      }
+
+      case "lean_reservoir_search": {
+        const query = String(args.query ?? "").trim();
+        if (!query) throw new Error("Missing required argument: 'query'");
+        const limit = Math.max(1, Math.min(30, Number(args.limit ?? 10)));
+        const reqHeaders: Record<string, string> = { "User-Agent": "lean-lsp-mcp/0.1" };
+        try {
+          // exact owner/pkg: the documented registry API (identical to Lake's fetchPkg)
+          if (/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(query)) {
+            const [owner, pkg] = query.split("/");
+            const url =
+              `https://reservoir.lean-lang.org/api/v1/packages/` +
+              `${encodeURIComponent(owner)}/${encodeURIComponent(pkg)}`;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 20000);
+            const res = await fetch(url, { signal: controller.signal as any, headers: reqHeaders });
+            clearTimeout(timeoutId);
+            if (res.ok) {
+              const json: any = await res.json();
+              const data = json && json.data ? json.data : json;
+              const desc = typeof data.description === "string" ? data.description : "";
+              const srcUrl = data.repoUrl || data.githubUrl || data.homepage || "";
+              return (
+                `Registry record: ${owner}/${pkg}\n` +
+                `  name: ${data.name ?? pkg}\n` +
+                `  description: ${desc}\n` +
+                `  source: ${srcUrl}\n` +
+                `  site: https://reservoir.lean-lang.org/packages/${owner}/${pkg}`
+              );
+            }
+          }
+          // name search over the published index tree (cached in-process)
+          const paths = await reservoirIndexPackages();
+          const terms = query.toLowerCase().split(/\s+/).filter((t) => t.length > 0);
+          let matches = paths.filter((p) => terms.every((t) => p.toLowerCase().includes(t)));
+          let partial = false;
+          if (matches.length === 0 && terms.length > 1) {
+            matches = paths.filter((p) => terms.some((t) => p.toLowerCase().includes(t)));
+            partial = true;
+          }
+          matches = matches.slice(0, limit);
+          if (matches.length === 0) {
+            return `No Reservoir packages match '${query}'.`;
+          }
+          const header = partial
+            ? `No exact match for '${query}'; partial matches (any term):\n`
+            : "";
+          return (
+            header +
+            matches
+              .map((p) => `${p}  ->  https://reservoir.lean-lang.org/packages/${p}`)
+              .join("\n")
+          );
+        } catch (err: any) {
+          return `Reservoir error: ${err.message || String(err)}`;
+        }
+      }
+
+      case "lean_dataset_search": {
+        const query = String(args.query ?? "").trim();
+        if (!query) throw new Error("Missing required argument: 'query'");
+        const limit = Math.max(1, Math.min(30, Number(args.limit ?? 10)));
+        try {
+          const url =
+            `https://huggingface.co/api/datasets?search=${encodeURIComponent(query)}` +
+            `&limit=${limit * 3}`;
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 20000);
+          const res = await fetch(url, {
+            signal: controller.signal as any,
+            headers: { "User-Agent": "lean-lsp-mcp/0.1" },
+          });
+          clearTimeout(timeoutId);
+          if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+          const json: any = await res.json();
+          if (!Array.isArray(json) || json.length === 0) {
+            return `No Hugging Face datasets match '${query}'.`;
+          }
+          const rows = json
+            .filter((d: any) => !d.disabled && !d.private)
+            .sort((a: any, b: any) => (b.downloads ?? 0) - (a.downloads ?? 0))
+            .slice(0, limit);
+          if (rows.length === 0) {
+            return `No public Hugging Face datasets match '${query}'.`;
+          }
+          return rows
+            .map((d: any) => {
+              const gate = d.gated ? " [gated]" : "";
+              const when =
+                typeof d.lastModified === "string" ? d.lastModified.slice(0, 10) : "";
+              return (
+                `${d.id}${gate}\n` +
+                `   downloads: ${d.downloads ?? 0} | likes: ${d.likes ?? 0} | updated: ${when}\n` +
+                `   https://huggingface.co/datasets/${d.id}`
+              );
+            })
+            .join("\n");
+        } catch (err: any) {
+          return `Hugging Face API error: ${err.message || String(err)}`;
         }
       }
 
