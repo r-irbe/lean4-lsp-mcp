@@ -1423,6 +1423,9 @@ export class FileWorkerManager {
       ) {
         return curr;
       }
+      if (path.resolve(curr) === path.resolve(this.projectRoot)) {
+        break;
+      }
       curr = path.dirname(curr);
     }
     return this.projectRoot;
