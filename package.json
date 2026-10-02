@@ -31,6 +31,59 @@
   ],
   "author": "r-irbe",
   "license": "Apache-2.0",
+  "capabilities": {
+    "tools": [
+      {
+        "name": "lean_goal",
+        "description": "Interactive proof state and goal inspection",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_search",
+        "description": "Unified declaration, semantic, ontology, reservoir, and Kuzu knowledge graph search",
+        "access": "read",
+        "scope": "workspace_and_public_apis",
+        "network": true,
+        "allowedDomains": [
+          "loogle.lean-lang.org",
+          "leansearch.net",
+          "export.arxiv.org",
+          "huggingface.co",
+          "raw.githubusercontent.com"
+        ]
+      },
+      {
+        "name": "lean_blueprint",
+        "description": "Blueprint generation, status audit, and knowledge graph neighborhood",
+        "access": "read_write",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_metrics",
+        "description": "Module census, dependency hierarchy, and DAG graphs",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_ffi",
+        "description": "C FFI symbol resolution and Lean sysroot inspection",
+        "access": "read",
+        "scope": "workspace_and_sysroot",
+        "network": false
+      },
+      {
+        "name": "lean_exec",
+        "description": "Ephemeral Lean 4 execution via lean --stdin",
+        "access": "exec",
+        "scope": "isolated_process",
+        "network": false
+      }
+    ]
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.6.0"
   },
