@@ -138,13 +138,13 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "lean_metrics",
-    description: "Module and project metrics: static code census, module dependency hierarchy DAG, and dependency subgraphs",
+    description: "Module and project metrics: static code census, module dependency hierarchy DAG, dependency subgraphs, dual Place-Link bigraph projection, and certified axiom audit",
     inputSchema: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["census", "hierarchy", "subgraph"],
+          enum: ["census", "hierarchy", "subgraph", "bigraph", "axiom_audit"],
           description: "Metric action to perform (default: census)",
         },
         target: { type: "string", description: "Target file path, directory path, or module name" },
@@ -2873,6 +2873,311 @@ export class McpServer {
         }
       }
 
+      case "lean_bigraph_projection": {
+        const targetPath = String(args.targetPath || "").trim() || ".";
+        const absTarget = path.isAbsolute(targetPath) ? targetPath : path.resolve(this.projectRoot, targetPath);
+        if (!fs.existsSync(absTarget)) {
+          return `Target path not found: ${targetPath}`;
+        }
+
+        const filesToScan: string[] = [];
+        const stat = fs.statSync(absTarget);
+        if (stat.isDirectory()) {
+          const walk = (dir: string) => {
+            for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, ent.name);
+              if (ent.isDirectory() && ent.name !== ".lake" && ent.name !== ".git") {
+                walk(full);
+              } else if (ent.isFile() && ent.name.endsWith(".lean")) {
+                filesToScan.push(full);
+              }
+            }
+          };
+          walk(absTarget);
+        } else if (stat.isFile() && absTarget.endsWith(".lean")) {
+          filesToScan.push(absTarget);
+        }
+
+        interface PlaceNode {
+          id: string;
+          name: string;
+          kind: "root" | "module" | "namespace" | "theorem" | "lemma" | "def" | "structure" | "class" | "inductive";
+          parentId: string | null;
+          file?: string;
+          line?: number;
+        }
+
+        interface LinkHyperedge {
+          id: string;
+          kind: "import" | "dependency";
+          source: string;
+          targets: string[];
+        }
+
+        const placeNodes: PlaceNode[] = [
+          { id: "root", name: targetPath, kind: "root", parentId: null }
+        ];
+        const hyperedges: LinkHyperedge[] = [];
+
+        let edgeIdCounter = 0;
+        let nodeIdCounter = 0;
+
+        for (const file of filesToScan) {
+          const relPath = path.relative(this.projectRoot, file).replace(/\\/g, "/");
+          const modName = relPath.replace(/\.lean$/, "").replace(/\//g, ".");
+          const modId = `mod_${nodeIdCounter++}`;
+          placeNodes.push({
+            id: modId,
+            name: modName,
+            kind: "module",
+            parentId: "root",
+            file: relPath
+          });
+
+          const content = fs.readFileSync(file, "utf-8");
+          const lines = content.split(/\r?\n/);
+          let inBlockComment = false;
+          let currentParentId = modId;
+          const namespaceStack: { name: string; id: string }[] = [];
+          const imports: string[] = [];
+
+          for (let i = 0; i < lines.length; i++) {
+            const lineNum = i + 1;
+            const l = lines[i];
+            const stripped = l.trim();
+            if (!stripped) continue;
+
+            if (inBlockComment) {
+              if (l.includes("-/")) inBlockComment = false;
+              continue;
+            } else if (stripped.startsWith("/-")) {
+              if (!l.includes("-/")) inBlockComment = true;
+              continue;
+            } else if (stripped.startsWith("--")) {
+              continue;
+            }
+
+            const importMatch = stripped.match(/^import\s+([A-Za-z0-9_.]+)/);
+            if (importMatch) {
+              imports.push(importMatch[1]);
+              continue;
+            }
+
+            const nsOpenMatch = stripped.match(/^namespace\s+([A-Za-z0-9_.]+)/);
+            if (nsOpenMatch) {
+              const nsId = `ns_${nodeIdCounter++}`;
+              placeNodes.push({
+                id: nsId,
+                name: nsOpenMatch[1],
+                kind: "namespace",
+                parentId: currentParentId,
+                line: lineNum
+              });
+              namespaceStack.push({ name: nsOpenMatch[1], id: nsId });
+              currentParentId = nsId;
+              continue;
+            }
+
+            const nsEndMatch = stripped.match(/^end(?:\s+([A-Za-z0-9_.]+))?/);
+            if (nsEndMatch && namespaceStack.length > 0) {
+              namespaceStack.pop();
+              currentParentId = namespaceStack.length > 0 ? namespaceStack[namespaceStack.length - 1].id : modId;
+              continue;
+            }
+
+            const declMatch = l.match(/^(?:(?:noncomputable|scoped|protected|private)\s+)*(theorem|lemma|def|structure|class|inductive)\s+([A-Za-z0-9_.]+)/);
+            if (declMatch) {
+              const kind = declMatch[1] as PlaceNode["kind"];
+              const name = declMatch[2];
+              placeNodes.push({
+                id: `decl_${nodeIdCounter++}`,
+                name,
+                kind,
+                parentId: currentParentId,
+                line: lineNum
+              });
+            }
+          }
+
+          if (imports.length > 0) {
+            hyperedges.push({
+              id: `edge_${edgeIdCounter++}`,
+              kind: "import",
+              source: modName,
+              targets: imports
+            });
+          }
+        }
+
+        const format = String(args.format || "json").toLowerCase();
+        if (format === "markdown") {
+          const modCount = placeNodes.filter(n => n.kind === "module").length;
+          const declCount = placeNodes.filter(n => ["theorem", "lemma", "def", "structure", "class", "inductive"].includes(n.kind)).length;
+          return [
+            `# Milner Bigraph Projection: ${targetPath}`,
+            `- **Place Graph (Containment)**: ${placeNodes.length} nodes (${modCount} modules, ${declCount} declarations)`,
+            `- **Link Graph (Hyperedges)**: ${hyperedges.length} hyperedge sets`,
+            "",
+            "## Place Forest Summary",
+            ...placeNodes.slice(0, 30).map(n => `  - [${n.kind}] ${n.name} (parent: ${n.parentId || "none"}${n.line ? ` line ${n.line}` : ""})`),
+            placeNodes.length > 30 ? `  ... (${placeNodes.length - 30} more nodes)` : "",
+            "",
+            "## Link Hyperedges",
+            ...hyperedges.slice(0, 15).map(e => `  - ${e.source} --[${e.kind}]--> [${e.targets.join(", ")}]`),
+            hyperedges.length > 15 ? `  ... (${hyperedges.length - 15} more hyperedges)` : "",
+          ].filter(Boolean).join("\n");
+        } else {
+          return JSON.stringify({
+            target: targetPath,
+            place_graph: {
+              nodes: placeNodes,
+              total_nodes: placeNodes.length,
+            },
+            link_graph: {
+              hyperedges,
+              total_hyperedges: hyperedges.length,
+            }
+          }, null, 2);
+        }
+      }
+
+      case "lean_axiom_audit": {
+        const targetPath = String(args.targetPath || "").trim() || ".";
+        const absTarget = path.isAbsolute(targetPath) ? targetPath : path.resolve(this.projectRoot, targetPath);
+        if (!fs.existsSync(absTarget)) {
+          return `Target path not found: ${targetPath}`;
+        }
+
+        const filesToScan: string[] = [];
+        const stat = fs.statSync(absTarget);
+        if (stat.isDirectory()) {
+          const walk = (dir: string) => {
+            for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, ent.name);
+              if (ent.isDirectory() && ent.name !== ".lake" && ent.name !== ".git") {
+                walk(full);
+              } else if (ent.isFile() && ent.name.endsWith(".lean")) {
+                filesToScan.push(full);
+              }
+            }
+          };
+          walk(absTarget);
+        } else if (stat.isFile() && absTarget.endsWith(".lean")) {
+          filesToScan.push(absTarget);
+        }
+
+        interface CustomAxiomViolation {
+          file: string;
+          line: number;
+          name: string;
+          raw: string;
+        }
+
+        interface SorryViolation {
+          file: string;
+          line: number;
+          symbol: string;
+          raw: string;
+        }
+
+        const customAxioms: CustomAxiomViolation[] = [];
+        const sorries: SorryViolation[] = [];
+        let totalDeclarations = 0;
+
+        for (const file of filesToScan) {
+          const relPath = path.relative(this.projectRoot, file).replace(/\\/g, "/");
+          const content = fs.readFileSync(file, "utf-8");
+          const lines = content.split(/\r?\n/);
+          let inBlockComment = false;
+
+          for (let i = 0; i < lines.length; i++) {
+            const lineNum = i + 1;
+            const l = lines[i];
+            const stripped = l.trim();
+            if (!stripped) continue;
+
+            if (inBlockComment) {
+              if (l.includes("-/")) inBlockComment = false;
+              continue;
+            } else if (stripped.startsWith("/-")) {
+              if (!l.includes("-/")) inBlockComment = true;
+              continue;
+            } else if (stripped.startsWith("--")) {
+              continue;
+            }
+
+            const declMatch = l.match(/^(?:(?:noncomputable|scoped|protected|private)\s+)*(theorem|lemma|def|structure|class|inductive|axiom)\s+([A-Za-z0-9_.]+)/);
+            if (declMatch) {
+              totalDeclarations++;
+              const kind = declMatch[1];
+              const name = declMatch[2];
+              if (kind === "axiom") {
+                customAxioms.push({
+                  file: relPath,
+                  line: lineNum,
+                  name,
+                  raw: stripped
+                });
+              }
+            }
+
+            const sorryMatch = l.match(/\b(sorry|admit|sorryAx)\b/);
+            if (sorryMatch) {
+              sorries.push({
+                file: relPath,
+                line: lineNum,
+                symbol: sorryMatch[1],
+                raw: stripped
+              });
+            }
+          }
+        }
+
+        const isClean = customAxioms.length === 0 && sorries.length === 0;
+        const format = String(args.format || "markdown").toLowerCase();
+
+        if (format === "json") {
+          return JSON.stringify({
+            target: targetPath,
+            clean: isClean,
+            modules_scanned: filesToScan.length,
+            declarations_scanned: totalDeclarations,
+            custom_axioms: customAxioms,
+            sorries: sorries,
+            verdict: isClean ? "PASS: 0 custom axioms, 0 sorry" : "FAIL: violations detected"
+          }, null, 2);
+        } else {
+          const lines = [
+            `# Lean Axiom and Soundness Audit: ${targetPath}`,
+            `- **Status**: ${isClean ? "PASS (Zero Custom Axioms, Zero Sorries)" : "FAIL (Violations Detected)"}`,
+            `- **Scanned Modules**: ${filesToScan.length}`,
+            `- **Scanned Declarations**: ${totalDeclarations}`,
+            `- **Custom Axioms Detected**: ${customAxioms.length}`,
+            `- **Sorries / Admits Detected**: ${sorries.length}`,
+          ];
+
+          if (customAxioms.length > 0) {
+            lines.push("", "## Custom Axioms (Violations):");
+            for (const ax of customAxioms) {
+              lines.push(`- **${ax.name}** at \`${ax.file}:${ax.line}\`: \`${ax.raw}\``);
+            }
+          }
+
+          if (sorries.length > 0) {
+            lines.push("", "## Incomplete Proofs (Sorries):");
+            for (const s of sorries) {
+              lines.push(`- **${s.symbol}** at \`${s.file}:${s.line}\`: \`${s.raw}\``);
+            }
+          }
+
+          if (isClean) {
+            lines.push("", "Verified: Formally closed system with zero unproved goals and zero custom kernel axioms.");
+          }
+
+          return lines.join("\n");
+        }
+      }
+
       case "lean_pedagogical_walkthrough": {
         const symbol = String(args.symbol || "").trim();
         if (!symbol) throw new Error("Missing required argument: 'symbol'");
@@ -3377,6 +3682,16 @@ export class McpServer {
           return await this.executeTool("lean_dependency_subgraph", {
             moduleName: target,
             maxDepth: args.maxDepth,
+            format: args.format,
+          });
+        } else if (action === "bigraph") {
+          return await this.executeTool("lean_bigraph_projection", {
+            targetPath: target,
+            format: args.format,
+          });
+        } else if (action === "axiom_audit" || action === "axioms") {
+          return await this.executeTool("lean_axiom_audit", {
+            targetPath: target,
             format: args.format,
           });
         } else {

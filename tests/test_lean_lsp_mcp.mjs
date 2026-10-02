@@ -166,6 +166,39 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     });
     assert(callCensus && callCensus.result && !callCensus.result.isError, "Module census succeeds");
 
+    // Consolidated lean_metrics: bigraph projection
+    const leanRulesPath = path.resolve(__dirname, "../../rust-mmap-engine/lean_rules");
+    const testTarget = fs.existsSync(leanRulesPath) ? leanRulesPath : "src";
+    const callBigraph = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 81,
+        method: "tools/call",
+        params: {
+            name: "lean_metrics",
+            arguments: { action: "bigraph", target: testTarget, format: "json" },
+        },
+    });
+    assert(callBigraph && callBigraph.result && !callBigraph.result.isError, "Bigraph projection succeeds");
+    const bigraphData = JSON.parse(callBigraph.result.content[0].text);
+    assert(bigraphData.place_graph && Array.isArray(bigraphData.place_graph.nodes), "Bigraph contains place_graph nodes");
+    assert(bigraphData.link_graph && Array.isArray(bigraphData.link_graph.hyperedges), "Bigraph contains link_graph hyperedges");
+
+    // Consolidated lean_metrics: axiom audit
+    const callAxioms = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 82,
+        method: "tools/call",
+        params: {
+            name: "lean_metrics",
+            arguments: { action: "axiom_audit", target: testTarget, format: "json" },
+        },
+    });
+    assert(callAxioms && callAxioms.result && !callAxioms.result.isError, "Axiom audit succeeds");
+    const axiomData = JSON.parse(callAxioms.result.content[0].text);
+    assert(axiomData.clean === true, "Axiom audit clean pass verified");
+    assert(axiomData.custom_axioms.length === 0, "Zero custom axioms verified");
+    assert(axiomData.sorries.length === 0, "Zero sorries verified");
+
     // Consolidated lean_ffi: sysroot flags
     const callFfi = await server.handleMessage({
         jsonrpc: "2.0",
