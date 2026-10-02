@@ -85,67 +85,113 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     });
     assert(listRes && Array.isArray(listRes.result.tools), "tools list is array");
     const toolNames = listRes.result.tools.map(t => t.name);
-    assert.strictEqual(toolNames.length, 23, "Exposes exactly 23 tools");
+    assert.strictEqual(toolNames.length, 6, "Exposes exactly 6 consolidated tools");
 
-    assert(toolNames.includes("lean_goal"), "Includes lean_goal");
-    assert(toolNames.includes("lean_term_goal"), "Includes lean_term_goal");
-    assert(toolNames.includes("lean_lookup_symbol"), "Includes lean_lookup_symbol");
-    assert(toolNames.includes("lean_module_hierarchy"), "Includes lean_module_hierarchy");
-    assert(toolNames.includes("lean_c_ffi_inspect"), "Includes lean_c_ffi_inspect");
-    assert(toolNames.includes("lean_filtered_goal"), "Includes lean_filtered_goal");
-    assert(toolNames.includes("lean_run_code"), "Includes lean_run_code");
-    assert(toolNames.includes("lean_loogle_search"), "Includes lean_loogle_search");
-    assert(toolNames.includes("lean_local_search"), "Includes lean_local_search");
-    assert(toolNames.includes("lean_search"), "Includes lean_search");
-    assert(toolNames.includes("lean_arxiv_search"), "Includes lean_arxiv_search");
-    assert(toolNames.includes("lean_reservoir_search"), "Includes lean_reservoir_search");
-    assert(toolNames.includes("lean_dataset_search"), "Includes lean_dataset_search");
-    assert(toolNames.includes("lean_ontology_search"), "Includes lean_ontology_search");
-    assert(toolNames.includes("lean_book_index_lookup"), "Includes lean_book_index_lookup");
-    assert(toolNames.includes("lean_cross_itp_concordance"), "Includes lean_cross_itp_concordance");
-    assert(toolNames.includes("lean_proof_skeleton"), "Includes lean_proof_skeleton");
-    assert(toolNames.includes("lean_blueprint_scaffold"), "Includes lean_blueprint_scaffold");
-    assert(toolNames.includes("lean_dependency_subgraph"), "Includes lean_dependency_subgraph");
-    assert(toolNames.includes("lean_module_census"), "Includes lean_module_census");
-    assert(toolNames.includes("lean_pedagogical_walkthrough"), "Includes lean_pedagogical_walkthrough");
-    assert(toolNames.includes("lean_blueprint_status"), "Includes lean_blueprint_status");
-    assert(toolNames.includes("lean_zettel_scaffold"), "Includes lean_zettel_scaffold");
+    const expectedTools = ["lean_goal", "lean_search", "lean_blueprint", "lean_metrics", "lean_ffi", "lean_exec"];
+    for (const t of expectedTools) {
+        assert(toolNames.includes(t), `Includes consolidated tool: ${t}`);
+    }
 
-    const callOnto = await server.handleMessage({
+    // Consolidated lean_search: graph source (Kuzu)
+    const callKuzu = await server.handleMessage({
         jsonrpc: "2.0",
         id: 3,
+        method: "tools/call",
+        params: {
+            name: "lean_search",
+            arguments: { query: "inductive proof", source: "graph", limit: 5 },
+        },
+    });
+    assert(callKuzu && callKuzu.result && !callKuzu.result.isError, "Kuzu graph search succeeds");
+    assert(callKuzu.result.content[0].text.includes("Section:"), "Kuzu graph returns indexed section results");
+
+    // Consolidated lean_blueprint: graph_neighborhood (Kuzu)
+    const callKuzuNeigh = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+            name: "lean_blueprint",
+            arguments: { action: "graph_neighborhood", sectionId: "COQART s13.1 p1" },
+        },
+    });
+    assert(callKuzuNeigh && callKuzuNeigh.result && !callKuzuNeigh.result.isError, "Kuzu graph neighborhood succeeds");
+    assert(callKuzuNeigh.result.content[0].text.includes("Neighborhood:"), "Kuzu neighborhood returns formatted section");
+
+    // Consolidated lean_search: ontology source
+    const callOnto = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: {
+            name: "lean_search",
+            arguments: { query: "liquid", source: "ontology" },
+        },
+    });
+    assert(callOnto && callOnto.result && callOnto.result.content[0].text.includes("CONCEPT-CONDENSED-MATHEMATICS-LIQUID-VECTOR-SPACES"), "Ontology search resolves concept");
+
+    // Consolidated lean_search: book source
+    const callBook = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 6,
+        method: "tools/call",
+        params: {
+            name: "lean_search",
+            arguments: { query: "category", source: "book" },
+        },
+    });
+    assert(callBook && callBook.result && callBook.result.content[0].text.includes("category"), "Book index lookup resolves entries");
+
+    // Consolidated lean_search: concordance source
+    const callConc = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: {
+            name: "lean_search",
+            arguments: { query: "functor", source: "concordance" },
+        },
+    });
+    assert(callConc && callConc.result && callConc.result.content[0].text.length > 0, "Cross-ITP concordance resolves entries");
+
+    // Consolidated lean_metrics: census
+    const callCensus = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 8,
+        method: "tools/call",
+        params: {
+            name: "lean_metrics",
+            arguments: { action: "census", target: "src" },
+        },
+    });
+    assert(callCensus && callCensus.result && !callCensus.result.isError, "Module census succeeds");
+
+    // Consolidated lean_ffi: sysroot flags
+    const callFfi = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 9,
+        method: "tools/call",
+        params: {
+            name: "lean_ffi",
+            arguments: { action: "sysroot" },
+        },
+    });
+    assert(callFfi && callFfi.result && callFfi.result.content[0].text.includes("Lean Sysroot"), "FFI sysroot query succeeds");
+
+    // Legacy tool routing (backward-compatibility)
+    const callLegacy = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 10,
         method: "tools/call",
         params: {
             name: "lean_ontology_search",
             arguments: { query: "liquid" },
         },
     });
-    assert(callOnto && callOnto.result && callOnto.result.content[0].text.includes("CONCEPT-CONDENSED-MATHEMATICS-LIQUID-VECTOR-SPACES"), "Ontology search resolves concept");
-
-    const callBook = await server.handleMessage({
-        jsonrpc: "2.0",
-        id: 4,
-        method: "tools/call",
-        params: {
-            name: "lean_book_index_lookup",
-            arguments: { term: "category" },
-        },
-    });
-    assert(callBook && callBook.result && callBook.result.content[0].text.includes("category"), "Book index lookup resolves entries");
-
-    const callConc = await server.handleMessage({
-        jsonrpc: "2.0",
-        id: 5,
-        method: "tools/call",
-        params: {
-            name: "lean_cross_itp_concordance",
-            arguments: { concept: "functor" },
-        },
-    });
-    assert(callConc && callConc.result && callConc.result.content[0].text.length > 0, "Cross-ITP concordance resolves entries");
+    assert(callLegacy && callLegacy.result && callLegacy.result.content[0].text.includes("CONCEPT-CONDENSED-MATHEMATICS-LIQUID-VECTOR-SPACES"), "Legacy alias routing works");
 
     server.dispose();
-    console.log("  - McpServer Dispatch (all 16 tools + ontology + book + concordance): PASS");
+    console.log("  - McpServer Dispatch (6 consolidated tools + Kuzu graph + legacy aliases): PASS");
 }
 
 // 5. LakeBuildGuard Concurrency Check

@@ -7,6 +7,7 @@ import * as path from "node:path";
 import * as os from "node:os";
 import { execSync, spawn, ChildProcess } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { KuzuKnowledgeGraph } from "./kuzu_graph.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -75,298 +76,112 @@ export interface TransitiveClosureResult {
 export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   {
     name: "lean_goal",
-    description: "Queries interactive Lean 4 tactic proof state at cursor position ($/lean/plainGoal)",
+    description: "Queries interactive Lean 4 tactic proof state, filtered proof state, or expected term type at cursor position ($/lean/plainGoal, $/lean/plainTermGoal)",
     inputSchema: {
       type: "object",
       properties: {
         filePath: { type: "string", description: "Absolute or relative path to the .lean file" },
         line: { type: "integer", description: "1-based line number" },
-        col: { type: "integer", description: "1-based column number" },
+        col: { type: "integer", description: "1-based column number (synonym: character)" },
         character: { type: "integer", description: "Synonym for col" },
-        filterTypeclasses: { type: "boolean", description: "Filter out ambient typeclass instances (default: false)" },
-        filterInaccessible: { type: "boolean", description: "Filter out compiler internal and dagger variables (default: false)" },
-        onlyTarget: { type: "boolean", description: "Return only the target goal expression (default: false)" },
+        target: { type: "string", enum: ["tactic", "term", "filtered"], description: "Goal target type (default: tactic)" },
+        filter: { type: "string", enum: ["all", "hypotheses", "target"], description: "Filtering intensity (default: all)" },
+        hideTypeclasses: { type: "boolean", description: "Filter out ambient typeclass instances" },
+        hideInaccessible: { type: "boolean", description: "Filter out compiler internal/dagger variables" },
+        onlyTarget: { type: "boolean", description: "Return only the target goal expression" },
+        maxGoals: { type: "integer", description: "Maximum subgoals to display (default: 3)" },
       },
       required: ["filePath", "line"],
-    },
-  },
-  {
-    name: "lean_filtered_goal",
-    description: "Queries Lean 4 tactic proof state with aggressive token filtering (strips typeclass instances and irrelevance fields, cutting tokens by 70-90%)",
-    inputSchema: {
-      type: "object",
-      properties: {
-        filePath: { type: "string", description: "Absolute or relative path to the .lean file" },
-        line: { type: "integer", description: "1-based line number" },
-        col: { type: "integer", description: "1-based column number" },
-        character: { type: "integer", description: "Synonym for col" },
-        hideTypeclasses: { type: "boolean", description: "Omit ambient typeclass instances (default: true)" },
-        hideInaccessible: { type: "boolean", description: "Omit inaccessible/dagger variables (default: true)" },
-        onlyTarget: { type: "boolean", description: "Return only the target expression (default: false)" },
-        maxGoals: { type: "integer", description: "Maximum number of subgoals to display (default: 3)" },
-      },
-      required: ["filePath", "line"],
-    },
-  },
-  {
-    name: "lean_term_goal",
-    description: "Queries expected term type under cursor ($/lean/plainTermGoal)",
-    inputSchema: {
-      type: "object",
-      properties: {
-        filePath: { type: "string", description: "Absolute or relative path to the .lean file" },
-        line: { type: "integer", description: "1-based line number" },
-        col: { type: "integer", description: "1-based column number" },
-        character: { type: "integer", description: "Synonym for col" },
-      },
-      required: ["filePath", "line"],
-    },
-  },
-  {
-    name: "lean_lookup_symbol",
-    description: "Offline zero-latency symbol lookup and jump-to-definition via pre-compiled .ilean cache",
-    inputSchema: {
-      type: "object",
-      properties: {
-        symbol: { type: "string", description: "Lean declaration name (e.g. RealQ.bellmanOp or BoundedRewardKernel)" },
-        preferOfflineIlean: { type: "boolean", description: "Use fast .ilean cache (default true)" },
-      },
-      required: ["symbol"],
-    },
-  },
-  {
-    name: "lean_module_hierarchy",
-    description: "Forward and reverse module dependency hierarchy analysis with transitive closure and cycle detection",
-    inputSchema: {
-      type: "object",
-      properties: {
-        moduleName: { type: "string", description: "Full module name (e.g. Mathlib.Data.List)" },
-        direction: { type: "string", enum: ["imports", "importedBy", "both"], description: "Direction of dependency traversal (default: both)" },
-        transitive: { type: "boolean", description: "Perform full transitive closure traversal (default: false)" },
-        maxDepth: { type: "integer", description: "Maximum traversal depth for transitive search (default: 20)" },
-      },
-      required: ["moduleName"],
-    },
-  },
-  {
-    name: "lean_c_ffi_inspect",
-    description: "Cross-language C FFI inspector: Lean @[extern] declarations, C implementations, and Lean sysroot include flags",
-    inputSchema: {
-      type: "object",
-      properties: {
-        externName: { type: "string", description: "Optional Lean @[extern] identifier or C function name" },
-        action: { type: "string", enum: ["sysroot", "inspect", "jump_to_c"], description: "FFI inspection action (default: inspect)" },
-      },
-    },
-  },
-  {
-    name: "lean_run_code",
-    description: "Ephemeral standalone execution via lean --stdin without file pollution",
-    inputSchema: {
-      type: "object",
-      properties: {
-        code: { type: "string", description: "Lean code to execute" },
-      },
-      required: ["code"],
-    },
-  },
-  {
-    name: "lean_loogle_search",
-    description: "Type-based search querying Loogle API (https://loogle.lean-lang.org/json?q=...)",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Loogle query string" },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "lean_local_search",
-    description: "Fast local declaration search using ripgrep. Use BEFORE trying a lemma name.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Declaration name or prefix" },
-        limit: { type: "integer", description: "Max matches (default 10)" },
-      },
-      required: ["query"],
     },
   },
   {
     name: "lean_search",
-    description: "Search Mathlib via leansearch.net using natural language.",
+    description: "Unified declaration, semantic, ontology, reservoir, dataset, arXiv, and Kuzu knowledge graph search",
     inputSchema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "Natural language or Lean term query" },
-        num_results: { type: "integer", description: "Max results (default 5)" },
+        query: { type: "string", description: "Search query, symbol name, type signature, concept, or term" },
+        source: {
+          type: "string",
+          enum: ["code", "loogle", "ontology", "arxiv", "datasets", "reservoir", "book", "concordance", "symbol", "graph", "local"],
+          description: "Search domain and engine (default: code / local declaration search)",
+        },
+        file: { type: "string", description: "Optional file path filter" },
+        limit: { type: "integer", description: "Max results to return (default: 10)" },
+        prover: { type: "string", description: "Optional target prover filter for ontology / concordance" },
+        category: { type: "string", description: "Optional arXiv category filter" },
       },
       required: ["query"],
     },
   },
   {
-    name: "lean_arxiv_search",
-    description: "Search arXiv (math.PR, math.NT, math.AG, cs.LO, cs.AI, cs.LG) for mathematical papers, lemma formulations, and proof sketches to ground formalization work. Returns title/authors/identifier/date/abstract per result.",
+    name: "lean_blueprint",
+    description: "Lean Blueprint and Knowledge Garden operations: scaffolding, coverage status, zettels, skeletons, and graph neighborhoods",
     inputSchema: {
       type: "object",
       properties: {
-        query: { type: "string", description: "arXiv search query, e.g. stationary distribution Markov chain ergodic" },
-        category: { type: "string", description: "Optional arXiv category filter, e.g. math.PR, math.NT, cs.LO" },
-        maxResults: { type: "integer", description: "Maximum results (default 5, max 20)" },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "lean_reservoir_search",
-    description: "Find Lean/Lake packages in the Reservoir registry. An exact owner/pkg query uses the documented registry API (the same call Lake makes); a plain-text query searches the published reservoir-index package names (public GitHub API, cached 30 min in-process). Returns registry/site links.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Name search (e.g. sat solver, automata) or an exact owner/pkg (e.g. leanprover-community/mathlib)" },
-        limit: { type: "integer", description: "Maximum name-search matches (default 10, max 30)" },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "lean_dataset_search",
-    description: "Search Hugging Face for formal-math and Lean proof corpora (Proof-Pile-2, NuminaMath, Lean-STaR, ...). Returns dataset ids with download counts, likes, last-update dates and links; gated datasets are flagged.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Search terms, e.g. proof-pile, formal proof, Lean 4 tactic" },
-        limit: { type: "integer", description: "Maximum results (default 10, max 30)" },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "lean_ontology_search",
-    description: "Search canonical ITP Master Authority Ontology for mathematical concepts, cross-prover tactic mappings (Lean 4, Coq, Isabelle, HOL Light, Metamath), MSC2020 classifications, and statutory book intervals.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        query: { type: "string", description: "Concept name, keyword, or tactic (e.g. Presburger, Separation, Kan, omega, decide)" },
-        prover: { type: "string", description: "Optional prover filter (lean4, coq, isabelle_hol, hol_light, metamath)" },
-      },
-      required: ["query"],
-    },
-  },
-  {
-    name: "lean_book_index_lookup",
-    description: "Look up a term in the author-curated book indexes (the librarian pipeline's per-book index JSON under source-materials/indexes/), returning the term's primary references (book, section anchors, pages) and cross-references - the directed query routing per the corpus plan section 3.3.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        term: { type: "string", description: "The index term (e.g. calculation block, inversion, well-founded)" },
-        book: { type: "string", description: "Optional book filter (corpus_id or file stem, e.g. avigad-massot-mathematics-in-lean)" },
-      },
-      required: ["term"],
-    },
-  },
-  {
-    name: "lean_cross_itp_concordance",
-    description: "Translate a concept across the proof assistants using the librarian corpus's cross-prover concordance (e.g. Lean rcases <-> Coq inversion <-> Isabelle cases); lists each prover's tactic with the book anchor that motivated it.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        concept: { type: "string", description: "The concept or tactic to translate (e.g. inversion, induction, rewrite)" },
-      },
-      required: ["concept"],
-    },
-  },
-  {
-    name: "lean_proof_skeleton",
-    description: "Extract logical milestone proof skeleton (have, obtain, calc, induction, cases) from a theorem in a .lean file without tactic micro-steps",
-    inputSchema: {
-      type: "object",
-      properties: {
-        filePath: { type: "string", description: "Path to the .lean file (relative or absolute)" },
-        symbol: { type: "string", description: "Optional symbol or theorem name to extract skeleton for" },
-        startLine: { type: "integer", description: "Optional 1-based start line of proof" },
-        endLine: { type: "integer", description: "Optional 1-based end line of proof" },
-      },
-      required: ["filePath"],
-    },
-  },
-  {
-    name: "lean_blueprint_scaffold",
-    description: "Generate Lean Blueprint LaTeX environment (theorem, lemma, definition) with \\lean{...}, \\uses{...}, and \\leanok tags from declaration metadata",
-    inputSchema: {
-      type: "object",
-      properties: {
+        action: {
+          type: "string",
+          enum: ["status", "scaffold", "zettel", "skeleton", "walkthrough", "graph_neighborhood"],
+          description: "Blueprint action to perform (default: status)",
+        },
         symbol: { type: "string", description: "Lean declaration name (e.g. EulerPacketPiola.matrixAntisym_congruence)" },
-        filePath: { type: "string", description: "Optional path to the .lean file if symbol is not in .ilean cache" },
-        line: { type: "integer", description: "Optional 1-based line number" },
-        title: { type: "string", description: "Optional human-readable title for the theorem/definition" },
-      },
-      required: ["symbol"],
-    },
-  },
-  {
-    name: "lean_dependency_subgraph",
-    description: "Extract transitive dependency subgraph for a declaration or module formatted as JSON, Mermaid graph, or Graphviz DOT",
-    inputSchema: {
-      type: "object",
-      properties: {
-        moduleName: { type: "string", description: "Full module name (e.g. Euler.PacketPiolaAlgebra)" },
-        maxDepth: { type: "integer", description: "Maximum traversal depth (default: 5)" },
-        format: { type: "string", enum: ["json", "mermaid", "dot"], description: "Output format (default: mermaid)" },
-      },
-      required: ["moduleName"],
-    },
-  },
-  {
-    name: "lean_module_census",
-    description: "Run an instant static census on a Lean file or directory, returning line counts, theorems, definitions, structures, axioms, and sorries",
-    inputSchema: {
-      type: "object",
-      properties: {
-        targetPath: { type: "string", description: "Path to file or directory relative to project root" },
-        format: { type: "string", enum: ["summary", "markdown", "json"], description: "Output format (default: markdown)" },
-      },
-      required: ["targetPath"],
-    },
-  },
-  {
-    name: "lean_pedagogical_walkthrough",
-    description: "Generate a textbook-grade pedagogical proof walkthrough translating formal Lean declaration and proof milestones into 3-stage mathematical prose",
-    inputSchema: {
-      type: "object",
-      properties: {
-        symbol: { type: "string", description: "Name of the Lean declaration (e.g. 'fermat_last_theorem', 'navier_stokes_breakdown_R3')" },
-        filePath: { type: "string", description: "Optional path to .lean file if known" },
-        line: { type: "integer", description: "Optional line number if known" },
-        outputPath: { type: "string", description: "Optional path to save generated walkthrough markdown" },
-      },
-      required: ["symbol"],
-    },
-  },
-  {
-    name: "lean_blueprint_status",
-    description: "Audit Lean Blueprint LaTeX coverage vs physical Lean codebase, verifying \\leanok tags against actual sorry-free status and detecting untracked theorems",
-    inputSchema: {
-      type: "object",
-      properties: {
-        formalizationDir: { type: "string", description: "Path to Lean formalization directory relative to project root" },
-        blueprintDir: { type: "string", description: "Path to Blueprint directory (default: 'blueprint/src' or 'docs/blueprint')" },
+        filePath: { type: "string", description: "Path to .lean file (relative or absolute)" },
+        sectionId: { type: "string", description: "Section ID for graph_neighborhood (e.g. from Kuzu graph)" },
+        formalizationDir: { type: "string", description: "Root formalization directory for status audit" },
+        blueprintDir: { type: "string", description: "Root blueprint directory for status audit" },
+        outputPath: { type: "string", description: "Optional output file path for generated scaffold or zettel" },
         format: { type: "string", enum: ["markdown", "json", "summary"], description: "Output format (default: markdown)" },
+        title: { type: "string", description: "Optional human-readable title" },
       },
     },
   },
   {
-    name: "lean_zettel_scaffold",
-    description: "Scaffold an Investigation Garden Layer 4 Concept Zettel (zet-lean-*.md) from a Lean declaration with reciprocal MOC links, LaTeX blueprint tags, and cross-prover concordance",
+    name: "lean_metrics",
+    description: "Module and project metrics: static code census, module dependency hierarchy DAG, and dependency subgraphs",
     inputSchema: {
       type: "object",
       properties: {
-        symbol: { type: "string", description: "Name of the Lean declaration" },
-        filePath: { type: "string", description: "Path to .lean file containing the declaration" },
-        outputPath: { type: "string", description: "Optional destination path (e.g. docs/investigation-garden/zettels/concepts/zet-lean-<slug>.md)" },
+        action: {
+          type: "string",
+          enum: ["census", "hierarchy", "subgraph"],
+          description: "Metric action to perform (default: census)",
+        },
+        target: { type: "string", description: "Target file path, directory path, or module name" },
+        direction: { type: "string", enum: ["imports", "importedBy", "both"], description: "Traversal direction for hierarchy (default: both)" },
+        transitive: { type: "boolean", description: "Whether to compute full transitive closure (default: false)" },
+        maxDepth: { type: "integer", description: "Max traversal depth (default: 10)" },
+        format: { type: "string", enum: ["markdown", "json", "summary", "mermaid", "dot"], description: "Output format (default: markdown)" },
       },
-      required: ["symbol"],
+      required: ["target"],
+    },
+  },
+  {
+    name: "lean_ffi",
+    description: "Cross-language Lean 4 C FFI environment inspection, sysroot include flags, header validation, and symbol resolution",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: {
+          type: "string",
+          enum: ["inspect_env", "resolve_symbol", "verify_headers", "sysroot"],
+          description: "FFI inspection action (default: inspect_env)",
+        },
+        externName: { type: "string", description: "Optional Lean @[extern] identifier or C function name" },
+        cHeaderPath: { type: "string", description: "Optional path to C header to inspect" },
+      },
+    },
+  },
+  {
+    name: "lean_exec",
+    description: "Ephemeral standalone Lean 4 execution via lean --stdin without file pollution",
+    inputSchema: {
+      type: "object",
+      properties: {
+        code: { type: "string", description: "Lean 4 code to execute" },
+        timeoutMs: { type: "integer", description: "Execution timeout in milliseconds (default: 15000)" },
+      },
+      required: ["code"],
     },
   },
 ];
@@ -2018,6 +1833,7 @@ export class McpServer {
   private projectRoot: string;
   private ileanIndex: Lean4IleanIndex;
   private lakeManager: LakeServerManager;
+  private kuzuGraph: KuzuKnowledgeGraph;
   private buffer: string = "";
 
   constructor(projectRoot: string = process.cwd()) {
@@ -2025,6 +1841,11 @@ export class McpServer {
     this.ileanIndex = new Lean4IleanIndex(projectRoot);
     this.ileanIndex.refresh();
     this.lakeManager = new LakeServerManager(projectRoot);
+    this.kuzuGraph = new KuzuKnowledgeGraph();
+  }
+
+  public getKuzuGraph(): KuzuKnowledgeGraph {
+    return this.kuzuGraph;
   }
 
   public getIleanIndex(): Lean4IleanIndex {
@@ -2139,6 +1960,23 @@ export class McpServer {
         }
         const line = Number(args.line ?? 1);
         const col = Number(args.col ?? args.character ?? 1);
+        const target = String(args.target || "tactic").toLowerCase();
+
+        if (target === "term") {
+          return await this.lakeManager.getTermGoal(filePath, line, col);
+        }
+
+        const isFiltered = target === "filtered" || args.filter === "hypotheses" || args.filter === "target" || args.hideTypeclasses !== undefined;
+        if (isFiltered) {
+          const opts: GoalFilterOptions = {
+            hideTypeclasses: args.hideTypeclasses ?? true,
+            hideInaccessible: args.hideInaccessible ?? true,
+            onlyTarget: args.onlyTarget ?? (args.filter === "target"),
+            maxGoals: Number(args.maxGoals ?? 3),
+          };
+          return await this.lakeManager.getGoal(filePath, line, col, opts);
+        }
+
         const filterOpts: GoalFilterOptions | undefined =
           (args.filterTypeclasses || args.filterInaccessible || args.onlyTarget)
             ? {
@@ -2358,34 +2196,61 @@ export class McpServer {
       }
 
       case "lean_search": {
-        const query = args.query;
+        const query = args.query || args.term || args.concept || args.symbol;
         if (!query) throw new Error("Missing required argument: 'query'");
-        const num_results = Number(args.num_results ?? 5);
-        try {
-          const payload = JSON.stringify({ num_results: String(num_results), query: [query] });
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 15000);
-          const res = await fetch("https://leansearch.net/search", {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "User-Agent": "lean-lsp-mcp/0.1" },
-            body: payload,
-            signal: controller.signal as any,
-          });
-          clearTimeout(timeoutId);
-          if (!res.ok) throw new Error(`HTTP error ${res.status}`);
-          const json: any = await res.json();
-          if (!json || !json[0]) return "No results found.";
-          const results: string[] = [];
-          for (const item of json[0].slice(0, num_results)) {
-            const r = item.result;
-            const name = (r.name || []).join(".");
-            const module_name = (r.module_name || []).join(".");
-            results.push(`Name: ${name}\nModule: ${module_name}\nKind: ${r.kind || ""}\nType: ${r.type || ""}\n`);
+        const source = String(args.source || "code").toLowerCase();
+        const limit = Number(args.limit ?? args.num_results ?? args.maxResults ?? 10);
+
+        if (source === "loogle") {
+          return await this.executeTool("lean_loogle_search", { query });
+        } else if (source === "ontology") {
+          return await this.executeTool("lean_ontology_search", { query, prover: args.prover });
+        } else if (source === "arxiv") {
+          return await this.executeTool("lean_arxiv_search", { query, category: args.category, maxResults: limit });
+        } else if (source === "datasets" || source === "dataset") {
+          return await this.executeTool("lean_dataset_search", { query, limit });
+        } else if (source === "reservoir") {
+          return await this.executeTool("lean_reservoir_search", { query, limit });
+        } else if (source === "book" || source === "book_index") {
+          return await this.executeTool("lean_book_index_lookup", { term: query, book: args.book });
+        } else if (source === "concordance") {
+          return await this.executeTool("lean_cross_itp_concordance", { concept: query });
+        } else if (source === "symbol") {
+          return await this.executeTool("lean_lookup_symbol", { symbol: query });
+        } else if (source === "graph") {
+          const results = this.kuzuGraph.search(query, limit);
+          if (results.length === 0) return "No matching sections found in Kuzu knowledge graph.";
+          return results.map(r => `Section: ${r.sectionId} | Book: ${r.bookTitle} (${r.bookKey})\nTitle: ${r.sectionTitle}\nScore: ${r.score.toFixed(2)}\n`).join("\n");
+        } else if (source === "leansearch" || source === "mathlib_web") {
+          const num_results = limit;
+          try {
+            const payload = JSON.stringify({ num_results: String(num_results), query: [query] });
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000);
+            const res = await fetch("https://leansearch.net/search", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "User-Agent": "lean-lsp-mcp/0.1" },
+              body: payload,
+              signal: controller.signal as any,
+            });
+            clearTimeout(timeoutId);
+            if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+            const json: any = await res.json();
+            if (!json || !json[0]) return "No results found.";
+            const results: string[] = [];
+            for (const item of json[0].slice(0, num_results)) {
+              const r = item.result;
+              const name = (r.name || []).join(".");
+              const module_name = (r.module_name || []).join(".");
+              results.push(`Name: ${name}\nModule: ${module_name}\nKind: ${r.kind || ""}\nType: ${r.type || ""}\n`);
+            }
+            if (results.length === 0) return "No results found.";
+            return results.join("\n");
+          } catch (err: any) {
+            return `LeanSearch API error: ${err.message || String(err)}`;
           }
-          if (results.length === 0) return "No results found.";
-          return results.join("\n");
-        } catch (err: any) {
-          return `LeanSearch API error: ${err.message || String(err)}`;
+        } else {
+          return await this.executeTool("lean_local_search", { query, limit });
         }
       }
 
@@ -3468,6 +3333,71 @@ export class McpServer {
         }
 
         return zettel;
+      }
+
+      case "lean_blueprint": {
+        const action = String(args.action || "status").toLowerCase();
+        if (action === "scaffold") {
+          return await this.executeTool("lean_blueprint_scaffold", args);
+        } else if (action === "skeleton") {
+          return await this.executeTool("lean_proof_skeleton", args);
+        } else if (action === "walkthrough") {
+          return await this.executeTool("lean_pedagogical_walkthrough", args);
+        } else if (action === "zettel") {
+          return await this.executeTool("lean_zettel_scaffold", args);
+        } else if (action === "graph_neighborhood") {
+          const sectionId = args.sectionId || args.symbol || args.query;
+          if (!sectionId) throw new Error("Missing required argument: 'sectionId' or 'symbol'");
+          const n = this.kuzuGraph.getNeighborhood(sectionId);
+          if (!n.section) return `Section '${sectionId}' not found in Kuzu knowledge graph.`;
+          return [
+            `# Kuzu Knowledge Graph Neighborhood: ${n.section.title}`,
+            `- **Section ID:** \`${n.section.id}\``,
+            `- **Book:** ${n.book ? n.book.title : n.section.bookKey} (${n.section.bookKey})`,
+            `- **Hierarchy Level:** ${n.section.level}`,
+            `- **Adjacent Sections (${n.siblings.length}):**`,
+            ...n.siblings.map(s => `  * [${s.id === n.section?.id ? "CURRENT" : "SIBLING"}] \`${s.id}\`: ${s.title}`),
+          ].join("\n");
+        } else {
+          return await this.executeTool("lean_blueprint_status", args);
+        }
+      }
+
+      case "lean_metrics": {
+        const action = String(args.action || "census").toLowerCase();
+        const target = args.target || args.targetPath || args.moduleName || args.filePath || ".";
+        if (action === "hierarchy") {
+          return await this.executeTool("lean_module_hierarchy", {
+            moduleName: target,
+            direction: args.direction,
+            transitive: args.transitive,
+            maxDepth: args.maxDepth,
+          });
+        } else if (action === "subgraph") {
+          return await this.executeTool("lean_dependency_subgraph", {
+            moduleName: target,
+            maxDepth: args.maxDepth,
+            format: args.format,
+          });
+        } else {
+          return await this.executeTool("lean_module_census", {
+            targetPath: target,
+            format: args.format,
+          });
+        }
+      }
+
+      case "lean_ffi": {
+        const action = String(args.action || "inspect_env").toLowerCase();
+        if (action === "sysroot") {
+          const flags = LeanSysrootBridge.getIncludeFlags();
+          return `Lean Sysroot Include Flags:\n${flags.join(" ")}`;
+        }
+        return await this.executeTool("lean_c_ffi_inspect", args);
+      }
+
+      case "lean_exec": {
+        return await this.executeTool("lean_run_code", args);
       }
 
       default:
