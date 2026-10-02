@@ -51,11 +51,14 @@ export class KuzuKnowledgeGraph {
     } else {
       // Auto-detect in repo
       const candidates = [
+        process.env.EASCI_KNOWLEDGE_KZ || "",
         path.resolve(process.cwd(), "docs/easci/lean/skills/kuzu/easci-knowledge.kz"),
         path.resolve(process.cwd(), "docs/investigation-garden/kuzu/easci-knowledge.kz"),
         path.resolve(__dirname, "../../../kuzu/easci-knowledge.kz"),
+        path.resolve(__dirname, "../../tacit-mui/docs/easci/lean/skills/kuzu/easci-knowledge.kz"),
+        "/home/radu/code/tacit-mui/docs/easci/lean/skills/kuzu/easci-knowledge.kz",
       ];
-      this.kzPath = candidates.find((p) => fs.existsSync(p)) || "";
+      this.kzPath = candidates.find((p) => p && fs.existsSync(p)) || "";
     }
   }
 
