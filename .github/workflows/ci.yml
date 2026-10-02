@@ -17,11 +17,11 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Install dependencies
-        run: npm install @modelcontextprotocol/sdk@^1.6.0
+        run: npm ci || npm install
       - name: Type-check (tsc)
-        run: npx -y typescript@5 tsc --noEmit
+        run: npx tsc --noEmit
       - name: Test suite
-        run: node tests/test_lean_lsp_mcp.mjs
+        run: npm test
       - name: ASCII invariant (INV-001)
         run: |
           ! grep -rPn "[^\x00-\x7F]" src/ bin/ tests/ README.md
