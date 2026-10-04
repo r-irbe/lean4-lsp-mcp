@@ -548,6 +548,7 @@ export class Lean4IleanIndex {
   private symbolIndex: Map<string, IleanSymbolEntry> = new Map();
   private moduleImportsMap: Map<string, string[]> = new Map();
   private dagIndex: BitsetDAGIndex = new BitsetDAGIndex();
+  private lastScanTime: number = 0;
 
   constructor(projectRoot: string) {
     this.projectRoot = projectRoot;
@@ -619,6 +620,39 @@ export class Lean4IleanIndex {
 
     // Build high-performance Bitset and CSR/CSC index
     this.dagIndex.build(this.moduleImportsMap);
+    this.lastScanTime = Date.now();
+  }
+
+  public hasNewerBuilds(): boolean {
+    const easciLean = path.join(this.projectRoot, "docs", "easci", "lean");
+    const checkRoots = [
+      path.join(this.projectRoot, ".lake", "build", "lib", "lean"),
+      path.join(easciLean, ".lake", "build", "lib", "lean"),
+    ];
+    const packagesDir = path.join(this.projectRoot, "packages");
+    if (fs.existsSync(packagesDir)) {
+      try {
+        const pkgs = fs.readdirSync(packagesDir, { withFileTypes: true });
+        for (const pkg of pkgs) {
+          if (pkg.isDirectory()) {
+            checkRoots.push(path.join(packagesDir, pkg.name, ".lake", "build", "lib", "lean"));
+          }
+        }
+      } catch {
+        // Ignore unreadable packages directory
+      }
+    }
+    for (const r of checkRoots) {
+      if (fs.existsSync(r)) {
+        try {
+          const stat = fs.statSync(r);
+          if (stat.mtimeMs > this.lastScanTime) return true;
+        } catch {
+          // Ignore transient stat errors
+        }
+      }
+    }
+    return false;
   }
 
   private scanDir(dir: string): void {
@@ -655,6 +689,24 @@ export class Lean4IleanIndex {
           sourceFile = path.relative(this.projectRoot, candidate);
         } else if (fs.existsSync(candidateEasci)) {
           sourceFile = path.relative(this.projectRoot, candidateEasci);
+        } else {
+          const packagesDir = path.join(this.projectRoot, "packages");
+          if (fs.existsSync(packagesDir)) {
+            try {
+              const pkgs = fs.readdirSync(packagesDir, { withFileTypes: true });
+              for (const pkg of pkgs) {
+                if (pkg.isDirectory()) {
+                  const candidatePkg = path.join(packagesDir, pkg.name, relLean);
+                  if (fs.existsSync(candidatePkg)) {
+                    sourceFile = path.relative(this.projectRoot, candidatePkg);
+                    break;
+                  }
+                }
+              }
+            } catch {
+              // Ignore unreadable packages directory
+            }
+          }
         }
       }
       if (!sourceFile) {
@@ -728,12 +780,24 @@ export class Lean4IleanIndex {
     if (this.symbolIndex.size === 0) {
       this.refresh();
     }
-    const exact = this.symbolIndex.get(symbol);
+    let exact = this.symbolIndex.get(symbol);
     if (exact) return exact;
 
     for (const [k, v] of this.symbolIndex.entries()) {
       if (k.endsWith("." + symbol)) {
         return v;
+      }
+    }
+
+    if (this.hasNewerBuilds()) {
+      this.refresh();
+      exact = this.symbolIndex.get(symbol);
+      if (exact) return exact;
+
+      for (const [k, v] of this.symbolIndex.entries()) {
+        if (k.endsWith("." + symbol)) {
+          return v;
+        }
       }
     }
     return null;
