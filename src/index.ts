@@ -572,6 +572,27 @@ export class Lean4IleanIndex {
       path.join(easciLean, ".lake", "packages"),
     ];
 
+    // Discover modular Lean packages under packages/*/
+    const packagesDir = path.join(this.projectRoot, "packages");
+    if (fs.existsSync(packagesDir)) {
+      try {
+        const pkgs = fs.readdirSync(packagesDir, { withFileTypes: true });
+        for (const pkg of pkgs) {
+          if (pkg.isDirectory()) {
+            const pLib = path.join(packagesDir, pkg.name, ".lake", "build", "lib", "lean");
+            const pIr = path.join(packagesDir, pkg.name, ".lake", "build", "ir");
+            if (fs.existsSync(pLib)) candidateRoots.push(pLib);
+            if (fs.existsSync(pIr)) candidateRoots.push(pIr);
+
+            const pPkgs = path.join(packagesDir, pkg.name, ".lake", "packages");
+            if (fs.existsSync(pPkgs)) packageDirs.push(pPkgs);
+          }
+        }
+      } catch {
+        // Ignore unreadable packages directory
+      }
+    }
+
     for (const pDir of packageDirs) {
       if (fs.existsSync(pDir)) {
         try {
@@ -1512,10 +1533,31 @@ export class FileWorkerManager {
       this.disposeSession(leanRoot);
     }
 
-    const child = spawn("lake", ["serve"], {
-      cwd: leanRoot,
-      stdio: ["pipe", "pipe", "ignore"],
-    });
+    const useDirect = process.env.LEAN_SERVE_DIRECT === "1";
+    let brokerScript: string | null = null;
+    if (!useDirect) {
+      const candidates = [
+        path.join(this.projectRoot, "docs", "easci", "lean", "skills", "tools", "lean-serve-broker", "lean_serve_broker.py"),
+        path.join(this.projectRoot, "tools", "lean-serve-broker", "lean_serve_broker.py"),
+        path.resolve(__dirname, "../../lean-serve-broker/lean_serve_broker.py"),
+      ];
+      for (const cand of candidates) {
+        if (fs.existsSync(cand)) {
+          brokerScript = cand;
+          break;
+        }
+      }
+    }
+
+    const child = brokerScript
+      ? spawn("python3", [brokerScript, "attach", "--root", leanRoot], {
+          cwd: leanRoot,
+          stdio: ["pipe", "pipe", "ignore"],
+        })
+      : spawn("lake", ["serve"], {
+          cwd: leanRoot,
+          stdio: ["pipe", "pipe", "ignore"],
+        });
 
     session = {
       child,
