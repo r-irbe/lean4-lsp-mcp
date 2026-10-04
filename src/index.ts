@@ -3844,7 +3844,13 @@ export class McpServer {
 }
 
 export function main(): void {
-  const projectRoot = process.cwd();
+  let projectRoot = process.cwd();
+  if (!fs.existsSync(path.join(projectRoot, "lakefile.lean")) && !fs.existsSync(path.join(projectRoot, "packages"))) {
+    const defaultRoot = "/home/radu/code/tacit-mui";
+    if (fs.existsSync(defaultRoot)) {
+      projectRoot = defaultRoot;
+    }
+  }
   const server = new McpServer(projectRoot);
   process.stderr.write(`[lean-lsp-mcp] Initialized for project ${projectRoot}\n`);
   server.startStdio();
