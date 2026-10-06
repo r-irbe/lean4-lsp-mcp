@@ -198,6 +198,118 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       required: ["filePath"],
     },
   },
+  {
+    name: "lean_lookup_symbol",
+    description: "Offline symbol lookup in the compiled project's .ilean index: file, position, and module for a declaration name",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "Declaration name to look up" },
+      },
+      required: ["symbol"],
+    },
+  },
+  {
+    name: "lean_module_hierarchy",
+    description: "Import DAG traversal for a module: direct and transitive imports / imported-by with cycle detection",
+    inputSchema: {
+      type: "object",
+      properties: {
+        moduleName: { type: "string", description: "Module name (e.g. EASCI.Tactics)" },
+        direction: { type: "string", enum: ["imports", "importedBy", "both"], description: "Traversal direction (default: both)" },
+        transitive: { type: "boolean", description: "Transitive closure instead of 1-hop (default: false)" },
+        maxDepth: { type: "integer", description: "Max traversal depth (default: 20)" },
+      },
+      required: ["moduleName"],
+    },
+  },
+  {
+    name: "lean_run_code",
+    description: "Executes Lean 4 code against the project's compiled environment (legacy alias of lean_exec)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        code: { type: "string", description: "Lean 4 code to execute" },
+      },
+      required: ["code"],
+    },
+  },
+  {
+    name: "lean_book_index_lookup",
+    description: "Author-curated book index lookup over the source-materials corpus (the librarian pipeline)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        term: { type: "string", description: "Index term to look up" },
+        book: { type: "string", description: "Optional book corpus_id filter" },
+      },
+      required: ["term"],
+    },
+  },
+  {
+    name: "lean_cross_itp_concordance",
+    description: "Cross-ITP concordance: the equivalent term/tactic for a concept across prover families (Lean 4, Coq, Isabelle, ...)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        concept: { type: "string", description: "Concept to concord across provers" },
+      },
+      required: ["concept"],
+    },
+  },
+  {
+    name: "lean_proof_skeleton",
+    description: "Generates a proof skeleton for a theorem: the statement with sorry-punched tactic placeholders from the compiled module",
+    inputSchema: {
+      type: "object",
+      properties: {
+        filePath: { type: "string", description: "Path to the .lean file containing the theorem" },
+        symbol: { type: "string", description: "Alternative: a declaration name resolved via the .ilean index" },
+      },
+    },
+  },
+  {
+    name: "lean_blueprint_scaffold",
+    description: "Blueprint scaffold for a declaration: the declaration's outline with its proof structure rendered for documentation",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "Declaration name to scaffold" },
+        filePath: { type: "string", description: "Optional file path narrowing the lookup" },
+        line: { type: "integer", description: "Optional 1-based line hint" },
+      },
+      required: ["symbol"],
+    },
+  },
+  {
+    name: "lean_dependency_subgraph",
+    description: "Renders the dependency subgraph around a module (Mermaid by default) from the .ilean index",
+    inputSchema: {
+      type: "object",
+      properties: {
+        moduleName: { type: "string", description: "Module name at the subgraph center" },
+        maxDepth: { type: "integer", description: "Max traversal depth (default: 5)" },
+        format: { type: "string", description: "Output format (default: mermaid)" },
+      },
+      required: ["moduleName"],
+    },
+  },
+  {
+    name: "lean_module_census",
+    description: "Declaration census over a target path: counts of theorems, definitions, and structures from the compiled corpus",
+    inputSchema: {
+      type: "object",
+      properties: {
+        targetPath: { type: "string", description: "Directory or file path to census" },
+      },
+      required: ["targetPath"],
+    },
+  },
+  {
+    name: "lean_server_status",
+    description: "Introspection: attach mode (broker vs direct), project root, open files, per-session and total server RSS, idle times. The recovery aid when results look stale.",
+    inputSchema: { type: "object", properties: {} },
+  },
 ];
 
 export class BitsetDAGIndex {
@@ -1882,6 +1994,26 @@ export class FileWorkerManager {
     return this.forceResync(session, absPath);
   }
 
+  /** Public entry for the lean_server_status tool: the introspection surface. */
+  serverStatus(): string {
+    const useDirect = process.env.LEAN_SERVE_DIRECT === "1";
+    const lines: string[] = [];
+    lines.push(`projectRoot: ${this.projectRoot}`);
+    lines.push(`attach mode: ${useDirect ? "direct (LEAN_SERVE_DIRECT=1)" : "broker (lean-serve-broker singleton)"}`);
+    lines.push(`sessions: ${this.sessions.size}`);
+    let openFiles = 0;
+    let totalRssKb = 0;
+    for (const [root, session] of this.sessions) {
+      openFiles += session.openFiles.size;
+      const rss = this.getProcessRssKb(session.child.pid);
+      totalRssKb += rss;
+      lines.push(`  session ${root}: ${session.openFiles.size} open file(s), server RSS ${rss} kB, idle ${Math.round((Date.now() - session.lastActiveMs) / 1000)}s`);
+    }
+    lines.push(`total open files: ${openFiles}`);
+    lines.push(`total server RSS: ${totalRssKb} kB`);
+    return lines.join("\n");
+  }
+
   public async getGoal(
     filePath: string,
     line: number,
@@ -2264,6 +2396,10 @@ export class McpServer {
           throw new Error("Missing required argument: 'filePath'");
         }
         return await this.lakeManager.resyncFile(filePath);
+      }
+
+      case "lean_server_status": {
+        return this.lakeManager.serverStatus();
       }
 
       case "lean_lookup_symbol":
