@@ -85,9 +85,9 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     });
     assert(listRes && Array.isArray(listRes.result.tools), "tools list is array");
     const toolNames = listRes.result.tools.map(t => t.name);
-    assert.strictEqual(toolNames.length, 6, "Exposes exactly 6 consolidated tools");
+    assert.strictEqual(toolNames.length, 7, "Exposes exactly 7 consolidated tools (6 + the lean_resync recovery verb)");
 
-    const expectedTools = ["lean_goal", "lean_search", "lean_blueprint", "lean_metrics", "lean_ffi", "lean_exec"];
+    const expectedTools = ["lean_goal", "lean_search", "lean_blueprint", "lean_metrics", "lean_ffi", "lean_exec", "lean_resync"];
     for (const t of expectedTools) {
         assert(toolNames.includes(t), `Includes consolidated tool: ${t}`);
     }

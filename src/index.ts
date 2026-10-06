@@ -8,6 +8,9 @@ import * as os from "node:os";
 import { execSync, spawn, ChildProcess } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { KuzuKnowledgeGraph } from "./kuzu_graph.ts";
+import { createHash } from "node:crypto";
+import { ContentLimitError, exceedsLspContentLimits, contentLimitBounds } from "./content_limits.ts";
+import { createSingleFlight } from "./single_flight.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -182,6 +185,17 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         timeoutMs: { type: "integer", description: "Execution timeout in milliseconds (default: 15000)" },
       },
       required: ["code"],
+    },
+  },
+  {
+    name: "lean_resync",
+    description: "Forces a full document re-sync: re-reads the file from disk, bumps the version, and resends textDocument/didChange bypassing every fast path. Recovery verb when goal output looks stale after an out-of-band edit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        filePath: { type: "string", description: "Absolute or relative path to the .lean file" },
+      },
+      required: ["filePath"],
     },
   },
 ];
@@ -1471,6 +1485,10 @@ export interface TrackedFileWorker {
   version: number;
   mtimeMs: number;
   lastAccessedMs: number;
+  /** pi-lens #1783 hardening: the content fingerprint of what the server holds. */
+  bytes: number;
+  hash: string;
+  lastVerifiedMs: number;
 }
 
 export interface FileWorkerSession {
@@ -1485,6 +1503,9 @@ export interface FileWorkerSession {
 
 export class FileWorkerManager {
   private projectRoot: string;
+  /** pi-lens port: identical in-flight read-only requests coalesce (one
+   *  execution per key under the broker multiplex). */
+  private goalFlight = createSingleFlight<string>();
   private shmRing: SharedMemorySnapshotRing | null = null;
   private sessions: Map<string, FileWorkerSession> = new Map();
   private reaperTimer: NodeJS.Timeout | null = null;
@@ -1719,9 +1740,30 @@ export class FileWorkerManager {
     const mtimeMs = stat.mtimeMs;
     const now = Date.now();
 
+    // pi-lens #3405 class: the byte bound is checked before any read, so
+    // oversized content never enters a JSON-RPC frame.
+    const { limitBytes } = contentLimitBounds();
+    if (stat.size > limitBytes) {
+      throw new ContentLimitError(
+        `${absPath} is ${stat.size} bytes (limit ${limitBytes}); refusing to sync. ` +
+        `Override with LSP_CONTENT_LIMIT_BYTES.`
+      );
+    }
+
+    const fingerprint = (text: string): { bytes: number; hash: string } => ({
+      bytes: stat.size,
+      hash: createHash("sha256").update(text).digest("hex").slice(0, 16),
+    });
+
     let fileInfo = session.openFiles.get(absPath);
     if (!fileInfo) {
       const text = fs.readFileSync(absPath, "utf-8");
+      const v = exceedsLspContentLimits(text);
+      if (v.exceeded) {
+        throw new ContentLimitError(
+          `${absPath} is ${v.lines} lines / ${v.bytes} bytes (limits ${v.limitLines} lines / ${v.limitBytes} bytes); refusing to sync.`
+        );
+      }
       this.sendNotification(session, "textDocument/didOpen", {
         textDocument: {
           uri,
@@ -1736,26 +1778,108 @@ export class FileWorkerManager {
         version: 1,
         mtimeMs,
         lastAccessedMs: now,
+        ...fingerprint(text),
+        lastVerifiedMs: now,
       };
       session.openFiles.set(absPath, fileInfo);
     } else {
       fileInfo.lastAccessedMs = now;
-      if (mtimeMs > fileInfo.mtimeMs) {
+      // pi-lens #1783 hardening: mtime alone missed same-mtime writes; a
+      // bounded-cadence content fingerprint catches the residue.
+      const cadenceDue = now - fileInfo.lastVerifiedMs > 30_000;
+      const sizeDrift = fileInfo.bytes !== undefined && stat.size !== fileInfo.bytes;
+      if (mtimeMs > fileInfo.mtimeMs || sizeDrift || cadenceDue) {
         const newText = fs.readFileSync(absPath, "utf-8");
-        fileInfo.version++;
-        fileInfo.mtimeMs = mtimeMs;
-        this.sendNotification(session, "textDocument/didChange", {
-          textDocument: {
-            uri,
-            version: fileInfo.version,
-          },
-          contentChanges: [{ text: newText }],
-        });
+        const fp = fingerprint(newText);
+        const drifted = fp.hash !== fileInfo.hash;
+        if (drifted) {
+          const v = exceedsLspContentLimits(newText);
+          if (v.exceeded) {
+            throw new ContentLimitError(
+              `${absPath} is ${v.lines} lines / ${v.bytes} bytes (limits ${v.limitLines} lines / ${v.limitBytes} bytes); refusing to sync.`
+            );
+          }
+          fileInfo.version++;
+          fileInfo.mtimeMs = mtimeMs;
+          this.sendNotification(session, "textDocument/didChange", {
+            textDocument: {
+              uri,
+              version: fileInfo.version,
+            },
+            contentChanges: [{ text: newText }],
+          });
+        }
+        fileInfo.bytes = fp.bytes;
+        fileInfo.hash = fp.hash;
+        fileInfo.lastVerifiedMs = now;
       }
     }
 
     session.lastActiveMs = now;
     return uri;
+  }
+
+  /**
+   * The explicit recovery verb (lean_resync): bypasses every fast path,
+   * re-reads from disk, bumps the version, and resends the full text.
+   */
+  forceResync(session: FileWorkerSession, absPath: string): string {
+    const uri = pathToFileURL(absPath).href;
+    const stat = fs.statSync(absPath);
+    const text = fs.readFileSync(absPath, "utf-8");
+    const v = exceedsLspContentLimits(text);
+    if (v.exceeded) {
+      throw new ContentLimitError(
+        `${absPath} is ${v.lines} lines / ${v.bytes} bytes (limits ${v.limitLines} lines / ${v.limitBytes} bytes); refusing to sync.`
+      );
+    }
+    const now = Date.now();
+    let fileInfo = session.openFiles.get(absPath);
+    if (!fileInfo) {
+      fileInfo = {
+        uri,
+        absPath,
+        version: 1,
+        mtimeMs: stat.mtimeMs,
+        lastAccessedMs: now,
+        bytes: stat.size,
+        hash: createHash("sha256").update(text).digest("hex").slice(0, 16),
+        lastVerifiedMs: now,
+      };
+      session.openFiles.set(absPath, fileInfo);
+      this.sendNotification(session, "textDocument/didOpen", {
+        textDocument: { uri, languageId: "lean4", version: 1, text },
+      });
+      return `resync: opened ${absPath} (fresh didOpen, ${stat.size} bytes)`;
+    }
+    fileInfo.version++;
+    fileInfo.mtimeMs = stat.mtimeMs;
+    fileInfo.bytes = stat.size;
+    fileInfo.hash = createHash("sha256").update(text).digest("hex").slice(0, 16);
+    fileInfo.lastVerifiedMs = now;
+    fileInfo.lastAccessedMs = now;
+    this.sendNotification(session, "textDocument/didChange", {
+      textDocument: { uri, version: fileInfo.version },
+      contentChanges: [{ text }],
+    });
+    session.lastActiveMs = now;
+    return `resync: resent ${absPath} as version ${fileInfo.version} (${stat.size} bytes, hash ${fileInfo.hash})`;
+  }
+
+  /** Public entry for the lean_resync tool: root-finding + session + force. */
+  async resyncFile(filePath: string): Promise<string> {
+    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.projectRoot, filePath);
+    if (!fs.existsSync(absPath)) {
+      return `File not found: ${filePath}`;
+    }
+    const leanRoot = this.findLeanRoot(absPath);
+    const buildStatus = LakeBuildGuard.inspectBuildActivity(leanRoot);
+    if (buildStatus.isLocked) {
+      this.suspendSessionFiles(leanRoot);
+      return `[Zero-Build Concurrency Gate] Resync suspended during active Lake build (${buildStatus.detail || buildStatus.source}).`;
+    }
+    const session = await this.ensureSession(leanRoot);
+    return this.forceResync(session, absPath);
   }
 
   public async getGoal(
@@ -1779,21 +1903,27 @@ export class FileWorkerManager {
 
     try {
       const session = await this.ensureSession(leanRoot);
-      const uri = this.syncDocument(session, absPath);
+      // Single-flight (pi-lens port): the key carries the synced file's
+      // version+hash so a post-edit request never shares a stale flight.
+      const fileInfo = session.openFiles.get(absPath);
+      const flightKey = `${absPath}|${line}|${col}|${fileInfo?.version}|${fileInfo?.hash}|${JSON.stringify(filterOpts)}`;
+      return await this.goalFlight.run(flightKey, async () => {
+        const uri = this.syncDocument(session, absPath);
 
-      const res = await this.sendRequest(session, "$/lean/plainGoal", {
-        textDocument: { uri },
-        position: {
-          line: Math.max(0, line - 1),
-          character: Math.max(0, col - 1),
-        },
+        const res = await this.sendRequest(session, "$/lean/plainGoal", {
+          textDocument: { uri },
+          position: {
+            line: Math.max(0, line - 1),
+            character: Math.max(0, col - 1),
+          },
+        });
+
+        const goalText = res?.rendered || (Array.isArray(res?.goals) ? res.goals.join("\n\n") : "");
+        if (filterOpts) {
+          return filterGoalText(goalText, filterOpts);
+        }
+        return formatGoalAsMarkdown(goalText);
       });
-
-      const goalText = res?.rendered || (Array.isArray(res?.goals) ? res.goals.join("\n\n") : "");
-      if (filterOpts) {
-        return filterGoalText(goalText, filterOpts);
-      }
-      return formatGoalAsMarkdown(goalText);
     } catch (err: any) {
       return `Lake LSP error: ${err.message || String(err)}`;
     }
@@ -1813,18 +1943,22 @@ export class FileWorkerManager {
 
     try {
       const session = await this.ensureSession(leanRoot);
-      const uri = this.syncDocument(session, absPath);
+      const fileInfo = session.openFiles.get(absPath);
+      const flightKey = `${absPath}|term|${line}|${col}|${fileInfo?.version}|${fileInfo?.hash}`;
+      return await this.goalFlight.run(flightKey, async () => {
+        const uri = this.syncDocument(session, absPath);
 
-      const res = await this.sendRequest(session, "$/lean/plainTermGoal", {
-        textDocument: { uri },
-        position: {
-          line: Math.max(0, line - 1),
-          character: Math.max(0, col - 1),
-        },
+        const res = await this.sendRequest(session, "$/lean/plainTermGoal", {
+          textDocument: { uri },
+          position: {
+            line: Math.max(0, line - 1),
+            character: Math.max(0, col - 1),
+          },
+        });
+
+        const goalText = res?.rendered || res?.goal || "";
+        return formatGoalAsMarkdown(goalText);
       });
-
-      const goalText = res?.rendered || res?.goal || "";
-      return formatGoalAsMarkdown(goalText);
     } catch (err: any) {
       return `Lake LSP error: ${err.message || String(err)}`;
     }
@@ -2122,6 +2256,14 @@ export class McpServer {
         const line = Number(args.line ?? 1);
         const col = Number(args.col ?? args.character ?? 1);
         return await this.lakeManager.getTermGoal(filePath, line, col);
+      }
+
+      case "lean_resync": {
+        const filePath = args.filePath || args.path || args.file;
+        if (!filePath) {
+          throw new Error("Missing required argument: 'filePath'");
+        }
+        return await this.lakeManager.resyncFile(filePath);
       }
 
       case "lean_lookup_symbol":
