@@ -112,3 +112,27 @@ import { createSingleFlight } from "../src/single_flight.ts";
 }
 
 console.log("tranche1 modules: ALL PASS");
+
+// --- tranche 3: the bounded cache ---
+
+{
+  const { BoundedCache } = await import("../src/bounded_cache.ts");
+  const c = new BoundedCache({ maxEntries: 2, ttlMs: 60_000 });
+  c.set("a", "1");
+  c.set("b", "2");
+  assert.equal(c.get("a"), "1");
+  c.set("c", "3");                      // evicts the LRU ("a" was touched after "b"? no: a then b -> LRU is a... a was got, so b is LRU)
+  assert.equal(c.get("b"), undefined, "the LRU entry is evicted");
+  assert.equal(c.get("a"), "1", "the touched entry survives");
+  assert.equal(c.get("c"), "3");
+}
+
+{
+  const { BoundedCache } = await import("../src/bounded_cache.ts");
+  const c = new BoundedCache({ maxEntries: 10, ttlMs: 30 });
+  c.set("k", "v");
+  assert.equal(c.get("k"), "v");
+  await new Promise((r) => setTimeout(r, 50));
+  assert.equal(c.get("k"), undefined, "the TTL expires the entry");
+}
+console.log("bounded cache: PASS");

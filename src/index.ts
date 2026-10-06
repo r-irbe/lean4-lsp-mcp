@@ -11,6 +11,7 @@ import { KuzuKnowledgeGraph } from "./kuzu_graph.ts";
 import { createHash } from "node:crypto";
 import { ContentLimitError, exceedsLspContentLimits, contentLimitBounds } from "./content_limits.ts";
 import { createSingleFlight } from "./single_flight.ts";
+import { BoundedCache } from "./bounded_cache.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -41,6 +42,12 @@ export interface McpToolDefinition {
     type: "object";
     properties: Record<string, any>;
     required?: string[];
+  };
+  /** MCP hints clients use for permission gating (tranche 3). */
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    openWorldHint?: boolean;
   };
 }
 
@@ -95,6 +102,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         maxGoals: { type: "integer", description: "Maximum subgoals to display (default: 3)" },
       },
       required: ["filePath", "line"],
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -115,6 +124,9 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         category: { type: "string", description: "Optional arXiv category filter" },
       },
       required: ["query"],
+    },    annotations: {
+      readOnlyHint: true,
+      openWorldHint: true,
     },
   },
   {
@@ -137,6 +149,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         format: { type: "string", enum: ["markdown", "json", "summary"], description: "Output format (default: markdown)" },
         title: { type: "string", description: "Optional human-readable title" },
       },
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -157,6 +171,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         format: { type: "string", enum: ["markdown", "json", "summary", "mermaid", "dot"], description: "Output format (default: markdown)" },
       },
       required: ["target"],
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -173,6 +189,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         externName: { type: "string", description: "Optional Lean @[extern] identifier or C function name" },
         cHeaderPath: { type: "string", description: "Optional path to C header to inspect" },
       },
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -185,6 +203,9 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         timeoutMs: { type: "integer", description: "Execution timeout in milliseconds (default: 15000)" },
       },
       required: ["code"],
+    },    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
     },
   },
   {
@@ -196,6 +217,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         filePath: { type: "string", description: "Absolute or relative path to the .lean file" },
       },
       required: ["filePath"],
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -207,6 +230,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         symbol: { type: "string", description: "Declaration name to look up" },
       },
       required: ["symbol"],
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -221,6 +246,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         maxDepth: { type: "integer", description: "Max traversal depth (default: 20)" },
       },
       required: ["moduleName"],
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -232,6 +259,9 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         code: { type: "string", description: "Lean 4 code to execute" },
       },
       required: ["code"],
+    },    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
     },
   },
   {
@@ -244,6 +274,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         book: { type: "string", description: "Optional book corpus_id filter" },
       },
       required: ["term"],
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -255,6 +287,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         concept: { type: "string", description: "Concept to concord across provers" },
       },
       required: ["concept"],
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -266,6 +300,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         filePath: { type: "string", description: "Path to the .lean file containing the theorem" },
         symbol: { type: "string", description: "Alternative: a declaration name resolved via the .ilean index" },
       },
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -279,6 +315,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         line: { type: "integer", description: "Optional 1-based line hint" },
       },
       required: ["symbol"],
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -292,6 +330,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         format: { type: "string", description: "Output format (default: mermaid)" },
       },
       required: ["moduleName"],
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -303,12 +343,16 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         targetPath: { type: "string", description: "Directory or file path to census" },
       },
       required: ["targetPath"],
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
     name: "lean_server_status",
     description: "Introspection: attach mode (broker vs direct), project root, open files, per-session and total server RSS, idle times. The recovery aid when results look stale.",
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: { type: "object", properties: {} },    annotations: {
+      readOnlyHint: true,
+    },
   },
 ];
 
@@ -1618,6 +1662,8 @@ export class FileWorkerManager {
   /** pi-lens port: identical in-flight read-only requests coalesce (one
    *  execution per key under the broker multiplex). */
   private goalFlight = createSingleFlight<string>();
+  /** Tranche 3: roots already warm-file seeded (once per session lifetime). */
+  private warmedRoots = new Set<string>();
   private shmRing: SharedMemorySnapshotRing | null = null;
   private sessions: Map<string, FileWorkerSession> = new Map();
   private reaperTimer: NodeJS.Timeout | null = null;
@@ -1812,7 +1858,29 @@ export class FileWorkerManager {
     });
 
     this.sendNotification(session, "initialized", {});
+    this.warmSeed(session, leanRoot);
     return session;
+  }
+
+  /**
+   * Tranche 3: warm-file seeding. LEAN_WARM_FILES (a colon-separated
+   * list of paths, relative to the project root) is synced once per
+   * session so the first real goal query skips the cold-file latency.
+   */
+  private warmSeed(session: FileWorkerSession, leanRoot: string): void {
+    if (this.warmedRoots.has(leanRoot)) return;
+    this.warmedRoots.add(leanRoot);
+    const raw = process.env.LEAN_WARM_FILES || "";
+    const files = raw.split(":").map((p) => p.trim()).filter(Boolean).slice(0, 12);
+    for (const rel of files) {
+      try {
+        const abs = path.resolve(leanRoot, rel);
+        if (fs.existsSync(abs)) this.syncDocument(session, abs);
+      } catch {
+        // warm seeding is best-effort by design; a missing or oversized
+        // warm file never blocks the session
+      }
+    }
   }
 
   private sendRequest(session: FileWorkerSession, method: string, params: any): Promise<any> {
@@ -2325,7 +2393,35 @@ export class McpServer {
     }
   }
 
+  private static readonly CACHEABLE_TOOLS = new Set([
+    "lean_loogle_search",
+    "lean_arxiv_search",
+    "lean_reservoir_search",
+    "lean_dataset_search",
+    "lean_ontology_search",
+    "lean_book_index_lookup",
+    "lean_cross_itp_concordance",
+  ]);
+
+  /** Tranche 3: the read-mostly search-family results cache (McpServer-local:
+   *  these tools fetch on this class, not through the FileWorkerManager). */
+  private searchCache = new BoundedCache<string>({ maxEntries: 128, ttlMs: 10 * 60_000 });
+
   public async executeTool(name: string, args: any): Promise<string> {
+    // Tranche 3: the read-mostly search family is bounded-cached (the
+    // in-process LRU; results are deterministic per args within the TTL).
+    if (McpServer.CACHEABLE_TOOLS.has(name)) {
+      const key = name + "|" + JSON.stringify(args);
+      const hit = this.searchCache.get(key);
+      if (hit !== undefined) return hit;
+      const result = await this.executeToolUncached(name, args);
+      this.searchCache.set(key, result);
+      return result;
+    }
+    return this.executeToolUncached(name, args);
+  }
+
+  private async executeToolUncached(name: string, args: any): Promise<string> {
     switch (name) {
       case "lean_goal":
       case "lean_plain_goal": {
