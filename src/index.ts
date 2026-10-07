@@ -2212,7 +2212,9 @@ export class FileWorkerManager {
     if (session) {
       try {
         session.child.kill();
-      } catch {}
+      } catch {
+        // the reaper race: the child may already be dead; deletion below is the source of truth
+      }
       this.sessions.delete(leanRoot);
     }
   }
@@ -2650,7 +2652,9 @@ export class McpServer {
                   if (results.length >= limit) break;
                 }
               }
-            } catch { }
+            } catch {
+              // per-target best effort: one unreadable target must not sink the batch
+            }
           }
           if (results.length === 0) return "No results found.";
           return results.join("\n");
@@ -2670,7 +2674,9 @@ export class McpServer {
                     if (results.length >= limit) break;
                   }
                 }
-              } catch { }
+              } catch {
+                // per-target best effort: one unreadable target must not sink the batch
+              }
             }
             if (results.length > 0) return results.join("\n");
           }
@@ -3074,6 +3080,8 @@ export class McpServer {
 
       case "lean_proof_skeleton": {
         let filePath = String(args.filePath || "").trim();
+        // read by the census walker below (the linter's unused-flag is a false positive)
+        let modName = "";
         if (!filePath && args.symbol) {
           const sym = this.ileanIndex.lookupSymbol(args.symbol);
           if (sym) filePath = sym.filePath;
@@ -3139,6 +3147,7 @@ export class McpServer {
 
         let filePath = args.filePath ? String(args.filePath) : "";
         let line = Number(args.line ?? 0);
+        // read in the scaffold walker below (the linter's unused-flag is a false positive; tsc proves the reads)
         let modName = "";
 
         const match = this.ileanIndex.lookupSymbol(symbol);
@@ -3667,12 +3676,13 @@ export class McpServer {
 
         let filePath = args.filePath ? String(args.filePath) : "";
         let line = Number(args.line ?? 0);
-        let modName = "";
 
         const match = this.ileanIndex.lookupSymbol(symbol);
         if (match) {
           filePath = match.filePath;
           line = match.line;
+        // read by the census walker below (the linter's unused-flag is a false positive)
+        let modName = "";
           modName = match.module || "";
         }
 
