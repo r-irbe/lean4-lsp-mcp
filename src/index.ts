@@ -1431,7 +1431,6 @@ export class SharedMemorySnapshotRing {
   private buffer: Buffer;
   private capacity: number;
   private slotSize: number;
-  private totalSize: number;
   private shmPath: string;
   private isOwner: boolean;
 
@@ -1448,7 +1447,6 @@ export class SharedMemorySnapshotRing {
     this.buffer = buffer;
     this.capacity = capacity;
     this.slotSize = slotSize;
-    this.totalSize = buffer.length;
     this.isOwner = isOwner;
   }
 
@@ -3080,8 +3078,6 @@ export class McpServer {
 
       case "lean_proof_skeleton": {
         let filePath = String(args.filePath || "").trim();
-        // read by the census walker below (the linter's unused-flag is a false positive)
-        let modName = "";
         if (!filePath && args.symbol) {
           const sym = this.ileanIndex.lookupSymbol(args.symbol);
           if (sym) filePath = sym.filePath;
@@ -3681,9 +3677,6 @@ export class McpServer {
         if (match) {
           filePath = match.filePath;
           line = match.line;
-        // read by the census walker below (the linter's unused-flag is a false positive)
-        let modName = "";
-          modName = match.module || "";
         }
 
         let absPath = "";
