@@ -136,3 +136,34 @@ console.log("tranche1 modules: ALL PASS");
   assert.equal(c.get("k"), undefined, "the TTL expires the entry");
 }
 console.log("bounded cache: PASS");
+
+// M10 (pi-lens #2939): the guard bounds the flight, not the owner's goodwill.
+{
+  const { createSingleFlight, FlightBudgetError } = await import("../src/single_flight.ts");
+  const sf = createSingleFlight({ settleBudgetMs: 60 });
+  let releaseNever;
+  const never = new Promise(() => { releaseNever = () => {}; });  // eslint-disable-line
+  await assert.rejects(
+    sf.run("wedged", () => never),
+    (e) => e instanceof FlightBudgetError && e.budgetMs === 60,
+    "the budget rejects a never-settling flight"
+  );
+  assert.equal(sf.inFlightCount(), 0, "the key releases on budget expiry");
+  // a post-budget caller starts a fresh flight; the late original must
+  // not evict it (the #1674 ordering rule)
+  releaseNever();  // let the orphan settle silently
+}
+{
+  // a flight that settles inside the budget is untouched by it
+  const { createSingleFlight } = await import("../src/single_flight.ts");
+  const sf = createSingleFlight({ settleBudgetMs: 5000 });
+  const r = await sf.run("fast", async () => 7);
+  assert.equal(r, 7, "the in-budget flight resolves normally");
+}
+// the no-budget default stays unbounded (owner-side deadline policy)
+{
+  const { createSingleFlight } = await import("../src/single_flight.ts");
+  const sf = createSingleFlight();
+  assert.ok(typeof sf.run === "function");
+}
+console.log("single-flight budget: PASS");

@@ -3,7 +3,6 @@
 // Strict 7-bit ASCII only (INV-001).
 
 import assert from "node:assert";
-import { spawn } from "node:child_process";
 import * as path from "node:path";
 import * as os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -93,6 +92,15 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     for (const t of expectedTools) {
         assert(toolNames.includes(t), `Includes consolidated tool: ${t}`);
     }
+
+    // F3-class pin (adopted from the pi-lens #2939 slice-2 pins): the
+    // advertised surface and the executeTool switch must not diverge -
+    // every advertised name must have a dispatch case, or the tool is
+    // discoverable but dead at call time.
+    const indexSrc = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+    const caseNames = new Set([...indexSrc.matchAll(/case "([^"]+)"/g)].map(m => m[1]));
+    const unbacked = toolNames.filter(n => !caseNames.has(n));
+    assert.deepStrictEqual(unbacked, [], 'every advertised tool must have an executeTool case');
 
     // Consolidated lean_search: graph source (Kuzu)
     const callKuzu = await server.handleMessage({

@@ -1662,7 +1662,10 @@ export class FileWorkerManager {
   private projectRoot: string;
   /** pi-lens port: identical in-flight read-only requests coalesce (one
    *  execution per key under the broker multiplex). */
-  private goalFlight = createSingleFlight<string>();
+  // M10 (pi-lens #2939): the guard bounds the flight at twice the
+  // inner LSP deadline (15s), so only a never-settling promise can
+  // trip it - a plain timeout settles long before.
+  private goalFlight = createSingleFlight<string>({ settleBudgetMs: 30000 });
   /** Tranche 3: roots already warm-file seeded (once per session lifetime). */
   private warmedRoots = new Set<string>();
   private shmRing: SharedMemorySnapshotRing | null = null;
@@ -2353,7 +2356,28 @@ export class McpServer {
         case "tools/call": {
           const toolName = params?.name;
           const toolArgs = params?.arguments || {};
-          const contentText = await this.executeTool(toolName, toolArgs);
+          // Crash parity (adopted from the pi-lens #2939 F5 pin): a tool
+          // case that throws must surface as an error-flagged result
+          // frame, never reject past the handler and leave the request
+          // unanswered.
+          let contentText: string;
+          try {
+            contentText = await this.executeTool(toolName, toolArgs);
+          } catch (err) {
+            return {
+              jsonrpc: "2.0",
+              id,
+              result: {
+                content: [
+                  {
+                    type: "text",
+                    text: `Tool error: ${err instanceof Error ? err.message : String(err)}`,
+                  },
+                ],
+                isError: true,
+              },
+            };
+          }
           return {
             jsonrpc: "2.0",
             id,
