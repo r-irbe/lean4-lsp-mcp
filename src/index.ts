@@ -1629,7 +1629,10 @@ export class SharedMemorySnapshotRing {
       if (this.isOwner && fs.existsSync(this.shmPath)) {
         fs.unlinkSync(this.shmPath);
       }
-    } catch {}
+    } catch {
+      // dispose is best-effort: an already-closed fd or a lost unlink race
+      // must never turn teardown into a throw.
+    }
   }
 }
 
