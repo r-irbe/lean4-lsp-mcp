@@ -1255,27 +1255,6 @@ export class LakeBuildGuard {
       }
     }
 
-    try {
-      const pgrepOut = execSync("pgrep -f 'lake (build|compile|env)'", {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
-
-      if (pgrepOut) {
-        const pids = pgrepOut.split("\n").map((p) => parseInt(p.trim(), 10)).filter(Boolean);
-        if (pids.length > 0) {
-          return {
-            isLocked: true,
-            pid: pids[0],
-            source: "process_table",
-            detail: `Active lake build processes detected: [${pids.join(", ")}]`,
-          };
-        }
-      }
-    } catch {
-      // pgrep exits with 1 when no processes match
-    }
-
     // Check global workspace build lock across all parallel packages
     const globalLockPaths = [
       "/dev/shm/lean_global_workspace.lock",
@@ -1306,6 +1285,27 @@ export class LakeBuildGuard {
           // Ignore parse errors on transient lockfiles
         }
       }
+    }
+
+    try {
+      const pgrepOut = execSync("pgrep -f 'lake (build|compile|env)'", {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+
+      if (pgrepOut) {
+        const pids = pgrepOut.split("\n").map((p) => parseInt(p.trim(), 10)).filter(Boolean);
+        if (pids.length > 0) {
+          return {
+            isLocked: true,
+            pid: pids[0],
+            source: "process_table",
+            detail: `Active lake build processes detected: [${pids.join(", ")}]`,
+          };
+        }
+      }
+    } catch {
+      // pgrep exits with 1 when no processes match
     }
 
     return { isLocked: false, source: "none" };
