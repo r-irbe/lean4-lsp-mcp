@@ -11,7 +11,6 @@ import {
     LeanSysrootBridge,
     formatGoalAsMarkdown,
     McpServer,
-    TOOL_DEFINITIONS,
 } from "../src/index.ts";
 
 import * as fs from "node:fs";
@@ -288,8 +287,16 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     assert(resolved !== null, "Resolved package for pkg-a file");
     assert.strictEqual(resolved.name, "pkg-a", "Package name matches pkg-a");
 
-    // Test global build lock detection
+    // Test global build lock detection. NOTE: this path is REAL and
+    // shared with live tooling (the concurrent session's builds use the
+    // same file). Save any existing lock, write ours, and restore theirs
+    // only when our own write is still in place - a concurrent writer
+    // always wins the file, never our restore. If a concurrent writer
+    // replaced the lock between our write and the check, the guard still
+    // detected an active build; assert the tolerant contract then.
     const testGlobalLock = "/dev/shm/lean_global_workspace.lock";
+    let priorLock = null;
+    try { priorLock = fs.readFileSync(testGlobalLock, "utf-8"); } catch {}
     const lockInfo = {
         pid: process.pid,
         packageName: "pkg-a",
@@ -300,10 +307,26 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
 
     const status = LakeBuildGuard.checkLock(testWs);
     assert.strictEqual(status.isLocked, true, "Global workspace lock detected");
-    assert.strictEqual(status.source, "global_workspace_lock", "Source is global_workspace_lock");
-    assert(status.detail && status.detail.includes("pkg-a"), "Detail mentions active package");
+    let oursStill = true;
+    try {
+        oursStill = JSON.parse(fs.readFileSync(testGlobalLock, "utf-8")).pid === process.pid;
+    } catch { oursStill = false; }
+    if (oursStill) {
+        assert.strictEqual(status.source, "global_workspace_lock", "Source is global_workspace_lock");
+        assert(status.detail && status.detail.includes("pkg-a"), "Detail mentions active package");
+    } else {
+        // a concurrent writer won the shared path mid-test; the guard's
+        // detection still fired on a live source
+        assert(["global_workspace_lock", "process_table"].includes(status.source),
+            "Concurrent lock race: an active build is still detected");
+    }
 
-    try { fs.unlinkSync(testGlobalLock); } catch {}
+    if (oursStill) {
+        try {
+            if (priorLock !== null) fs.writeFileSync(testGlobalLock, priorLock);
+            else fs.unlinkSync(testGlobalLock);
+        } catch {}
+    }
     fs.rmSync(testWs, { recursive: true, force: true });
     console.log("  - MultiPackageWorkspaceCoordinator: PASS (packages=" + count + ")");
 }
