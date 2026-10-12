@@ -121,6 +121,9 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         file: { type: "string", description: "Optional file path filter" },
         limit: { type: "integer", description: "Max results to return (default: 10)" },
         prover: { type: "string", description: "Optional target prover filter for ontology / concordance" },
+        source_prover: { type: "string", description: "Optional source prover filter for concordance" },
+        target_prover: { type: "string", description: "Optional target prover filter for concordance" },
+        book: { type: "string", description: "Optional book corpus_id filter for book search" },
         category: { type: "string", description: "Optional arXiv category filter" },
       },
       required: ["query"],
@@ -272,6 +275,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       properties: {
         term: { type: "string", description: "Index term to look up" },
         book: { type: "string", description: "Optional book corpus_id filter" },
+        prover: { type: "string", description: "Optional prover family filter (e.g. lean4, coq, isabelle, hol_light)" },
       },
       required: ["term"],
     },    annotations: {
@@ -280,11 +284,13 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "lean_cross_itp_concordance",
-    description: "Cross-ITP concordance: the equivalent term/tactic for a concept across prover families (Lean 4, Coq, Isabelle, ...)",
+    description: "Cross-ITP concordance: the equivalent term/tactic for a concept across prover families (Lean 4, Coq, Isabelle, HOL Light, ...)",
     inputSchema: {
       type: "object",
       properties: {
         concept: { type: "string", description: "Concept to concord across provers" },
+        source_prover: { type: "string", description: "Optional source prover filter (e.g. lean4, coq, isabelle, hol_light)" },
+        target_prover: { type: "string", description: "Optional target prover filter (e.g. lean4, coq, isabelle, hol_light)" },
       },
       required: ["concept"],
     },    annotations: {
@@ -2726,9 +2732,13 @@ export class McpServer {
         } else if (source === "reservoir") {
           return await this.executeTool("lean_reservoir_search", { query, limit });
         } else if (source === "book" || source === "book_index") {
-          return await this.executeTool("lean_book_index_lookup", { term: query, book: args.book });
+          return await this.executeTool("lean_book_index_lookup", { term: query, book: args.book, prover: args.prover });
         } else if (source === "concordance") {
-          return await this.executeTool("lean_cross_itp_concordance", { concept: query });
+          return await this.executeTool("lean_cross_itp_concordance", {
+            concept: query,
+            source_prover: args.source_prover,
+            target_prover: args.target_prover ?? args.prover,
+          });
         } else if (source === "symbol") {
           return await this.executeTool("lean_lookup_symbol", { symbol: query });
         } else if (source === "graph") {
@@ -2993,6 +3003,7 @@ export class McpServer {
         const term = String(args.term ?? "").trim().toLowerCase();
         if (!term) throw new Error("Missing required argument: 'term'");
         const bookFilter = args.book ? String(args.book).trim().toLowerCase() : undefined;
+        const proverFilter = args.prover ? String(args.prover).trim().toLowerCase() : undefined;
 
         const candidateIndexDirs = [
           path.resolve(__dirname, "../data/itp-ontology/book-indexes"),
@@ -3011,6 +3022,8 @@ export class McpServer {
           if (bookFilter && !corpusId.includes(bookFilter)) continue;
           try {
             const data = JSON.parse(fs.readFileSync(path.join(indexesDir, indexFile), "utf-8"));
+            const proverFamily = String(data.prover_family || "").toLowerCase();
+            if (proverFilter && !proverFamily.includes(proverFilter) && !corpusId.includes(proverFilter)) continue;
             const entries: any[] = data.entries || (data.index_metadata && data.index_metadata.entries) || [];
             for (const e of entries) {
               const t = (e.term || "").toLowerCase();
@@ -3023,7 +3036,7 @@ export class McpServer {
                 });
                 const xr = (e.cross_references || []).slice(0, 3);
                 results.push(
-                  `- ${e.term || t} (${e.category || "term"}) in ${corpusId}: ${refs.join("; ")}` +
+                  `- ${e.term || t} (${e.category || "term"}) in ${corpusId}${proverFamily ? ` [${proverFamily}]` : ""}: ${refs.join("; ")}` +
                   (xr.length ? ` | cross-refs: ${xr.join(", ")}` : "")
                 );
               }
@@ -3041,7 +3054,74 @@ export class McpServer {
       case "lean_cross_itp_concordance": {
         const concept = String(args.concept ?? "").trim().toLowerCase();
         if (!concept) throw new Error("Missing required argument: 'concept'");
+        const sourceFilter = args.source_prover ? String(args.source_prover).trim().toLowerCase() : undefined;
+        const targetFilter = (args.target_prover ?? args.prover) ? String(args.target_prover ?? args.prover).trim().toLowerCase() : undefined;
 
+        const lines: string[] = [];
+
+        // 1. Check dedicated Cross-ITP Concordance knowledge base (cross-itp-concordance.v1.json)
+        const candidateConcordanceTablePaths = [
+          path.resolve(__dirname, "../data/itp-ontology/cross-itp-concordance.v1.json"),
+          path.resolve(__dirname, "../../data/itp-ontology/cross-itp-concordance.v1.json"),
+          path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes/cross-itp-concordance.v1.json"),
+        ];
+        const concordanceTablePath = candidateConcordanceTablePaths.find(p => fs.existsSync(p));
+        if (concordanceTablePath) {
+          try {
+            const data = JSON.parse(fs.readFileSync(concordanceTablePath, "utf-8"));
+            const mechanisms: any[] = data.mechanisms || [];
+            for (const m of mechanisms) {
+              const mid = String(m.id || "").toLowerCase();
+              const cname = String(m.canonical_name || "").toLowerCase();
+              const desc = String(m.description || "").toLowerCase();
+              const cat = String(m.category || "").toLowerCase();
+              const proversObj = m.provers || {};
+              const allTactics: string[] = Object.values(proversObj).flatMap((p: any) =>
+                Array.isArray(p.tactics) ? p.tactics.map((t: string) => String(t).toLowerCase()) : []
+              );
+
+              const matches = mid.includes(concept) || cname.includes(concept) || desc.includes(concept) ||
+                              cat.includes(concept) || allTactics.some(t => t.includes(concept));
+              if (matches) {
+                lines.push(`## ${m.canonical_name} (${m.id})`);
+                lines.push(`  Category: ${m.category} | Master: ${m.master_concept_ref}`);
+                lines.push(`  Semantics: ${m.description}`);
+                lines.push(`  Statutory URN: ${m.statutory_urn}`);
+                lines.push(`  Prover Idioms:`);
+                for (const [prover, pData] of Object.entries(proversObj) as [string, any][]) {
+                  const proverNorm = prover.toLowerCase();
+                  if (sourceFilter && targetFilter) {
+                    if (proverNorm !== sourceFilter && proverNorm !== targetFilter) continue;
+                  } else if (targetFilter && proverNorm !== targetFilter) {
+                    continue;
+                  } else if (sourceFilter && proverNorm !== sourceFilter) {
+                    continue;
+                  }
+                  const tactics = Array.isArray(pData.tactics) ? pData.tactics.join(", ") : "";
+                  lines.push(`    - ${prover}: tactics: [${tactics}] | pattern: \`${pData.syntax_pattern}\``);
+                  if (pData.idiomatic_pattern) lines.push(`      idiom: ${pData.idiomatic_pattern}`);
+                }
+                const transRules = (m.translation_rules || []).filter((tr: any) => {
+                  const sp = String(tr.source_prover || "").toLowerCase();
+                  const tp = String(tr.target_prover || "").toLowerCase();
+                  if (sourceFilter && !sp.includes(sourceFilter)) return false;
+                  if (targetFilter && !tp.includes(targetFilter)) return false;
+                  return true;
+                });
+                if (transRules.length) {
+                  lines.push(`  Translation Rules:`);
+                  for (const tr of transRules) {
+                    lines.push(`    * [${tr.source_prover} -> ${tr.target_prover}] \`${tr.source_construct}\` -> \`${tr.target_construct}\` (confidence: ${tr.confidence})`);
+                    if (tr.notes) lines.push(`      notes: ${tr.notes}`);
+                  }
+                }
+                lines.push("");
+              }
+            }
+          } catch { /* proceed */ }
+        }
+
+        // 2. Check Master Authority Index (master-authority-index.json)
         const candidateConcordancePaths = [
           path.resolve(__dirname, "../data/itp-ontology/master-authority-index.json"),
           path.resolve(__dirname, "../../data/itp-ontology/master-authority-index.json"),
@@ -3049,28 +3129,38 @@ export class McpServer {
           path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes/master-authority-index.json"),
         ];
         const concordancePath = candidateConcordancePaths.find(p => fs.existsSync(p));
-        if (!concordancePath) {
-          return `Master authority index not found in candidate paths.`;
-        }
-
-        const data = JSON.parse(fs.readFileSync(concordancePath, "utf-8"));
-        const concepts = data.master_concepts || [];
-        const lines: string[] = [];
-
-        for (const c of concepts) {
-          const tactics = c.prover_tactics || {};
-          const synonyms = (c.synonyms || []).map((s: string) => s.toLowerCase());
-          const cname = (c.canonical_name || "").toLowerCase();
-          if (cname.includes(concept) || synonyms.some((s: string) => s.includes(concept))) {
-            lines.push(`## ${c.canonical_name} (${c.concept_id})`);
-            for (const [prover, tactic] of Object.entries(tactics)) {
-              lines.push(`  - ${prover}: ${tactic}`);
+        if (concordancePath) {
+          try {
+            const data = JSON.parse(fs.readFileSync(concordancePath, "utf-8"));
+            const concepts: any[] = data.master_concepts || [];
+            for (const c of concepts) {
+              const mappings = c.prover_mappings || c.prover_tactics || {};
+              const synonyms = (c.synonyms || []).map((s: string) => s.toLowerCase());
+              const cname = (c.canonical_name || "").toLowerCase();
+              const cid = (c.concept_id || "").toLowerCase();
+              if (cname.includes(concept) || cid.includes(concept) || synonyms.some((s: string) => s.includes(concept))) {
+                if (lines.some(l => l.includes(c.concept_id))) continue;
+                lines.push(`## ${c.canonical_name} (${c.concept_id})`);
+                for (const [prover, mapping] of Object.entries(mappings) as [string, any][]) {
+                  const proverNorm = prover.toLowerCase();
+                  if (targetFilter && !proverNorm.includes(targetFilter)) continue;
+                  if (sourceFilter && !proverNorm.includes(sourceFilter)) continue;
+                  if (typeof mapping === "string") {
+                    lines.push(`  - ${prover}: ${mapping}`);
+                  } else if (mapping && typeof mapping === "object") {
+                    const tactics = Array.isArray(mapping.primary_tactics) ? mapping.primary_tactics.join(", ") : "";
+                    const pattern = mapping.syntax_pattern ? ` | pattern: \`${mapping.syntax_pattern}\`` : "";
+                    lines.push(`  - ${prover}: [${tactics}]${pattern}`);
+                  }
+                }
+                lines.push("");
+              }
             }
-          }
+          } catch { /* proceed */ }
         }
 
+        // 3. Fallback: Search per-book indexes
         if (!lines.length) {
-          // fall back: search the per-book indexes' cross-references for the concept
           const candidateIndexDirs = [
             path.resolve(__dirname, "../data/itp-ontology/book-indexes"),
             path.resolve(__dirname, "../../data/itp-ontology/book-indexes"),
@@ -3099,7 +3189,7 @@ export class McpServer {
         }
 
         return lines.length
-          ? `Cross-ITP concordance for "${concept}":\n` + lines.join("\n")
+          ? `Cross-ITP concordance for "${concept}":\n\n` + lines.join("\n").trim()
           : `No concordance entry for "${concept}" yet (the master authority catalog is under construction).`;
       }
 

@@ -151,6 +151,18 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     });
     assert(callBook && callBook.result && callBook.result.content[0].text.includes("category"), "Book index lookup resolves entries");
 
+    // Direct lean_book_index_lookup with prover filter
+    const callBookFiltered = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 61,
+        method: "tools/call",
+        params: {
+            name: "lean_book_index_lookup",
+            arguments: { term: "inversion", prover: "lean4" },
+        },
+    });
+    assert(callBookFiltered && callBookFiltered.result && callBookFiltered.result.content[0].text.includes("inversion"), "Filtered book index lookup resolves entries");
+
     // Consolidated lean_search: concordance source
     const callConc = await server.handleMessage({
         jsonrpc: "2.0",
@@ -162,6 +174,34 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
         },
     });
     assert(callConc && callConc.result && callConc.result.content[0].text.length > 0, "Cross-ITP concordance resolves entries");
+
+    // Direct lean_cross_itp_concordance tool with canonical mechanisms
+    const callDirectConc = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 71,
+        method: "tools/call",
+        params: {
+            name: "lean_cross_itp_concordance",
+            arguments: { concept: "induction" },
+        },
+    });
+    assert(callDirectConc && callDirectConc.result && callDirectConc.result.content[0].text.includes("CONC-01-CASE-INDUCTION"), "Cross-ITP concordance finds CONC-01");
+    assert(callDirectConc.result.content[0].text.includes("rcases"), "Concordance includes Lean 4 rcases");
+    assert(callDirectConc.result.content[0].text.includes("coq_mathcomp"), "Concordance includes MathComp");
+
+    // Direct lean_cross_itp_concordance with directional translation filter
+    const callDirectedConc = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 72,
+        method: "tools/call",
+        params: {
+            name: "lean_cross_itp_concordance",
+            arguments: { concept: "reflection", source_prover: "coq_mathcomp", target_prover: "lean4" },
+        },
+    });
+    assert(callDirectedConc && callDirectedConc.result && callDirectedConc.result.content[0].text.includes("CONC-02-BOOLEAN-REFLECTION"), "Directional concordance finds CONC-02");
+    assert(callDirectedConc.result.content[0].text.includes("apply/idP"), "Directional concordance includes source pattern apply/idP");
+    assert(callDirectedConc.result.content[0].text.includes("decide_eq_true_iff"), "Directional concordance includes target pattern decide_eq_true_iff");
 
     // Consolidated lean_metrics: census
     const callCensus = await server.handleMessage({
