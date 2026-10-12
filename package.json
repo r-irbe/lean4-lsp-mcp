@@ -90,5 +90,6 @@
   "devDependencies": {
     "@types/node": "^20.11.0",
     "typescript": "^5.3.3"
-  }
+  },
+  "test": "node --experimental-strip-types tests/test_lean_lsp_mcp.mjs && node --experimental-strip-types tests/test_file_worker_manager.mjs && node --experimental-strip-types tests/test_tranche1_modules.mjs"
 }

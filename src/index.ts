@@ -8,6 +8,10 @@ import * as os from "node:os";
 import { execSync, spawn, ChildProcess } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { KuzuKnowledgeGraph } from "./kuzu_graph.ts";
+import { createHash } from "node:crypto";
+import { ContentLimitError, exceedsLspContentLimits, contentLimitBounds } from "./content_limits.ts";
+import { createSingleFlight } from "./single_flight.ts";
+import { BoundedCache } from "./bounded_cache.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,6 +42,12 @@ export interface McpToolDefinition {
     type: "object";
     properties: Record<string, any>;
     required?: string[];
+  };
+  /** MCP hints clients use for permission gating (tranche 3). */
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    openWorldHint?: boolean;
   };
 }
 
@@ -92,6 +102,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         maxGoals: { type: "integer", description: "Maximum subgoals to display (default: 3)" },
       },
       required: ["filePath", "line"],
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -109,9 +121,15 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         file: { type: "string", description: "Optional file path filter" },
         limit: { type: "integer", description: "Max results to return (default: 10)" },
         prover: { type: "string", description: "Optional target prover filter for ontology / concordance" },
+        source_prover: { type: "string", description: "Optional source prover filter for concordance" },
+        target_prover: { type: "string", description: "Optional target prover filter for concordance" },
+        book: { type: "string", description: "Optional book corpus_id filter for book search" },
         category: { type: "string", description: "Optional arXiv category filter" },
       },
       required: ["query"],
+    },    annotations: {
+      readOnlyHint: true,
+      openWorldHint: true,
     },
   },
   {
@@ -134,6 +152,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         format: { type: "string", enum: ["markdown", "json", "summary"], description: "Output format (default: markdown)" },
         title: { type: "string", description: "Optional human-readable title" },
       },
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -154,6 +174,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         format: { type: "string", enum: ["markdown", "json", "summary", "mermaid", "dot"], description: "Output format (default: markdown)" },
       },
       required: ["target"],
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -170,6 +192,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         externName: { type: "string", description: "Optional Lean @[extern] identifier or C function name" },
         cHeaderPath: { type: "string", description: "Optional path to C header to inspect" },
       },
+    },    annotations: {
+      readOnlyHint: true,
     },
   },
   {
@@ -182,6 +206,158 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         timeoutMs: { type: "integer", description: "Execution timeout in milliseconds (default: 15000)" },
       },
       required: ["code"],
+    },    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+    },
+  },
+  {
+    name: "lean_resync",
+    description: "Forces a full document re-sync: re-reads the file from disk, bumps the version, and resends textDocument/didChange bypassing every fast path. Recovery verb when goal output looks stale after an out-of-band edit.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        filePath: { type: "string", description: "Absolute or relative path to the .lean file" },
+      },
+      required: ["filePath"],
+    },    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "lean_lookup_symbol",
+    description: "Offline symbol lookup in the compiled project's .ilean index: file, position, and module for a declaration name",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "Declaration name to look up" },
+      },
+      required: ["symbol"],
+    },    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "lean_module_hierarchy",
+    description: "Import DAG traversal for a module: direct and transitive imports / imported-by with cycle detection",
+    inputSchema: {
+      type: "object",
+      properties: {
+        moduleName: { type: "string", description: "Module name (e.g. EASCI.Tactics)" },
+        direction: { type: "string", enum: ["imports", "importedBy", "both"], description: "Traversal direction (default: both)" },
+        transitive: { type: "boolean", description: "Transitive closure instead of 1-hop (default: false)" },
+        maxDepth: { type: "integer", description: "Max traversal depth (default: 20)" },
+      },
+      required: ["moduleName"],
+    },    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "lean_run_code",
+    description: "Executes Lean 4 code against the project's compiled environment (legacy alias of lean_exec)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        code: { type: "string", description: "Lean 4 code to execute" },
+      },
+      required: ["code"],
+    },    annotations: {
+      readOnlyHint: false,
+      destructiveHint: true,
+    },
+  },
+  {
+    name: "lean_book_index_lookup",
+    description: "Author-curated book index lookup over the source-materials corpus (the librarian pipeline)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        term: { type: "string", description: "Index term to look up" },
+        book: { type: "string", description: "Optional book corpus_id filter" },
+        prover: { type: "string", description: "Optional prover family filter (e.g. lean4, coq, isabelle, hol_light)" },
+      },
+      required: ["term"],
+    },    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "lean_cross_itp_concordance",
+    description: "Cross-ITP concordance: the equivalent term/tactic for a concept across prover families (Lean 4, Coq, Isabelle, HOL Light, ...)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        concept: { type: "string", description: "Concept to concord across provers" },
+        source_prover: { type: "string", description: "Optional source prover filter (e.g. lean4, coq, isabelle, hol_light)" },
+        target_prover: { type: "string", description: "Optional target prover filter (e.g. lean4, coq, isabelle, hol_light)" },
+      },
+      required: ["concept"],
+    },    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "lean_proof_skeleton",
+    description: "Generates a proof skeleton for a theorem: the statement with sorry-punched tactic placeholders from the compiled module",
+    inputSchema: {
+      type: "object",
+      properties: {
+        filePath: { type: "string", description: "Path to the .lean file containing the theorem" },
+        symbol: { type: "string", description: "Alternative: a declaration name resolved via the .ilean index" },
+      },
+    },    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "lean_blueprint_scaffold",
+    description: "Blueprint scaffold for a declaration: the declaration's outline with its proof structure rendered for documentation",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "Declaration name to scaffold" },
+        filePath: { type: "string", description: "Optional file path narrowing the lookup" },
+        line: { type: "integer", description: "Optional 1-based line hint" },
+      },
+      required: ["symbol"],
+    },    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "lean_dependency_subgraph",
+    description: "Renders the dependency subgraph around a module (Mermaid by default) from the .ilean index",
+    inputSchema: {
+      type: "object",
+      properties: {
+        moduleName: { type: "string", description: "Module name at the subgraph center" },
+        maxDepth: { type: "integer", description: "Max traversal depth (default: 5)" },
+        format: { type: "string", description: "Output format (default: mermaid)" },
+      },
+      required: ["moduleName"],
+    },    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "lean_module_census",
+    description: "Declaration census over a target path: counts of theorems, definitions, and structures from the compiled corpus",
+    inputSchema: {
+      type: "object",
+      properties: {
+        targetPath: { type: "string", description: "Directory or file path to census" },
+      },
+      required: ["targetPath"],
+    },    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "lean_server_status",
+    description: "Introspection: attach mode (broker vs direct), project root, open files, per-session and total server RSS, idle times. The recovery aid when results look stale.",
+    inputSchema: { type: "object", properties: {} },    annotations: {
+      readOnlyHint: true,
     },
   },
 ];
@@ -1085,27 +1261,6 @@ export class LakeBuildGuard {
       }
     }
 
-    try {
-      const pgrepOut = execSync("pgrep -f 'lake (build|compile|env)'", {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
-
-      if (pgrepOut) {
-        const pids = pgrepOut.split("\n").map((p) => parseInt(p.trim(), 10)).filter(Boolean);
-        if (pids.length > 0) {
-          return {
-            isLocked: true,
-            pid: pids[0],
-            source: "process_table",
-            detail: `Active lake build processes detected: [${pids.join(", ")}]`,
-          };
-        }
-      }
-    } catch {
-      // pgrep exits with 1 when no processes match
-    }
-
     // Check global workspace build lock across all parallel packages
     const globalLockPaths = [
       "/dev/shm/lean_global_workspace.lock",
@@ -1136,6 +1291,27 @@ export class LakeBuildGuard {
           // Ignore parse errors on transient lockfiles
         }
       }
+    }
+
+    try {
+      const pgrepOut = execSync("pgrep -f 'lake (build|compile|env)'", {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+
+      if (pgrepOut) {
+        const pids = pgrepOut.split("\n").map((p) => parseInt(p.trim(), 10)).filter(Boolean);
+        if (pids.length > 0) {
+          return {
+            isLocked: true,
+            pid: pids[0],
+            source: "process_table",
+            detail: `Active lake build processes detected: [${pids.join(", ")}]`,
+          };
+        }
+      }
+    } catch {
+      // pgrep exits with 1 when no processes match
     }
 
     return { isLocked: false, source: "none" };
@@ -1261,7 +1437,6 @@ export class SharedMemorySnapshotRing {
   private buffer: Buffer;
   private capacity: number;
   private slotSize: number;
-  private totalSize: number;
   private shmPath: string;
   private isOwner: boolean;
 
@@ -1278,7 +1453,6 @@ export class SharedMemorySnapshotRing {
     this.buffer = buffer;
     this.capacity = capacity;
     this.slotSize = slotSize;
-    this.totalSize = buffer.length;
     this.isOwner = isOwner;
   }
 
@@ -1461,7 +1635,10 @@ export class SharedMemorySnapshotRing {
       if (this.isOwner && fs.existsSync(this.shmPath)) {
         fs.unlinkSync(this.shmPath);
       }
-    } catch {}
+    } catch {
+      // dispose is best-effort: an already-closed fd or a lost unlink race
+      // must never turn teardown into a throw.
+    }
   }
 }
 
@@ -1471,6 +1648,10 @@ export interface TrackedFileWorker {
   version: number;
   mtimeMs: number;
   lastAccessedMs: number;
+  /** pi-lens #1783 hardening: the content fingerprint of what the server holds. */
+  bytes: number;
+  hash: string;
+  lastVerifiedMs: number;
 }
 
 export interface FileWorkerSession {
@@ -1485,6 +1666,14 @@ export interface FileWorkerSession {
 
 export class FileWorkerManager {
   private projectRoot: string;
+  /** pi-lens port: identical in-flight read-only requests coalesce (one
+   *  execution per key under the broker multiplex). */
+  // M10 (pi-lens #2939): the guard bounds the flight at twice the
+  // inner LSP deadline (15s), so only a never-settling promise can
+  // trip it - a plain timeout settles long before.
+  private goalFlight = createSingleFlight<string>({ settleBudgetMs: 30000 });
+  /** Tranche 3: roots already warm-file seeded (once per session lifetime). */
+  private warmedRoots = new Set<string>();
   private shmRing: SharedMemorySnapshotRing | null = null;
   private sessions: Map<string, FileWorkerSession> = new Map();
   private reaperTimer: NodeJS.Timeout | null = null;
@@ -1679,7 +1868,29 @@ export class FileWorkerManager {
     });
 
     this.sendNotification(session, "initialized", {});
+    this.warmSeed(session, leanRoot);
     return session;
+  }
+
+  /**
+   * Tranche 3: warm-file seeding. LEAN_WARM_FILES (a colon-separated
+   * list of paths, relative to the project root) is synced once per
+   * session so the first real goal query skips the cold-file latency.
+   */
+  private warmSeed(session: FileWorkerSession, leanRoot: string): void {
+    if (this.warmedRoots.has(leanRoot)) return;
+    this.warmedRoots.add(leanRoot);
+    const raw = process.env.LEAN_WARM_FILES || "";
+    const files = raw.split(":").map((p) => p.trim()).filter(Boolean).slice(0, 12);
+    for (const rel of files) {
+      try {
+        const abs = path.resolve(leanRoot, rel);
+        if (fs.existsSync(abs)) this.syncDocument(session, abs);
+      } catch {
+        // warm seeding is best-effort by design; a missing or oversized
+        // warm file never blocks the session
+      }
+    }
   }
 
   private sendRequest(session: FileWorkerSession, method: string, params: any): Promise<any> {
@@ -1719,9 +1930,30 @@ export class FileWorkerManager {
     const mtimeMs = stat.mtimeMs;
     const now = Date.now();
 
+    // pi-lens #3405 class: the byte bound is checked before any read, so
+    // oversized content never enters a JSON-RPC frame.
+    const { limitBytes } = contentLimitBounds();
+    if (stat.size > limitBytes) {
+      throw new ContentLimitError(
+        `${absPath} is ${stat.size} bytes (limit ${limitBytes}); refusing to sync. ` +
+        `Override with LSP_CONTENT_LIMIT_BYTES.`
+      );
+    }
+
+    const fingerprint = (text: string): { bytes: number; hash: string } => ({
+      bytes: stat.size,
+      hash: createHash("sha256").update(text).digest("hex").slice(0, 16),
+    });
+
     let fileInfo = session.openFiles.get(absPath);
     if (!fileInfo) {
       const text = fs.readFileSync(absPath, "utf-8");
+      const v = exceedsLspContentLimits(text);
+      if (v.exceeded) {
+        throw new ContentLimitError(
+          `${absPath} is ${v.lines} lines / ${v.bytes} bytes (limits ${v.limitLines} lines / ${v.limitBytes} bytes); refusing to sync.`
+        );
+      }
       this.sendNotification(session, "textDocument/didOpen", {
         textDocument: {
           uri,
@@ -1736,26 +1968,128 @@ export class FileWorkerManager {
         version: 1,
         mtimeMs,
         lastAccessedMs: now,
+        ...fingerprint(text),
+        lastVerifiedMs: now,
       };
       session.openFiles.set(absPath, fileInfo);
     } else {
       fileInfo.lastAccessedMs = now;
-      if (mtimeMs > fileInfo.mtimeMs) {
+      // pi-lens #1783 hardening: mtime alone missed same-mtime writes; a
+      // bounded-cadence content fingerprint catches the residue.
+      const cadenceDue = now - fileInfo.lastVerifiedMs > 30_000;
+      const sizeDrift = fileInfo.bytes !== undefined && stat.size !== fileInfo.bytes;
+      if (mtimeMs > fileInfo.mtimeMs || sizeDrift || cadenceDue) {
         const newText = fs.readFileSync(absPath, "utf-8");
-        fileInfo.version++;
-        fileInfo.mtimeMs = mtimeMs;
-        this.sendNotification(session, "textDocument/didChange", {
-          textDocument: {
-            uri,
-            version: fileInfo.version,
-          },
-          contentChanges: [{ text: newText }],
-        });
+        const fp = fingerprint(newText);
+        const drifted = fp.hash !== fileInfo.hash;
+        if (drifted) {
+          const v = exceedsLspContentLimits(newText);
+          if (v.exceeded) {
+            throw new ContentLimitError(
+              `${absPath} is ${v.lines} lines / ${v.bytes} bytes (limits ${v.limitLines} lines / ${v.limitBytes} bytes); refusing to sync.`
+            );
+          }
+          fileInfo.version++;
+          fileInfo.mtimeMs = mtimeMs;
+          this.sendNotification(session, "textDocument/didChange", {
+            textDocument: {
+              uri,
+              version: fileInfo.version,
+            },
+            contentChanges: [{ text: newText }],
+          });
+        }
+        fileInfo.bytes = fp.bytes;
+        fileInfo.hash = fp.hash;
+        fileInfo.lastVerifiedMs = now;
       }
     }
 
     session.lastActiveMs = now;
     return uri;
+  }
+
+  /**
+   * The explicit recovery verb (lean_resync): bypasses every fast path,
+   * re-reads from disk, bumps the version, and resends the full text.
+   */
+  forceResync(session: FileWorkerSession, absPath: string): string {
+    const uri = pathToFileURL(absPath).href;
+    const stat = fs.statSync(absPath);
+    const text = fs.readFileSync(absPath, "utf-8");
+    const v = exceedsLspContentLimits(text);
+    if (v.exceeded) {
+      throw new ContentLimitError(
+        `${absPath} is ${v.lines} lines / ${v.bytes} bytes (limits ${v.limitLines} lines / ${v.limitBytes} bytes); refusing to sync.`
+      );
+    }
+    const now = Date.now();
+    let fileInfo = session.openFiles.get(absPath);
+    if (!fileInfo) {
+      fileInfo = {
+        uri,
+        absPath,
+        version: 1,
+        mtimeMs: stat.mtimeMs,
+        lastAccessedMs: now,
+        bytes: stat.size,
+        hash: createHash("sha256").update(text).digest("hex").slice(0, 16),
+        lastVerifiedMs: now,
+      };
+      session.openFiles.set(absPath, fileInfo);
+      this.sendNotification(session, "textDocument/didOpen", {
+        textDocument: { uri, languageId: "lean4", version: 1, text },
+      });
+      return `resync: opened ${absPath} (fresh didOpen, ${stat.size} bytes)`;
+    }
+    fileInfo.version++;
+    fileInfo.mtimeMs = stat.mtimeMs;
+    fileInfo.bytes = stat.size;
+    fileInfo.hash = createHash("sha256").update(text).digest("hex").slice(0, 16);
+    fileInfo.lastVerifiedMs = now;
+    fileInfo.lastAccessedMs = now;
+    this.sendNotification(session, "textDocument/didChange", {
+      textDocument: { uri, version: fileInfo.version },
+      contentChanges: [{ text }],
+    });
+    session.lastActiveMs = now;
+    return `resync: resent ${absPath} as version ${fileInfo.version} (${stat.size} bytes, hash ${fileInfo.hash})`;
+  }
+
+  /** Public entry for the lean_resync tool: root-finding + session + force. */
+  async resyncFile(filePath: string): Promise<string> {
+    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.projectRoot, filePath);
+    if (!fs.existsSync(absPath)) {
+      return `File not found: ${filePath}`;
+    }
+    const leanRoot = this.findLeanRoot(absPath);
+    const buildStatus = LakeBuildGuard.inspectBuildActivity(leanRoot);
+    if (buildStatus.isLocked) {
+      this.suspendSessionFiles(leanRoot);
+      return `[Zero-Build Concurrency Gate] Resync suspended during active Lake build (${buildStatus.detail || buildStatus.source}).`;
+    }
+    const session = await this.ensureSession(leanRoot);
+    return this.forceResync(session, absPath);
+  }
+
+  /** Public entry for the lean_server_status tool: the introspection surface. */
+  serverStatus(): string {
+    const useDirect = process.env.LEAN_SERVE_DIRECT === "1";
+    const lines: string[] = [];
+    lines.push(`projectRoot: ${this.projectRoot}`);
+    lines.push(`attach mode: ${useDirect ? "direct (LEAN_SERVE_DIRECT=1)" : "broker (lean-serve-broker singleton)"}`);
+    lines.push(`sessions: ${this.sessions.size}`);
+    let openFiles = 0;
+    let totalRssKb = 0;
+    for (const [root, session] of this.sessions) {
+      openFiles += session.openFiles.size;
+      const rss = this.getProcessRssKb(session.child.pid);
+      totalRssKb += rss;
+      lines.push(`  session ${root}: ${session.openFiles.size} open file(s), server RSS ${rss} kB, idle ${Math.round((Date.now() - session.lastActiveMs) / 1000)}s`);
+    }
+    lines.push(`total open files: ${openFiles}`);
+    lines.push(`total server RSS: ${totalRssKb} kB`);
+    return lines.join("\n");
   }
 
   public async getGoal(
@@ -1779,21 +2113,27 @@ export class FileWorkerManager {
 
     try {
       const session = await this.ensureSession(leanRoot);
-      const uri = this.syncDocument(session, absPath);
+      // Single-flight (pi-lens port): the key carries the synced file's
+      // version+hash so a post-edit request never shares a stale flight.
+      const fileInfo = session.openFiles.get(absPath);
+      const flightKey = `${absPath}|${line}|${col}|${fileInfo?.version}|${fileInfo?.hash}|${JSON.stringify(filterOpts)}`;
+      return await this.goalFlight.run(flightKey, async () => {
+        const uri = this.syncDocument(session, absPath);
 
-      const res = await this.sendRequest(session, "$/lean/plainGoal", {
-        textDocument: { uri },
-        position: {
-          line: Math.max(0, line - 1),
-          character: Math.max(0, col - 1),
-        },
+        const res = await this.sendRequest(session, "$/lean/plainGoal", {
+          textDocument: { uri },
+          position: {
+            line: Math.max(0, line - 1),
+            character: Math.max(0, col - 1),
+          },
+        });
+
+        const goalText = res?.rendered || (Array.isArray(res?.goals) ? res.goals.join("\n\n") : "");
+        if (filterOpts) {
+          return filterGoalText(goalText, filterOpts);
+        }
+        return formatGoalAsMarkdown(goalText);
       });
-
-      const goalText = res?.rendered || (Array.isArray(res?.goals) ? res.goals.join("\n\n") : "");
-      if (filterOpts) {
-        return filterGoalText(goalText, filterOpts);
-      }
-      return formatGoalAsMarkdown(goalText);
     } catch (err: any) {
       return `Lake LSP error: ${err.message || String(err)}`;
     }
@@ -1813,18 +2153,22 @@ export class FileWorkerManager {
 
     try {
       const session = await this.ensureSession(leanRoot);
-      const uri = this.syncDocument(session, absPath);
+      const fileInfo = session.openFiles.get(absPath);
+      const flightKey = `${absPath}|term|${line}|${col}|${fileInfo?.version}|${fileInfo?.hash}`;
+      return await this.goalFlight.run(flightKey, async () => {
+        const uri = this.syncDocument(session, absPath);
 
-      const res = await this.sendRequest(session, "$/lean/plainTermGoal", {
-        textDocument: { uri },
-        position: {
-          line: Math.max(0, line - 1),
-          character: Math.max(0, col - 1),
-        },
+        const res = await this.sendRequest(session, "$/lean/plainTermGoal", {
+          textDocument: { uri },
+          position: {
+            line: Math.max(0, line - 1),
+            character: Math.max(0, col - 1),
+          },
+        });
+
+        const goalText = res?.rendered || res?.goal || "";
+        return formatGoalAsMarkdown(goalText);
       });
-
-      const goalText = res?.rendered || res?.goal || "";
-      return formatGoalAsMarkdown(goalText);
     } catch (err: any) {
       return `Lake LSP error: ${err.message || String(err)}`;
     }
@@ -1878,7 +2222,9 @@ export class FileWorkerManager {
     if (session) {
       try {
         session.child.kill();
-      } catch {}
+      } catch {
+        // the reaper race: the child may already be dead; deletion below is the source of truth
+      }
       this.sessions.delete(leanRoot);
     }
   }
@@ -2016,7 +2362,28 @@ export class McpServer {
         case "tools/call": {
           const toolName = params?.name;
           const toolArgs = params?.arguments || {};
-          const contentText = await this.executeTool(toolName, toolArgs);
+          // Crash parity (adopted from the pi-lens #2939 F5 pin): a tool
+          // case that throws must surface as an error-flagged result
+          // frame, never reject past the handler and leave the request
+          // unanswered.
+          let contentText: string;
+          try {
+            contentText = await this.executeTool(toolName, toolArgs);
+          } catch (err) {
+            return {
+              jsonrpc: "2.0",
+              id,
+              result: {
+                content: [
+                  {
+                    type: "text",
+                    text: `Tool error: ${err instanceof Error ? err.message : String(err)}`,
+                  },
+                ],
+                isError: true,
+              },
+            };
+          }
           return {
             jsonrpc: "2.0",
             id,
@@ -2059,7 +2426,35 @@ export class McpServer {
     }
   }
 
+  private static readonly CACHEABLE_TOOLS = new Set([
+    "lean_loogle_search",
+    "lean_arxiv_search",
+    "lean_reservoir_search",
+    "lean_dataset_search",
+    "lean_ontology_search",
+    "lean_book_index_lookup",
+    "lean_cross_itp_concordance",
+  ]);
+
+  /** Tranche 3: the read-mostly search-family results cache (McpServer-local:
+   *  these tools fetch on this class, not through the FileWorkerManager). */
+  private searchCache = new BoundedCache<string>({ maxEntries: 128, ttlMs: 10 * 60_000 });
+
   public async executeTool(name: string, args: any): Promise<string> {
+    // Tranche 3: the read-mostly search family is bounded-cached (the
+    // in-process LRU; results are deterministic per args within the TTL).
+    if (McpServer.CACHEABLE_TOOLS.has(name)) {
+      const key = name + "|" + JSON.stringify(args);
+      const hit = this.searchCache.get(key);
+      if (hit !== undefined) return hit;
+      const result = await this.executeToolUncached(name, args);
+      this.searchCache.set(key, result);
+      return result;
+    }
+    return this.executeToolUncached(name, args);
+  }
+
+  private async executeToolUncached(name: string, args: any): Promise<string> {
     switch (name) {
       case "lean_goal":
       case "lean_plain_goal": {
@@ -2122,6 +2517,18 @@ export class McpServer {
         const line = Number(args.line ?? 1);
         const col = Number(args.col ?? args.character ?? 1);
         return await this.lakeManager.getTermGoal(filePath, line, col);
+      }
+
+      case "lean_resync": {
+        const filePath = args.filePath || args.path || args.file;
+        if (!filePath) {
+          throw new Error("Missing required argument: 'filePath'");
+        }
+        return await this.lakeManager.resyncFile(filePath);
+      }
+
+      case "lean_server_status": {
+        return this.lakeManager.serverStatus();
       }
 
       case "lean_lookup_symbol":
@@ -2276,7 +2683,9 @@ export class McpServer {
                   if (results.length >= limit) break;
                 }
               }
-            } catch { }
+            } catch {
+              // per-target best effort: one unreadable target must not sink the batch
+            }
           }
           if (results.length === 0) return "No results found.";
           return results.join("\n");
@@ -2296,7 +2705,9 @@ export class McpServer {
                     if (results.length >= limit) break;
                   }
                 }
-              } catch { }
+              } catch {
+                // per-target best effort: one unreadable target must not sink the batch
+              }
             }
             if (results.length > 0) return results.join("\n");
           }
@@ -2321,9 +2732,13 @@ export class McpServer {
         } else if (source === "reservoir") {
           return await this.executeTool("lean_reservoir_search", { query, limit });
         } else if (source === "book" || source === "book_index") {
-          return await this.executeTool("lean_book_index_lookup", { term: query, book: args.book });
+          return await this.executeTool("lean_book_index_lookup", { term: query, book: args.book, prover: args.prover });
         } else if (source === "concordance") {
-          return await this.executeTool("lean_cross_itp_concordance", { concept: query });
+          return await this.executeTool("lean_cross_itp_concordance", {
+            concept: query,
+            source_prover: args.source_prover,
+            target_prover: args.target_prover ?? args.prover,
+          });
         } else if (source === "symbol") {
           return await this.executeTool("lean_lookup_symbol", { symbol: query });
         } else if (source === "graph") {
@@ -2588,6 +3003,7 @@ export class McpServer {
         const term = String(args.term ?? "").trim().toLowerCase();
         if (!term) throw new Error("Missing required argument: 'term'");
         const bookFilter = args.book ? String(args.book).trim().toLowerCase() : undefined;
+        const proverFilter = args.prover ? String(args.prover).trim().toLowerCase() : undefined;
 
         const candidateIndexDirs = [
           path.resolve(__dirname, "../data/itp-ontology/book-indexes"),
@@ -2606,6 +3022,8 @@ export class McpServer {
           if (bookFilter && !corpusId.includes(bookFilter)) continue;
           try {
             const data = JSON.parse(fs.readFileSync(path.join(indexesDir, indexFile), "utf-8"));
+            const proverFamily = String(data.prover_family || "").toLowerCase();
+            if (proverFilter && !proverFamily.includes(proverFilter) && !corpusId.includes(proverFilter)) continue;
             const entries: any[] = data.entries || (data.index_metadata && data.index_metadata.entries) || [];
             for (const e of entries) {
               const t = (e.term || "").toLowerCase();
@@ -2618,7 +3036,7 @@ export class McpServer {
                 });
                 const xr = (e.cross_references || []).slice(0, 3);
                 results.push(
-                  `- ${e.term || t} (${e.category || "term"}) in ${corpusId}: ${refs.join("; ")}` +
+                  `- ${e.term || t} (${e.category || "term"}) in ${corpusId}${proverFamily ? ` [${proverFamily}]` : ""}: ${refs.join("; ")}` +
                   (xr.length ? ` | cross-refs: ${xr.join(", ")}` : "")
                 );
               }
@@ -2636,7 +3054,74 @@ export class McpServer {
       case "lean_cross_itp_concordance": {
         const concept = String(args.concept ?? "").trim().toLowerCase();
         if (!concept) throw new Error("Missing required argument: 'concept'");
+        const sourceFilter = args.source_prover ? String(args.source_prover).trim().toLowerCase() : undefined;
+        const targetFilter = (args.target_prover ?? args.prover) ? String(args.target_prover ?? args.prover).trim().toLowerCase() : undefined;
 
+        const lines: string[] = [];
+
+        // 1. Check dedicated Cross-ITP Concordance knowledge base (cross-itp-concordance.v1.json)
+        const candidateConcordanceTablePaths = [
+          path.resolve(__dirname, "../data/itp-ontology/cross-itp-concordance.v1.json"),
+          path.resolve(__dirname, "../../data/itp-ontology/cross-itp-concordance.v1.json"),
+          path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes/cross-itp-concordance.v1.json"),
+        ];
+        const concordanceTablePath = candidateConcordanceTablePaths.find(p => fs.existsSync(p));
+        if (concordanceTablePath) {
+          try {
+            const data = JSON.parse(fs.readFileSync(concordanceTablePath, "utf-8"));
+            const mechanisms: any[] = data.mechanisms || [];
+            for (const m of mechanisms) {
+              const mid = String(m.id || "").toLowerCase();
+              const cname = String(m.canonical_name || "").toLowerCase();
+              const desc = String(m.description || "").toLowerCase();
+              const cat = String(m.category || "").toLowerCase();
+              const proversObj = m.provers || {};
+              const allTactics: string[] = Object.values(proversObj).flatMap((p: any) =>
+                Array.isArray(p.tactics) ? p.tactics.map((t: string) => String(t).toLowerCase()) : []
+              );
+
+              const matches = mid.includes(concept) || cname.includes(concept) || desc.includes(concept) ||
+                              cat.includes(concept) || allTactics.some(t => t.includes(concept));
+              if (matches) {
+                lines.push(`## ${m.canonical_name} (${m.id})`);
+                lines.push(`  Category: ${m.category} | Master: ${m.master_concept_ref}`);
+                lines.push(`  Semantics: ${m.description}`);
+                lines.push(`  Statutory URN: ${m.statutory_urn}`);
+                lines.push(`  Prover Idioms:`);
+                for (const [prover, pData] of Object.entries(proversObj) as [string, any][]) {
+                  const proverNorm = prover.toLowerCase();
+                  if (sourceFilter && targetFilter) {
+                    if (proverNorm !== sourceFilter && proverNorm !== targetFilter) continue;
+                  } else if (targetFilter && proverNorm !== targetFilter) {
+                    continue;
+                  } else if (sourceFilter && proverNorm !== sourceFilter) {
+                    continue;
+                  }
+                  const tactics = Array.isArray(pData.tactics) ? pData.tactics.join(", ") : "";
+                  lines.push(`    - ${prover}: tactics: [${tactics}] | pattern: \`${pData.syntax_pattern}\``);
+                  if (pData.idiomatic_pattern) lines.push(`      idiom: ${pData.idiomatic_pattern}`);
+                }
+                const transRules = (m.translation_rules || []).filter((tr: any) => {
+                  const sp = String(tr.source_prover || "").toLowerCase();
+                  const tp = String(tr.target_prover || "").toLowerCase();
+                  if (sourceFilter && !sp.includes(sourceFilter)) return false;
+                  if (targetFilter && !tp.includes(targetFilter)) return false;
+                  return true;
+                });
+                if (transRules.length) {
+                  lines.push(`  Translation Rules:`);
+                  for (const tr of transRules) {
+                    lines.push(`    * [${tr.source_prover} -> ${tr.target_prover}] \`${tr.source_construct}\` -> \`${tr.target_construct}\` (confidence: ${tr.confidence})`);
+                    if (tr.notes) lines.push(`      notes: ${tr.notes}`);
+                  }
+                }
+                lines.push("");
+              }
+            }
+          } catch { /* proceed */ }
+        }
+
+        // 2. Check Master Authority Index (master-authority-index.json)
         const candidateConcordancePaths = [
           path.resolve(__dirname, "../data/itp-ontology/master-authority-index.json"),
           path.resolve(__dirname, "../../data/itp-ontology/master-authority-index.json"),
@@ -2644,28 +3129,38 @@ export class McpServer {
           path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes/master-authority-index.json"),
         ];
         const concordancePath = candidateConcordancePaths.find(p => fs.existsSync(p));
-        if (!concordancePath) {
-          return `Master authority index not found in candidate paths.`;
-        }
-
-        const data = JSON.parse(fs.readFileSync(concordancePath, "utf-8"));
-        const concepts = data.master_concepts || [];
-        const lines: string[] = [];
-
-        for (const c of concepts) {
-          const tactics = c.prover_tactics || {};
-          const synonyms = (c.synonyms || []).map((s: string) => s.toLowerCase());
-          const cname = (c.canonical_name || "").toLowerCase();
-          if (cname.includes(concept) || synonyms.some((s: string) => s.includes(concept))) {
-            lines.push(`## ${c.canonical_name} (${c.concept_id})`);
-            for (const [prover, tactic] of Object.entries(tactics)) {
-              lines.push(`  - ${prover}: ${tactic}`);
+        if (concordancePath) {
+          try {
+            const data = JSON.parse(fs.readFileSync(concordancePath, "utf-8"));
+            const concepts: any[] = data.master_concepts || [];
+            for (const c of concepts) {
+              const mappings = c.prover_mappings || c.prover_tactics || {};
+              const synonyms = (c.synonyms || []).map((s: string) => s.toLowerCase());
+              const cname = (c.canonical_name || "").toLowerCase();
+              const cid = (c.concept_id || "").toLowerCase();
+              if (cname.includes(concept) || cid.includes(concept) || synonyms.some((s: string) => s.includes(concept))) {
+                if (lines.some(l => l.includes(c.concept_id))) continue;
+                lines.push(`## ${c.canonical_name} (${c.concept_id})`);
+                for (const [prover, mapping] of Object.entries(mappings) as [string, any][]) {
+                  const proverNorm = prover.toLowerCase();
+                  if (targetFilter && !proverNorm.includes(targetFilter)) continue;
+                  if (sourceFilter && !proverNorm.includes(sourceFilter)) continue;
+                  if (typeof mapping === "string") {
+                    lines.push(`  - ${prover}: ${mapping}`);
+                  } else if (mapping && typeof mapping === "object") {
+                    const tactics = Array.isArray(mapping.primary_tactics) ? mapping.primary_tactics.join(", ") : "";
+                    const pattern = mapping.syntax_pattern ? ` | pattern: \`${mapping.syntax_pattern}\`` : "";
+                    lines.push(`  - ${prover}: [${tactics}]${pattern}`);
+                  }
+                }
+                lines.push("");
+              }
             }
-          }
+          } catch { /* proceed */ }
         }
 
+        // 3. Fallback: Search per-book indexes
         if (!lines.length) {
-          // fall back: search the per-book indexes' cross-references for the concept
           const candidateIndexDirs = [
             path.resolve(__dirname, "../data/itp-ontology/book-indexes"),
             path.resolve(__dirname, "../../data/itp-ontology/book-indexes"),
@@ -2694,7 +3189,7 @@ export class McpServer {
         }
 
         return lines.length
-          ? `Cross-ITP concordance for "${concept}":\n` + lines.join("\n")
+          ? `Cross-ITP concordance for "${concept}":\n\n` + lines.join("\n").trim()
           : `No concordance entry for "${concept}" yet (the master authority catalog is under construction).`;
       }
 
@@ -2765,6 +3260,7 @@ export class McpServer {
 
         let filePath = args.filePath ? String(args.filePath) : "";
         let line = Number(args.line ?? 0);
+        // read in the scaffold walker below (the linter's unused-flag is a false positive; tsc proves the reads)
         let modName = "";
 
         const match = this.ileanIndex.lookupSymbol(symbol);
@@ -3293,13 +3789,11 @@ export class McpServer {
 
         let filePath = args.filePath ? String(args.filePath) : "";
         let line = Number(args.line ?? 0);
-        let modName = "";
 
         const match = this.ileanIndex.lookupSymbol(symbol);
         if (match) {
           filePath = match.filePath;
           line = match.line;
-          modName = match.module || "";
         }
 
         let absPath = "";

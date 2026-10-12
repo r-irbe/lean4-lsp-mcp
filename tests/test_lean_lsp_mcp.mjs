@@ -3,7 +3,6 @@
 // Strict 7-bit ASCII only (INV-001).
 
 import assert from "node:assert";
-import { spawn } from "node:child_process";
 import * as path from "node:path";
 import * as os from "node:os";
 import { fileURLToPath } from "node:url";
@@ -12,7 +11,6 @@ import {
     LeanSysrootBridge,
     formatGoalAsMarkdown,
     McpServer,
-    TOOL_DEFINITIONS,
 } from "../src/index.ts";
 
 import * as fs from "node:fs";
@@ -85,12 +83,23 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     });
     assert(listRes && Array.isArray(listRes.result.tools), "tools list is array");
     const toolNames = listRes.result.tools.map(t => t.name);
-    assert.strictEqual(toolNames.length, 6, "Exposes exactly 6 consolidated tools");
+    assert.strictEqual(toolNames.length, 17, "Exposes exactly 17 tools (the consolidated 6, the recovery verb, and the tranche-2 definitions)");
 
-    const expectedTools = ["lean_goal", "lean_search", "lean_blueprint", "lean_metrics", "lean_ffi", "lean_exec"];
+    const expectedTools = ["lean_goal", "lean_search", "lean_blueprint", "lean_metrics", "lean_ffi", "lean_exec", "lean_resync",
+        "lean_lookup_symbol", "lean_module_hierarchy", "lean_run_code", "lean_book_index_lookup", "lean_cross_itp_concordance",
+        "lean_proof_skeleton", "lean_blueprint_scaffold", "lean_dependency_subgraph", "lean_module_census", "lean_server_status"];
     for (const t of expectedTools) {
         assert(toolNames.includes(t), `Includes consolidated tool: ${t}`);
     }
+
+    // F3-class pin (adopted from the pi-lens #2939 slice-2 pins): the
+    // advertised surface and the executeTool switch must not diverge -
+    // every advertised name must have a dispatch case, or the tool is
+    // discoverable but dead at call time.
+    const indexSrc = fs.readFileSync(new URL('../src/index.ts', import.meta.url), 'utf8');
+    const caseNames = new Set([...indexSrc.matchAll(/case "([^"]+)"/g)].map(m => m[1]));
+    const unbacked = toolNames.filter(n => !caseNames.has(n));
+    assert.deepStrictEqual(unbacked, [], 'every advertised tool must have an executeTool case');
 
     // Consolidated lean_search: graph source (Kuzu)
     const callKuzu = await server.handleMessage({
@@ -142,6 +151,18 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     });
     assert(callBook && callBook.result && callBook.result.content[0].text.includes("category"), "Book index lookup resolves entries");
 
+    // Direct lean_book_index_lookup with prover filter
+    const callBookFiltered = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 61,
+        method: "tools/call",
+        params: {
+            name: "lean_book_index_lookup",
+            arguments: { term: "inversion", prover: "lean4" },
+        },
+    });
+    assert(callBookFiltered && callBookFiltered.result && callBookFiltered.result.content[0].text.includes("inversion"), "Filtered book index lookup resolves entries");
+
     // Consolidated lean_search: concordance source
     const callConc = await server.handleMessage({
         jsonrpc: "2.0",
@@ -153,6 +174,34 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
         },
     });
     assert(callConc && callConc.result && callConc.result.content[0].text.length > 0, "Cross-ITP concordance resolves entries");
+
+    // Direct lean_cross_itp_concordance tool with canonical mechanisms
+    const callDirectConc = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 71,
+        method: "tools/call",
+        params: {
+            name: "lean_cross_itp_concordance",
+            arguments: { concept: "induction" },
+        },
+    });
+    assert(callDirectConc && callDirectConc.result && callDirectConc.result.content[0].text.includes("CONC-01-CASE-INDUCTION"), "Cross-ITP concordance finds CONC-01");
+    assert(callDirectConc.result.content[0].text.includes("rcases"), "Concordance includes Lean 4 rcases");
+    assert(callDirectConc.result.content[0].text.includes("coq_mathcomp"), "Concordance includes MathComp");
+
+    // Direct lean_cross_itp_concordance with directional translation filter
+    const callDirectedConc = await server.handleMessage({
+        jsonrpc: "2.0",
+        id: 72,
+        method: "tools/call",
+        params: {
+            name: "lean_cross_itp_concordance",
+            arguments: { concept: "reflection", source_prover: "coq_mathcomp", target_prover: "lean4" },
+        },
+    });
+    assert(callDirectedConc && callDirectedConc.result && callDirectedConc.result.content[0].text.includes("CONC-02-BOOLEAN-REFLECTION"), "Directional concordance finds CONC-02");
+    assert(callDirectedConc.result.content[0].text.includes("apply/idP"), "Directional concordance includes source pattern apply/idP");
+    assert(callDirectedConc.result.content[0].text.includes("decide_eq_true_iff"), "Directional concordance includes target pattern decide_eq_true_iff");
 
     // Consolidated lean_metrics: census
     const callCensus = await server.handleMessage({
@@ -278,8 +327,16 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     assert(resolved !== null, "Resolved package for pkg-a file");
     assert.strictEqual(resolved.name, "pkg-a", "Package name matches pkg-a");
 
-    // Test global build lock detection
+    // Test global build lock detection. NOTE: this path is REAL and
+    // shared with live tooling (the concurrent session's builds use the
+    // same file). Save any existing lock, write ours, and restore theirs
+    // only when our own write is still in place - a concurrent writer
+    // always wins the file, never our restore. If a concurrent writer
+    // replaced the lock between our write and the check, the guard still
+    // detected an active build; assert the tolerant contract then.
     const testGlobalLock = "/dev/shm/lean_global_workspace.lock";
+    let priorLock = null;
+    try { priorLock = fs.readFileSync(testGlobalLock, "utf-8"); } catch {}
     const lockInfo = {
         pid: process.pid,
         packageName: "pkg-a",
@@ -290,10 +347,26 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
 
     const status = LakeBuildGuard.checkLock(testWs);
     assert.strictEqual(status.isLocked, true, "Global workspace lock detected");
-    assert.strictEqual(status.source, "global_workspace_lock", "Source is global_workspace_lock");
-    assert(status.detail && status.detail.includes("pkg-a"), "Detail mentions active package");
+    let oursStill = true;
+    try {
+        oursStill = JSON.parse(fs.readFileSync(testGlobalLock, "utf-8")).pid === process.pid;
+    } catch { oursStill = false; }
+    if (oursStill) {
+        assert.strictEqual(status.source, "global_workspace_lock", "Source is global_workspace_lock");
+        assert(status.detail && status.detail.includes("pkg-a"), "Detail mentions active package");
+    } else {
+        // a concurrent writer won the shared path mid-test; the guard's
+        // detection still fired on a live source
+        assert(["global_workspace_lock", "process_table"].includes(status.source),
+            "Concurrent lock race: an active build is still detected");
+    }
 
-    try { fs.unlinkSync(testGlobalLock); } catch {}
+    if (oursStill) {
+        try {
+            if (priorLock !== null) fs.writeFileSync(testGlobalLock, priorLock);
+            else fs.unlinkSync(testGlobalLock);
+        } catch {}
+    }
     fs.rmSync(testWs, { recursive: true, force: true });
     console.log("  - MultiPackageWorkspaceCoordinator: PASS (packages=" + count + ")");
 }
