@@ -49,7 +49,16 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     }
     const ffiReport = LeanSysrootBridge.inspectFFI(repoRoot, "nonexistent_extern");
     assert(ffiReport.includes("Lean 4 C FFI Environment"), "FFI report contains header");
-    console.log("  - LeanSysrootBridge: PASS");
+
+    const resolveReport = LeanSysrootBridge.inspectFFI(repoRoot, "nonexistent_extern", "resolve_symbol");
+    assert(resolveReport.includes("Bidirectional C FFI Resolution"), "FFI resolveReport contains header");
+    assert(resolveReport.includes("Lean -> C External Declarations"), "Contains Lean -> C section");
+    assert(resolveReport.includes("C -> Lean Function Bindings"), "Contains C -> Lean section");
+
+    const headerReport = LeanSysrootBridge.inspectFFI(repoRoot, undefined, "verify_headers");
+    assert(headerReport.includes("C FFI Header & Signature Verification"), "Header verification contains header");
+
+    console.log("  - LeanSysrootBridge (Bidirectional C FFI & Header Verification): PASS");
 }
 
 // 3. Lean4IleanIndex

@@ -1009,6 +1009,19 @@ export class Lean4IleanIndex {
   }
 }
 
+export interface FFISymbolMatch {
+  file: string;
+  line: number;
+  text: string;
+}
+
+export interface FFIBidirectionalReport {
+  symbol: string;
+  leanToC: FFISymbolMatch[];
+  cToLean: FFISymbolMatch[];
+  sysrootMatches: FFISymbolMatch[];
+}
+
 export class LeanSysrootBridge {
   private static cachedPrefix: string | null = null;
 
@@ -1041,7 +1054,180 @@ export class LeanSysrootBridge {
     return flags;
   }
 
-  public static inspectFFI(projectRoot: string, externName?: string): string {
+  public static resolveSymbol(projectRoot: string, symbol: string): FFIBidirectionalReport {
+    const leanToC: FFISymbolMatch[] = [];
+    const cToLean: FFISymbolMatch[] = [];
+    const sysrootMatches: FFISymbolMatch[] = [];
+
+    const scanFiles = (dir: string, depth: number = 0) => {
+      if (!fs.existsSync(dir) || depth > 8) return;
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const e of entries) {
+        if (e.name.startsWith(".") || e.name === "node_modules" || e.name === "fermats-last-theorem") continue;
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          scanFiles(p, depth + 1);
+        } else if (e.isFile()) {
+          const lowerName = e.name.toLowerCase();
+          if (lowerName.endsWith(".lean")) {
+            try {
+              const lines = fs.readFileSync(p, "utf-8").split("\n");
+              for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                if ((line.includes("extern") || line.includes("@[extern")) && line.includes(symbol)) {
+                  leanToC.push({
+                    file: path.relative(projectRoot, p),
+                    line: i + 1,
+                    text: line.trim(),
+                  });
+                }
+              }
+            } catch {}
+          } else if (
+            lowerName.endsWith(".c") ||
+            lowerName.endsWith(".h") ||
+            lowerName.endsWith(".cpp") ||
+            lowerName.endsWith(".hpp")
+          ) {
+            try {
+              const lines = fs.readFileSync(p, "utf-8").split("\n");
+              const symRegex = new RegExp(`\\b${symbol}\\b`);
+              for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                if (symRegex.test(line)) {
+                  cToLean.push({
+                    file: path.relative(projectRoot, p),
+                    line: i + 1,
+                    text: line.trim(),
+                  });
+                }
+              }
+            } catch {}
+          }
+        }
+      }
+    };
+    scanFiles(projectRoot);
+
+    const prefix = this.getPrefix();
+    if (prefix) {
+      const leanInc = path.join(prefix, "include", "lean");
+      if (fs.existsSync(leanInc)) {
+        try {
+          const headers = fs.readdirSync(leanInc);
+          const symRegex = new RegExp(`\\b${symbol}\\b`);
+          for (const h of headers) {
+            if (h.endsWith(".h")) {
+              const hp = path.join(leanInc, h);
+              const lines = fs.readFileSync(hp, "utf-8").split("\n");
+              for (let i = 0; i < lines.length; i++) {
+                if (symRegex.test(lines[i])) {
+                  sysrootMatches.push({
+                    file: path.join("lean", h),
+                    line: i + 1,
+                    text: lines[i].trim(),
+                  });
+                }
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+
+    return { symbol, leanToC, cToLean, sysrootMatches };
+  }
+
+  public static verifyHeaders(projectRoot: string, cHeaderPath?: string): string {
+    const results: string[] = ["=== C FFI Header & Signature Verification ==="];
+    const headersToScan: string[] = [];
+
+    if (cHeaderPath) {
+      const full = path.isAbsolute(cHeaderPath) ? cHeaderPath : path.join(projectRoot, cHeaderPath);
+      if (fs.existsSync(full)) {
+        headersToScan.push(full);
+      } else {
+        return `Error: specified header not found: ${cHeaderPath}`;
+      }
+    } else {
+      const findHeaders = (dir: string, depth: number = 0) => {
+        if (!fs.existsSync(dir) || depth > 6) return;
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const e of entries) {
+          if (e.name.startsWith(".") || e.name === "node_modules" || e.name === "fermats-last-theorem") continue;
+          const p = path.join(dir, e.name);
+          if (e.isDirectory()) findHeaders(p, depth + 1);
+          else if (e.isFile() && (e.name.endsWith(".h") || e.name.endsWith(".hpp"))) {
+            headersToScan.push(p);
+          }
+        }
+      };
+      findHeaders(projectRoot);
+    }
+
+    if (headersToScan.length === 0) {
+      results.push("No C/C++ header files (.h/.hpp) found to verify in workspace.");
+      return results.join("\n");
+    }
+
+    for (const h of headersToScan) {
+      const rel = path.relative(projectRoot, h);
+      const content = fs.readFileSync(h, "utf-8");
+
+      const hasLeanInclude = /#include\s+[<"]lean\/lean\.h[>"]/.test(content);
+      const hasLeanObj = /lean_object\s*\*/.test(content);
+      const usesBoxing = /lean_box\b|lean_unbox\b/.test(content);
+
+      results.push(`\nHeader: ${rel}`);
+      results.push(`  - #include <lean/lean.h>: ${hasLeanInclude ? "PASS (included)" : "MISSING"}`);
+      results.push(`  - lean_object* signatures: ${hasLeanObj ? "Detected" : "None"}`);
+      results.push(`  - Boxing/Unboxing conventions: ${usesBoxing ? "Detected" : "None"}`);
+      results.push(`  - Status: ${hasLeanInclude ? "VALIDATED" : "NEEDS_LEAN_HEADER"}`);
+    }
+
+    return results.join("\n");
+  }
+
+  public static inspectFFI(
+    projectRoot: string,
+    externName?: string,
+    action: string = "inspect_env",
+    cHeaderPath?: string
+  ): string {
+    const act = String(action || "inspect_env").toLowerCase();
+
+    if (act === "resolve_symbol" && externName) {
+      const res = this.resolveSymbol(projectRoot, externName);
+      const lines: string[] = [
+        `=== Bidirectional C FFI Resolution for '${externName}' ===`,
+        `\n[Lean -> C External Declarations] (${res.leanToC.length} matches):`,
+      ];
+      if (res.leanToC.length === 0) {
+        lines.push("  (no Lean @[extern] declarations located)");
+      } else {
+        for (const m of res.leanToC) lines.push(`  ${m.file}:${m.line} -> ${m.text}`);
+      }
+
+      lines.push(`\n[C -> Lean Function Bindings] (${res.cToLean.length} matches):`);
+      if (res.cToLean.length === 0) {
+        lines.push("  (no C/C++ implementations located)");
+      } else {
+        for (const m of res.cToLean) lines.push(`  ${m.file}:${m.line} -> ${m.text}`);
+      }
+
+      lines.push(`\n[Sysroot Header Declarations] (${res.sysrootMatches.length} matches):`);
+      if (res.sysrootMatches.length === 0) {
+        lines.push("  (not found in lean/*.h)");
+      } else {
+        for (const m of res.sysrootMatches) lines.push(`  ${m.file}:${m.line} -> ${m.text}`);
+      }
+      return lines.join("\n");
+    }
+
+    if (act === "verify_headers") {
+      return this.verifyHeaders(projectRoot, cHeaderPath);
+    }
+
     const flags = this.getIncludeFlags();
     const prefix = this.getPrefix();
     const lines: string[] = [
@@ -1057,35 +1243,21 @@ export class LeanSysrootBridge {
     }
 
     if (externName) {
+      const res = this.resolveSymbol(projectRoot, externName);
       lines.push(`\nInspecting symbol: '${externName}'`);
-      const matches: string[] = [];
-      const scanLeanDir = (dir: string) => {
-        if (!fs.existsSync(dir)) return;
-        const entries = fs.readdirSync(dir, { withFileTypes: true });
-        for (const e of entries) {
-          if (e.name.startsWith(".") || e.name === "node_modules" || e.name === "fermats-last-theorem") continue;
-          const p = path.join(dir, e.name);
-          if (e.isDirectory()) {
-            scanLeanDir(p);
-          } else if (e.isFile() && e.name.endsWith(".lean")) {
-            try {
-              const content = fs.readFileSync(p, "utf-8");
-              if (content.includes("extern") && content.includes(externName)) {
-                matches.push(path.relative(projectRoot, p));
-              }
-            } catch {
-              // Ignore unreadable files
-            }
-          }
-        }
-      };
-      scanLeanDir(projectRoot);
-
-      if (matches.length > 0) {
-        lines.push(`Found references in ${matches.length} file(s):`);
-        for (const m of matches) lines.push(`  - ${m}`);
+      if (res.leanToC.length > 0) {
+        lines.push(`Found Lean declarations (${res.leanToC.length}):`);
+        for (const m of res.leanToC) lines.push(`  - ${m.file}:${m.line} -> ${m.text}`);
       } else {
         lines.push(`No @[extern "${externName}"] declarations located in project Lean files.`);
+      }
+      if (res.cToLean.length > 0) {
+        lines.push(`Found C/C++ definitions (${res.cToLean.length}):`);
+        for (const m of res.cToLean) lines.push(`  - ${m.file}:${m.line} -> ${m.text}`);
+      }
+      if (res.sysrootMatches.length > 0) {
+        lines.push(`Found in sysroot headers:`);
+        for (const m of res.sysrootMatches) lines.push(`  - ${m.file}:${m.line}`);
       }
     }
 
@@ -2613,7 +2785,9 @@ export class McpServer {
       case "lean_c_ffi_inspect":
       case "lean_c_ffi": {
         const externName = args.externName || args.symbol;
-        return LeanSysrootBridge.inspectFFI(this.projectRoot, externName);
+        const action = args.action || "inspect_env";
+        const cHeaderPath = args.cHeaderPath;
+        return LeanSysrootBridge.inspectFFI(this.projectRoot, externName, action, cHeaderPath);
       }
       case "lean_run_code": {
         const code = args.code;
