@@ -735,10 +735,28 @@ export class Lean4IleanIndex {
     this.symbolIndex.clear();
     this.moduleImportsMap.clear();
 
-    const easciLean = path.join(this.projectRoot, "docs", "easci", "lean");
+    // Resolve workspace root if projectRoot is inside a subpackage or docs/easci/lean
+    let wsRoot = this.projectRoot;
+    let scanCurr = path.resolve(this.projectRoot);
+    while (scanCurr !== path.dirname(scanCurr)) {
+      if (
+        (fs.existsSync(path.join(scanCurr, "packages")) && fs.existsSync(path.join(scanCurr, "docs", "easci", "lean"))) ||
+        fs.existsSync(path.join(scanCurr, "CLAUDE.md")) ||
+        fs.existsSync(path.join(scanCurr, "AGENTS.md")) ||
+        (fs.existsSync(path.join(scanCurr, "packages")) && !fs.existsSync(path.join(scanCurr, "..", "packages")))
+      ) {
+        wsRoot = scanCurr;
+        break;
+      }
+      scanCurr = path.dirname(scanCurr);
+    }
+
+    const easciLean = path.join(wsRoot, "docs", "easci", "lean");
     const candidateRoots = [
       path.join(this.projectRoot, ".lake", "build", "lib", "lean"),
       path.join(this.projectRoot, ".lake", "build", "ir"),
+      path.join(wsRoot, ".lake", "build", "lib", "lean"),
+      path.join(wsRoot, ".lake", "build", "ir"),
       path.join(easciLean, ".lake", "build", "lib", "lean"),
       path.join(easciLean, ".lake", "build", "ir"),
     ];
@@ -746,11 +764,12 @@ export class Lean4IleanIndex {
     // Discover .lake/packages for Mathlib and external libraries
     const packageDirs = [
       path.join(this.projectRoot, ".lake", "packages"),
+      path.join(wsRoot, ".lake", "packages"),
       path.join(easciLean, ".lake", "packages"),
     ];
 
     // Discover modular Lean packages under packages/*/
-    const packagesDir = path.join(this.projectRoot, "packages");
+    const packagesDir = path.join(wsRoot, "packages");
     if (fs.existsSync(packagesDir)) {
       try {
         const pkgs = fs.readdirSync(packagesDir, { withFileTypes: true });
@@ -1522,17 +1541,32 @@ export class MultiPackageWorkspaceCoordinator {
 
   public discoverPackages(): Map<string, string> {
     this.knownPackages.clear();
+    let wsRoot = this.projectRoot;
+    let scanCurr = path.resolve(this.projectRoot);
+    while (scanCurr !== path.dirname(scanCurr)) {
+      if (
+        (fs.existsSync(path.join(scanCurr, "packages")) && fs.existsSync(path.join(scanCurr, "docs", "easci", "lean"))) ||
+        fs.existsSync(path.join(scanCurr, "CLAUDE.md")) ||
+        fs.existsSync(path.join(scanCurr, "AGENTS.md")) ||
+        (fs.existsSync(path.join(scanCurr, "packages")) && !fs.existsSync(path.join(scanCurr, "..", "packages")))
+      ) {
+        wsRoot = scanCurr;
+        break;
+      }
+      scanCurr = path.dirname(scanCurr);
+    }
+
     if (
       fs.existsSync(path.join(this.projectRoot, "lakefile.lean")) ||
       fs.existsSync(path.join(this.projectRoot, "lakefile.toml"))
     ) {
       this.knownPackages.set(path.basename(this.projectRoot) || "root", this.projectRoot);
     }
-    const easciLean = path.join(this.projectRoot, "docs", "easci", "lean");
+    const easciLean = path.join(wsRoot, "docs", "easci", "lean");
     if (fs.existsSync(path.join(easciLean, "lakefile.lean"))) {
       this.knownPackages.set("docs/easci/lean", easciLean);
     }
-    const packagesDir = path.join(this.projectRoot, "packages");
+    const packagesDir = path.join(wsRoot, "packages");
     if (fs.existsSync(packagesDir)) {
       try {
         const entries = fs.readdirSync(packagesDir, { withFileTypes: true });
