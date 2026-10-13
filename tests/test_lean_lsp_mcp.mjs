@@ -136,6 +136,15 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     assert(callKuzuNeigh && callKuzuNeigh.result && !callKuzuNeigh.result.isError, "Kuzu graph neighborhood succeeds");
     assert(callKuzuNeigh.result.content[0].text.includes("Neighborhood:"), "Kuzu neighborhood returns formatted section");
 
+    // Federated Kuzu configuration and concept indexing assertions
+    const fedConfig = server.kuzuGraph.getFederatedConfig();
+    if (fedConfig) {
+        assert(Array.isArray(fedConfig.databases), "Federation config exposes databases array");
+        assert(fedConfig.databases.some(d => d.scope === "public_prover"), "Exposes public_prover scope");
+    }
+    const concepts = server.kuzuGraph.searchConcepts("induction", 3);
+    assert(Array.isArray(concepts), "searchConcepts returns array");
+
     // Consolidated lean_search: ontology source
     const callOnto = await server.handleMessage({
         jsonrpc: "2.0",
