@@ -1101,7 +1101,10 @@ export class LeanSysrootBridge {
                   });
                 }
               }
-            } catch {}
+            } catch {
+              // best-effort scan: one unreadable source file must not
+              // abort the whole cross-ITP symbol walk.
+            }
           } else if (
             lowerName.endsWith(".c") ||
             lowerName.endsWith(".h") ||
@@ -1121,7 +1124,10 @@ export class LeanSysrootBridge {
                   });
                 }
               }
-            } catch {}
+            } catch {
+              // best-effort scan: same contract - an unreadable C/C++
+              // header is skipped, the walk continues.
+            }
           }
         }
       }
@@ -1150,7 +1156,10 @@ export class LeanSysrootBridge {
               }
             }
           }
-        } catch {}
+        } catch {
+          // sysroot scan is advisory: a hostile or mid-write tree
+          // degrades to fewer matches, never to a thrown tool result.
+        }
       }
     }
 
