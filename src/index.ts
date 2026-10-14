@@ -268,6 +268,20 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
+    name: "lean_axiom_closure",
+    description: "Prints the transitive axiom closure of a declaration (#print axioms): the trust-base check. Non-standard axioms in the closure (sorryAx, Lean.ofReduceBool, custom) flag incomplete or native-trusted proofs. Module imports resolve against the server process's Lean search path - launch the server under `lake env` (or with LEAN_PATH set) for project modules",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "Declaration name to check (bare or fully qualified)" },
+        module: { type: "string", description: "Module to import first (the declaring module or a root re-export module), e.g. EASCI" },
+      },
+      required: ["symbol"],
+    },    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
     name: "lean_book_index_lookup",
     description: "Author-curated book index lookup over the source-materials corpus (the librarian pipeline)",
     inputSchema: {
@@ -2843,6 +2857,37 @@ export class McpServer {
             timeout: 15000,
           });
           return out.trim() || "No output";
+        } catch (err: any) {
+          return `Error: ${err.message || String(err)}\nOutput: ${err.stdout || ""}\nError Output: ${err.stderr || ""}`;
+        }
+      }
+
+      case "lean_axiom_closure": {
+        // Trust-base check: the per-symbol interactive form of the
+        // build-time FinalCheck lockdown (see the lean-axiom-closure
+        // skill for the project-wide compile-time variant).
+        const symbol = args.symbol;
+        const module = args.module;
+        // Injection guard: Lean names are dot-separated identifiers;
+        // reject anything that could smuggle a second stdin statement
+        // (whitespace, semicolons, backticks, backslashes).
+        const nameOk = (s: unknown) =>
+          typeof s === "string" && s.length > 0 && /^[^\s;`\\]+$/.test(s);
+        if (!nameOk(symbol)) {
+          throw new Error("Missing or invalid required argument: 'symbol' (expected a Lean name without whitespace/semicolons)");
+        }
+        if (module !== undefined && !nameOk(module)) {
+          throw new Error("Invalid argument: 'module' (expected a Lean module name without whitespace/semicolons)");
+        }
+        const code = (module ? `import ${module}\n\n` : "") + `#print axioms ${symbol}\n`;
+        try {
+          const out = execSync("lean --stdin", {
+            input: code,
+            encoding: "utf-8",
+            stdio: ["pipe", "pipe", "pipe"],
+            timeout: 15000,
+          });
+          return out.trim() || `${symbol}: no axiom output (is the symbol in scope? pass the declaring module via 'module')`;
         } catch (err: any) {
           return `Error: ${err.message || String(err)}\nOutput: ${err.stdout || ""}\nError Output: ${err.stderr || ""}`;
         }
