@@ -282,6 +282,20 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
   },
   {
+    name: "lean_diagnostics",
+    description: "Live compiler + linter diagnostics for a Lean file via the LSP publishDiagnostics stream: elaboration errors, warnings, and custom-linter findings with line/col positions - the semantic layer surface-syntax scanners cannot see",
+    inputSchema: {
+      type: "object",
+      properties: {
+        filePath: { type: "string", description: "Path to the Lean source file (absolute or project-relative)" },
+        maxWaitMs: { type: "integer", description: "Max time to wait for fresh diagnostics after sync (default 4000)" },
+      },
+      required: ["filePath"],
+    },    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
     name: "lean_book_index_lookup",
     description: "Author-curated book index lookup over the source-materials corpus (the librarian pipeline)",
     inputSchema: {
@@ -1889,6 +1903,7 @@ export interface FileWorkerSession {
   nextId: number;
   pendingRequests: Map<number, { resolve: (val: any) => void; reject: (err: any) => void }>;
   openFiles: Map<string, TrackedFileWorker>;
+  diagnostics: Map<string, { version: number | null; diags: any[]; ts: number }>;
   buffer: Buffer;
   lastActiveMs: number;
 }
@@ -2047,6 +2062,7 @@ export class FileWorkerManager {
       nextId: 1,
       pendingRequests: new Map(),
       openFiles: new Map(),
+      diagnostics: new Map(),
       buffer: Buffer.alloc(0),
       lastActiveMs: Date.now(),
     };
@@ -2075,6 +2091,18 @@ export class FileWorkerManager {
               handler.reject(new Error(parsed.error.message || JSON.stringify(parsed.error)));
             } else {
               handler.resolve(parsed.result);
+            }
+          } else if (parsed.method === "textDocument/publishDiagnostics") {
+            // Deep-audit P8: stash the semantic layer (elaboration +
+            // custom-linter findings) instead of dropping it - the
+            // lean_diagnostics tool serves this stash on demand.
+            const du = String(parsed.params?.uri ?? "");
+            if (du) {
+              session!.diagnostics.set(du, {
+                version: parsed.params?.version ?? null,
+                diags: Array.isArray(parsed.params?.diagnostics) ? parsed.params.diagnostics : [],
+                ts: Date.now(),
+              });
             }
           }
         } catch {
@@ -2398,6 +2426,49 @@ export class FileWorkerManager {
         const goalText = res?.rendered || res?.goal || "";
         return formatGoalAsMarkdown(goalText);
       });
+    } catch (err: any) {
+      return `Lake LSP error: ${err.message || String(err)}`;
+    }
+  }
+
+  /**
+   * Live diagnostics via the LSP publishDiagnostics stream (deep-audit
+   * P8 modularization): the semantic layer - elaboration errors,
+   * warnings, custom-linter findings - that surface-syntax scanners
+   * cannot see. Syncs the file, then waits briefly for fresh
+   * diagnostics to arrive before reporting the stash.
+   */
+  public async getDiagnostics(filePath: string, maxWaitMs: number): Promise<string> {
+    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.projectRoot, filePath);
+    if (!fs.existsSync(absPath)) {
+      return `File not found: ${filePath}`;
+    }
+    const leanRoot = this.findLeanRoot(absPath);
+    try {
+      const session = await this.ensureSession(leanRoot);
+      const startedAt = Date.now();
+      const uri = this.syncDocument(session, absPath);
+      const deadline = startedAt + Math.max(250, maxWaitMs);
+      let entry = session.diagnostics.get(uri);
+      while ((!entry || entry.ts < startedAt) && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 150));
+        entry = session.diagnostics.get(uri);
+      }
+      if (!entry || entry.diags.length === 0) {
+        return `No diagnostics reported for ${filePath} (clean, or analysis has not completed yet).`;
+      }
+      const sevName = (s: number) => (s === 1 ? "error" : s === 2 ? "warning" : s === 3 ? "info" : "hint");
+      const lines = entry.diags.slice(0, 40).map((d: any) => {
+        const r = d.range?.start ?? { line: 0, character: 0 };
+        return `L${(r.line ?? 0) + 1}:${(r.character ?? 0) + 1} ${sevName(d.severity ?? 2)}: ${String(d.message ?? "").split("\n")[0].slice(0, 220)}`;
+      });
+      const counts: Record<string, number> = {};
+      for (const d of entry.diags) {
+        const k = sevName(d.severity ?? 2);
+        counts[k] = (counts[k] ?? 0) + 1;
+      }
+      const summary = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ");
+      return `${filePath}: ${entry.diags.length} diagnostic(s) (${summary})\n` + lines.join("\n");
     } catch (err: any) {
       return `Lake LSP error: ${err.message || String(err)}`;
     }
@@ -2891,6 +2962,15 @@ export class McpServer {
         } catch (err: any) {
           return `Error: ${err.message || String(err)}\nOutput: ${err.stdout || ""}\nError Output: ${err.stderr || ""}`;
         }
+      }
+
+      case "lean_diagnostics": {
+        const filePath = args.filePath || args.path || args.file;
+        if (!filePath) {
+          throw new Error("Missing required argument: 'filePath'");
+        }
+        const maxWaitMs = Number(args.maxWaitMs ?? 4000);
+        return await this.lakeManager.getDiagnostics(filePath, maxWaitMs);
       }
 
       case "lean_loogle_search": {
