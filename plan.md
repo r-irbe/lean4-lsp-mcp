@@ -21,15 +21,19 @@ parent project's investigation garden; this file is the public-facing summary.
 - **W3 (done 2026-10-16)**: editor-integration switch - the parent
   project's Lean rule directory is generated state, synced one-way from
   this package's corpus; this corpus is canonical.
-- **W4 (port landed 2026-10-16)**: `lean-harvest` (bin) - the TS port of
-  the parent project's linter harvest script (parallel worker processes,
+- **W4 (done 2026-10-16)**: `lean-harvest` (bin) - the TS port of the
+  parent project's linter harvest script (parallel worker processes,
   per-file timeout, TSV/JSON output), with a test harness
-  (`tests/test_harvest.mjs`).
+  (`tests/test_harvest.mjs`). Row contract locked by stub-lake tests:
+  line-number column, severity-kept messages, COVERAGE rows for invalid
+  `-D` options (emitted alongside the finding row). Parity with the shell
+  reference audited the same day (three divergences fixed: dropped
+  COVERAGE rows, line-number vs path column, severity kept vs stripped)
+  and verified byte-identical on a 20-file x 3-flag sample; the parent's
+  harvest script delegates here, its awk fallback mirrors the contract.
 
 ## Next
 
-- **W4 (adoption)**: the parent project's census/harvest scripts call
-  `lean-harvest` once parity holds.
 - npm publish (identity TBD; the package is publish-ready).
 
 ## Non-goals

@@ -9,8 +9,18 @@
 //   lean-harvest <out.tsv> "<flag1> <flag2> ..." [files...]
 //   lean-harvest --output <out.tsv> --flags "<flags>" [--jobs 8] [--timeout 300] [files...]
 //
-// Output format:
+// Output format (TSV, one row per finding; --json for structured output):
 //   linter\tfile\tline\tmessage
+//     line    = the diagnostic's source line (0 when the line carries no
+//               position)
+//     message = the diagnostic text with its path:line:col: prefix removed
+//               (the severity word is kept)
+//   linter=COVERAGE rows mark a flag that was unknown for a module (invalid
+//   -D option; the message holds the raw diagnostic line). One diagnostic
+//   line can yield both a linter row and a COVERAGE row.
+// Row semantics match the reference shell implementation
+// (docs/easci/lean/scripts/lean_lint_harvest.sh); tests/test_harvest.mjs
+// locks the format.
 
 import fs from "node:fs";
 import path from "node:path";
@@ -142,34 +152,38 @@ function runLeanOnFile(pkgDir, flag, filePath, timeoutMs) {
   });
 }
 
+function lineNumberOf(line) {
+  // First :N: in the line (mirrors the shell reference's match()/substr).
+  const m = line.match(/:(\d+):/);
+  return m ? m[1] : "0";
+}
+
 function parseFindings(flag, filePath, output) {
   const findings = [];
   const pat = getPatternForLinter(flag);
   const lines = output.split(/\r?\n/);
 
   for (const line of lines) {
-    // Lean error/warning lines typically look like:
-    // EASCI/Foo.lean:12:4: warning: ...
-    const match = line.match(/^([^ ].*?):(\d+)(?::\d+)?: (warning|error|information): (.*)$/);
-    if (match) {
-      const fileReported = match[1];
-      const lineNum = match[2];
-      const severity = match[3];
-      const msg = match[4];
-
+    // Rule 1: diagnostics (warning/error/information), filtered by the
+    // per-linter pattern when one is known (null = keep every diagnostic).
+    if (/^[^ ].*: (warning|error|information):/.test(line)) {
       if (!pat || pat.test(line)) {
         findings.push({
           linter: flag,
           file: filePath,
-          line: lineNum,
-          message: `${severity}: ${msg}`,
+          line: lineNumberOf(line),
+          message: line.replace(/^[^ ]*: /, ""),
         });
       }
-    } else if (line.includes("invalid -D parameter")) {
+    }
+    // Rule 2: coverage marker - the flag's option was unknown for this
+    // module, so the linter run did not cover it. Fires independently of
+    // rule 1 (both rows can be emitted for the same line).
+    if (line.includes("invalid -D parameter")) {
       findings.push({
         linter: "COVERAGE",
         file: filePath,
-        line: "0",
+        line: lineNumberOf(line),
         message: line,
       });
     }
