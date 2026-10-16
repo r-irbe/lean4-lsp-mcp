@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-exact-target-dup
+language: Lean
+severity: warning
+message: "Redundant exact target tactic detected: consecutive duplicate exact invocations targeting identical identifier expressions"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive exact calls targeting
+  identical identifiers create redundant proof term construction passes, cache pollution,
+  and bloated proof AST traces. Use a single exact declaration.
+rule:
+  regex: "(?m)^\\s*exact\\s+([a-zA-Z0-9_.]+)\\s*$\\n\\s*exact\\s+\\1\\s*$"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

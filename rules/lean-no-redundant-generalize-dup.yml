@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-generalize-dup
+language: Lean
+severity: warning
+message: "Redundant generalize tactic detected: consecutive duplicate generalize invocations"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive generalize calls create
+  redundant hypothesis generalization churn, context bloat, and fragile goal states.
+  Combine generalizations or advance intermediate sub-goals directly.
+rule:
+  regex: "(?m)^\\s*generalize\\b.*\\n\\s*generalize\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

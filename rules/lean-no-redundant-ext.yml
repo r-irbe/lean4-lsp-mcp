@@ -1,0 +1,19 @@
+id: rule-lean-no-redundant-ext
+language: Lean
+severity: warning
+message: "Redundant ext tactic detected: consecutive ext calls"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive ext calls create redundant
+  extensionality reductions and clutter proof scripts. If ext applies extensionality lemmas
+  to split a function, set, or subtype goal, repeating ext consecutively without intermediate
+  transformations is redundant.
+rule:
+  regex: "(?m)^\\s*ext\\b.*\\n\\s*ext\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

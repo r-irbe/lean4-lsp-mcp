@@ -1,0 +1,19 @@
+id: rule-lean-no-redundant-generalize-target-dup
+language: Lean
+severity: warning
+message: "Redundant generalize target tactic detected: consecutive duplicate generalize invocations on identical expression or identifier"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive generalize calls targeting the identical
+  expression or variable identifier introduce redundant equality introduction cycles, hypothesis
+  context pollution, and bloated proof AST traces. Generalize the target term once and reuse
+  the resulting generalization equality in downstream tactic steps.
+rule:
+  regex: "(?m)^\\s*generalize\\s+([a-zA-Z0-9_.]+)\\s*$\\n\\s*generalize\\s+\\1\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

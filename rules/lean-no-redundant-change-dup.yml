@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-change-dup
+language: Lean
+severity: warning
+message: "Redundant change tactic detected: consecutive duplicate change invocations"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive change calls create
+  redundant definitional rewrite churn, type horizon recalculation overhead, and bloated proof AST traces.
+  Combine type horizon changes or advance intermediate sub-goals directly.
+rule:
+  regex: "(?m)^\\s*change\\b.*\\n\\s*change\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

@@ -1,0 +1,28 @@
+id: rule-lean-p2m-card-conformance
+language: Lean
+severity: warning
+message: >-
+  Interface card theorem should delegate directly via p2m_exact_reverting
+  or exact rather than inlining complex tactic scripts
+note: >-
+  In the P2M (Paper-to-Mathlib) architecture, public theorem interface
+  cards in `Theorems/` or `Interface/` must remain lightweight. They
+  should delegate proofs directly via
+  `p2m_exact_reverting @_root_...solution` or `exact ...` to an isolated
+  solution module in `Sol/` or `Core/`. Inlining multi-line tactic
+  scripts in interface cards bloats public olean metadata and triggers
+  cascading cache invalidation downstream.
+rule:
+  regex: "(?m)^\\s*theorem\\s+[A-Za-z0-9_.]+[\\s\\S]*?:=\\s*by\\s*\\n\
+          \\s*(?:intro|induction|cases|rcases|obtain|\
+            refine|apply|have|rw|simp|linarith|omega)\
+            [\\s\\S]*?\\n\\s*(?:intro|induction|cases|rcases|obtain|\
+              refine|apply|have|rw|simp|linarith|omega)"
+metadata:
+  category: maintainability
+  weight: 80
+tags:
+  - lean
+  - p2m
+  - architecture
+  - performance

@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-simp-dup
+language: Lean
+severity: warning
+message: "Redundant simp tactic detected: consecutive duplicate simp calls"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive simp calls without intermediate
+  hypothesis rewriting or goal transformation induce redundant simplifier passes, duplicate
+  congruence lemma traversals, and unnecessary proof term bloat. Combine lemmas or eliminate the redundant step.
+rule:
+  regex: "(?m)^\s*simp\b.*\n\s*simp\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 75
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

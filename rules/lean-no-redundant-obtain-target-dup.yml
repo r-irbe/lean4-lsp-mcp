@@ -1,0 +1,19 @@
+id: rule-lean-no-redundant-obtain-target-dup
+language: Lean
+severity: warning
+message: "Redundant obtain target tactic detected: consecutive duplicate obtain invocations on identical term or pattern"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive obtain calls targeting the identical
+  term or binder pattern introduce redundant existential destructing cycles, hypothesis context
+  pollution, and bloated proof AST traces. Obtain the witness components once and reuse
+  the resulting introduced hypotheses in subsequent tactic blocks.
+rule:
+  regex: "(?m)^\\s*obtain\\s+([^:\\n]+):.*$\\n\\s*obtain\\s+\\1:"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-revert-dup
+language: Lean
+severity: warning
+message: "Redundant revert tactic detected: consecutive duplicate revert invocations"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive revert calls create dead binder
+  re-generalization cycles, elaborator context churn, and bloated proof AST traces.
+  Combine variable reversions into a single revert invocation or advance the active goal.
+rule:
+  regex: "(?m)^\\s*revert\\b.*\\n\\s*revert\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

@@ -1,0 +1,23 @@
+id: rule-lean-no-uncertified-axiom
+language: Lean
+severity: error
+message: "Uncertified axiom declaration detected: proofs must be constructively discharged (0-axiom invariant)"
+note: |
+  Formalized Lean 4 modules across `docs/easci/lean/` and `packages/` adhere to a
+  strict zero uncertified axioms invariant. Adding ad-hoc `axiom` declarations
+  bypasses formal verification, risks introducing inconsistent hypotheses, and
+  compromises the entire formal chain of trust.
+  - All theorems and lemmas must be proven constructively with 0 sorry and 0 ad-hoc axioms.
+  - Standard Mathlib axioms (propext, Classical.choice, Quot.sound) are handled by the Lean kernel.
+  - Any domain axiom must be vetted through the certified axiom registry.
+rule:
+  regex: "^[ \\t]*axiom[ \\t]+([A-Za-z0-9_']+)"
+fix: ""
+metadata:
+  category: soundness
+  weight: 100
+tags:
+  - lean
+  - sound-verification
+  - zero-axiom
+  - proof-integrity

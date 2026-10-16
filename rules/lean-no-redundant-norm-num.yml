@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-norm-num
+language: Lean
+severity: warning
+message: "Redundant norm_num tactic detected: consecutive norm_num calls"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive norm_num calls create dead numerical
+  normalization cycles. If norm_num discharges or normalizes the numerical expressions in the state,
+  repeating norm_num consecutively without state transformation is completely redundant.
+rule:
+  regex: "(?m)^\\s*norm_num\\b.*\\n\\s*norm_num\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

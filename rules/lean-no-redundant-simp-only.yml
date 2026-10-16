@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-simp-only
+language: Lean
+severity: warning
+message: "Redundant simp only tactic detected: consecutive simp only calls"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive simp only calls create dead simplifier
+  cycles and bloat elaboration traces. If simp only discharges or simplifies the expressions in the state,
+  repeating simp only consecutively without state transformation is redundant and risks looping.
+rule:
+  regex: "(?m)^\\s*simp only\\b.*\\n\\s*simp only\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

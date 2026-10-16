@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-assumption-dup
+language: Lean
+severity: warning
+message: "Redundant assumption tactic detected: consecutive duplicate assumption invocations"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive assumption calls create dead hypothesis
+  search cycles, elaborator churn, and bloated proof AST traces.
+  Remove superfluous duplicate assumption invocations or advance the proof goal.
+rule:
+  regex: "(?m)^\\s*assumption\\b.*\\n\\s*assumption\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

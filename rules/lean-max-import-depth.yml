@@ -1,0 +1,18 @@
+id: rule-lean-max-import-depth
+language: Lean
+severity: warning
+message: "Deep or internal module import detected: excessive import path nesting violates encapsulation"
+note: |
+  Lean 4 compilation performance and modular DAG boundaries require shallow, decoupled module structures.
+  Imports with excessive depth (5 or more dot-separated path components) or direct imports into internal
+  submodules bypass public barrel interfaces and degrade build latency.
+rule:
+  regex: "\\bimport\\s+[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+){4,}\\b|\\bimport\\s+.*\\b(?:Internal|Private)\\b.*"
+fix: ""
+metadata:
+  category: architecture
+  weight: 70
+tags:
+  - lean
+  - modularity
+  - import-hygiene

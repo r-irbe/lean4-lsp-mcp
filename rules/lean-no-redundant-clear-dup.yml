@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-clear-dup
+language: Lean
+severity: warning
+message: "Redundant clear tactic detected: consecutive duplicate clear invocations"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive clear calls create dead hypothesis
+  search cycles, elaborator context churn, and bloated proof AST traces.
+  Combine hypothesis removals into a single clear invocation or advance the active goal.
+rule:
+  regex: "(?m)^\\s*clear\\b.*\\n\\s*clear\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

@@ -1,0 +1,76 @@
+id: rule-lean-tier-bidirectional-no-cross-contamination
+language: Lean
+severity: error
+message: "Bidirectional cross-contamination between parallel peer packages violates tier isolation"
+note: |
+  The 4-tier DAG architecture enforces strict horizontal (sideways) isolation:
+    - Tier 1 parallel packages:
+        * StochasticCCV (including TensorNetwork)
+        * CuspCatastrophe
+        * PhasePortrait
+      MUST NOT import each other in any direction.
+    - Tier 3 parallel packages:
+        * AgenticSafety
+        * ProvenanceChain
+      MUST NOT import each other in any direction.
+  Peer packages must communicate solely via shared abstractions in Tier 0 (Foundations)
+  or Tier 2 (ReinforcementLearning). Direct cross-imports create circular dependencies,
+  break standalone package lake builds, and violate modular decoupling.
+rule:
+  any:
+    # -------------------------------------------------------------------------
+    # Tier 1 Horizontal Cross-Contamination
+    # -------------------------------------------------------------------------
+    # 1. StochasticCCV or TensorNetwork importing CuspCatastrophe
+    - all:
+        - regex: "(?m)^\\s*(?:--\\s*(?:\\[?(?:tier|Tier)\\s*1\\]?|module\\s+(?:StochasticCCV|TensorNetwork)|package\\s+stochastic[-_]ccv)|namespace\\s+(?:StochasticCCV|TensorNetwork)(?:\\.[A-Za-z0-9_]+)*\\b)"
+        - regex: "(?m)^\\s*import\\s+(?:[A-Za-z0-9_.]+\\s+)*(?:CuspCatastrophe|EASCI\\.CuspCatastrophe)(?:\\.[A-Za-z0-9_]+)*\\b"
+
+    # 2. StochasticCCV or TensorNetwork importing PhasePortrait
+    - all:
+        - regex: "(?m)^\\s*(?:--\\s*(?:\\[?(?:tier|Tier)\\s*1\\]?|module\\s+(?:StochasticCCV|TensorNetwork)|package\\s+stochastic[-_]ccv)|namespace\\s+(?:StochasticCCV|TensorNetwork)(?:\\.[A-Za-z0-9_]+)*\\b)"
+        - regex: "(?m)^\\s*import\\s+(?:[A-Za-z0-9_.]+\\s+)*(?:PhasePortrait|EASCI\\.PhasePortrait)(?:\\.[A-Za-z0-9_]+)*\\b"
+
+    # 3. CuspCatastrophe importing StochasticCCV or TensorNetwork
+    - all:
+        - regex: "(?m)^\\s*(?:--\\s*(?:\\[?(?:tier|Tier)\\s*1\\]?|module\\s+CuspCatastrophe|package\\s+cusp[-_]catastrophe)|namespace\\s+CuspCatastrophe(?:\\.[A-Za-z0-9_]+)*\\b)"
+        - regex: "(?m)^\\s*import\\s+(?:[A-Za-z0-9_.]+\\s+)*(?:StochasticCCV|TensorNetwork|EASCI\\.StochasticCCV|EASCI\\.TensorNetwork)(?:\\.[A-Za-z0-9_]+)*\\b"
+
+    # 4. CuspCatastrophe importing PhasePortrait
+    - all:
+        - regex: "(?m)^\\s*(?:--\\s*(?:\\[?(?:tier|Tier)\\s*1\\]?|module\\s+CuspCatastrophe|package\\s+cusp[-_]catastrophe)|namespace\\s+CuspCatastrophe(?:\\.[A-Za-z0-9_]+)*\\b)"
+        - regex: "(?m)^\\s*import\\s+(?:[A-Za-z0-9_.]+\\s+)*(?:PhasePortrait|EASCI\\.PhasePortrait)(?:\\.[A-Za-z0-9_]+)*\\b"
+
+    # 5. PhasePortrait importing StochasticCCV or TensorNetwork
+    - all:
+        - regex: "(?m)^\\s*(?:--\\s*(?:\\[?(?:tier|Tier)\\s*1\\]?|module\\s+PhasePortrait|package\\s+phase[-_]portrait)|namespace\\s+PhasePortrait(?:\\.[A-Za-z0-9_]+)*\\b)"
+        - regex: "(?m)^\\s*import\\s+(?:[A-Za-z0-9_.]+\\s+)*(?:StochasticCCV|TensorNetwork|EASCI\\.StochasticCCV|EASCI\\.TensorNetwork)(?:\\.[A-Za-z0-9_]+)*\\b"
+
+    # 6. PhasePortrait importing CuspCatastrophe
+    - all:
+        - regex: "(?m)^\\s*(?:--\\s*(?:\\[?(?:tier|Tier)\\s*1\\]?|module\\s+PhasePortrait|package\\s+phase[-_]portrait)|namespace\\s+PhasePortrait(?:\\.[A-Za-z0-9_]+)*\\b)"
+        - regex: "(?m)^\\s*import\\s+(?:[A-Za-z0-9_.]+\\s+)*(?:CuspCatastrophe|EASCI\\.CuspCatastrophe)(?:\\.[A-Za-z0-9_]+)*\\b"
+
+    # -------------------------------------------------------------------------
+    # Tier 3 Horizontal Cross-Contamination
+    # -------------------------------------------------------------------------
+    # 7. AgenticSafety importing ProvenanceChain
+    - all:
+        - regex: "(?m)^\\s*(?:--\\s*(?:\\[?(?:tier|Tier)\\s*3\\]?|module\\s+AgenticSafety|package\\s+agentic[-_]safety)|namespace\\s+AgenticSafety(?:\\.[A-Za-z0-9_]+)*\\b)"
+        - regex: "(?m)^\\s*import\\s+(?:[A-Za-z0-9_.]+\\s+)*(?:ProvenanceChain|EASCI\\.ProvenanceChain)(?:\\.[A-Za-z0-9_]+)*\\b"
+
+    # 8. ProvenanceChain importing AgenticSafety
+    - all:
+        - regex: "(?m)^\\s*(?:--\\s*(?:\\[?(?:tier|Tier)\\s*3\\]?|module\\s+ProvenanceChain|package\\s+provenance[-_]chain)|namespace\\s+ProvenanceChain(?:\\.[A-Za-z0-9_]+)*\\b)"
+        - regex: "(?m)^\\s*import\\s+(?:[A-Za-z0-9_.]+\\s+)*(?:AgenticSafety|EASCI\\.AgenticSafety)(?:\\.[A-Za-z0-9_]+)*\\b"
+fix: ""
+metadata:
+  category: correctness
+  weight: 98
+tags:
+  - lean
+  - dag-invariants
+  - architecture
+  - tier-integrity
+  - bidirectional-isolation
+  - horizontal-isolation

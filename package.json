@@ -7,7 +7,8 @@
   "types": "dist/index.d.ts",
   "bin": {
     "lean-lsp-mcp": "./bin/lean-lsp-mcp.js",
-    "lean4-lsp-mcp": "./bin/lean-lsp-mcp.js"
+    "lean4-lsp-mcp": "./bin/lean-lsp-mcp.js",
+    "lean-rules": "./bin/lean-rules.js"
   },
   "scripts": {
     "build": "tsc",
@@ -85,13 +86,14 @@
     ]
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.6.0"
+    "@modelcontextprotocol/sdk": "^1.6.0",
+    "js-yaml": "^4.3.2"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "typescript": "^5.3.3"
   },
-  "test": "node --experimental-strip-types tests/test_lean_lsp_mcp.mjs && node --experimental-strip-types tests/test_file_worker_manager.mjs && node --experimental-strip-types tests/test_tranche1_modules.mjs",
+  "test": "node --experimental-strip-types tests/test_lean_lsp_mcp.mjs && node --experimental-strip-types tests/test_file_worker_manager.mjs && node --experimental-strip-types tests/test_tranche1_modules.mjs && node tests/test_rules_fixtures.mjs",
   "exports": {
     ".": "./dist/index.js",
     "./core": "./dist/bounded_cache.js",

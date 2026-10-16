@@ -1,0 +1,18 @@
+id: rule-lean-no-unbounded-heartbeats
+language: Lean
+severity: warning
+message: "Unbounded or excessive heartbeat budget detected: maintain bounded elaboration limits"
+note: |
+  Setting `maxHeartbeats 0` disables deterministic timeout guards and can cause infinite loops
+  or runaway CPU exhaustion during CI builds and LSP broker sessions. Keep heartbeat limits
+  bounded (recommended <= 500000).
+rule:
+  regex: "set_option\\s+maxHeartbeats\\s+(?:0|\\d{7,})"
+fix: ""
+metadata:
+  category: performance
+  weight: 75
+tags:
+  - lean
+  - bounded-execution
+  - lsp-safety

@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-ring-nf
+language: Lean
+severity: warning
+message: "Redundant ring_nf tactic detected: consecutive ring_nf calls"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive ring_nf calls create dead ring normal
+  form reduction cycles and bloat proof traces. If ring_nf normalizes polynomial expressions in the goal,
+  repeating ring_nf consecutively without intervening transformations is redundant.
+rule:
+  regex: "(?m)^\\s*ring_nf\\b.*\\n\\s*ring_nf\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

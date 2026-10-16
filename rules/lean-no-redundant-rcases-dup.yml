@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-rcases-dup
+language: Lean
+severity: warning
+message: "Redundant rcases tactic detected: consecutive duplicate rcases calls"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive rcases calls without resolving
+  intermediate patterns introduce redundant pattern destructuring churn, bloated proof state,
+  and unconstrained AST traces. Combine recursive pattern destructuring into a single structured pattern.
+rule:
+  regex: "(?m)^\\s*rcases\\b.*\\n\\s*rcases\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

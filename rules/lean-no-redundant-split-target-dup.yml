@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-split-target-dup
+language: Lean
+severity: warning
+message: "Redundant split target tactic detected: consecutive duplicate split invocations targeting identical goal structure"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive split calls targeting
+  identical goal structures create redundant case-splitting branches, goal tree
+  fragmentation, and bloated proof AST traces. Split once and address resulting subgoals.
+rule:
+  regex: "(?m)^\\s*split\\s*$\\n\\s*split\\s*$"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

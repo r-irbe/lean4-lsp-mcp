@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-have-target-dup
+language: Lean
+severity: warning
+message: "Redundant have target tactic detected: consecutive duplicate have invocations targeting identical proposition expressions"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive have calls targeting
+  identical proposition expressions create redundant elaboration passes, cache pollution,
+  and bloated proof AST traces. Formulate the intermediate hypothesis once.
+rule:
+  regex: "(?m)^\\s*have\\s+([a-zA-Z0-9_]+)\\s*:\\s*([a-zA-Z0-9_. :]+)\\s*:=\\s*$\\n\\s*have\\s+\\1\\s*:\\s*\\2\\s*:=\\s*$"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

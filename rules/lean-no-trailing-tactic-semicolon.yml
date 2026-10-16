@@ -1,0 +1,18 @@
+id: rule-lean-no-trailing-tactic-semicolon
+language: Lean
+severity: warning
+message: "Trailing tactic semicolon detected: redundant tactical semicolon introduces unconstrained elaborator sub-goals"
+note: |
+  Lean 4 tactic blocks evaluate semicolons as tactical sequencing operators that apply following tactics
+  to all generated subgoals. Trailing semicolons before newlines or comments trigger empty tactic evaluation,
+  bloating the proof state and causing fragile elaborator failures. Remove trailing semicolons in tactic scripts.
+rule:
+  regex: "(?m)^\\s*(?:by|intro|exact|apply|rw|simp|linarith|ring|constructor|cases|rcases|obtain|have|let)\\b.*?;\\s*(?:--.*)?$"
+fix: ""
+metadata:
+  category: style
+  weight: 60
+tags:
+  - lean
+  - tactic-hygiene
+  - ast-guard

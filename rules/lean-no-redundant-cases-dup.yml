@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-cases-dup
+language: Lean
+severity: warning
+message: "Redundant cases tactic detected: consecutive duplicate cases calls"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive cases calls without intermediate
+  goal specialization induce redundant case splits, elaborator context churn, and bloated
+  proof trees. Combine inductive destructuring or eliminate redundant case branching.
+rule:
+  regex: "(?m)^\\s*cases\\b.*\\n\\s*cases\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 75
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

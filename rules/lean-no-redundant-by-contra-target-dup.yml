@@ -1,0 +1,19 @@
+id: rule-lean-no-redundant-by-contra-target-dup
+language: Lean
+severity: warning
+message: "Redundant by_contra target tactic detected: consecutive duplicate by_contra invocations targeting identical hypothesis"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive by_contra or by_contra! blocks
+  targeting identical hypothesis identifiers introduce redundant proof state inversion passes,
+  diagnostic noise, and bloated proof traces. Use a single by_contra hypothesis introduction
+  or deterministic contradiction tactics.
+rule:
+  regex: "(?m)^\\s*by_contra!?\\s+(.+)$\\n\\s*by_contra!?\\s+\\1$"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

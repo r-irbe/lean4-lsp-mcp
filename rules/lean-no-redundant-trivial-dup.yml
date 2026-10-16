@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-trivial-dup
+language: Lean
+severity: warning
+message: "Redundant trivial tactic detected: consecutive duplicate trivial invocations"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive trivial calls create dead decision
+  reduction cycles, elaborator churn, and bloated proof AST traces.
+  Remove superfluous duplicate trivial invocations or advance the proof goal.
+rule:
+  regex: "(?m)^\\s*trivial\\b.*\\n\\s*trivial\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

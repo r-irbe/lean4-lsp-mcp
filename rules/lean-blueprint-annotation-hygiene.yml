@@ -1,0 +1,19 @@
+id: rule-lean-blueprint-annotation-hygiene
+language: Lean
+severity: warning
+message: "Unannotated landmark theorem: top-level public theorem missing mathematical docstring or blueprint alignment"
+note: |
+  Top-level landmark theorems should be accompanied by a descriptive mathematical docstring
+  and blueprint metadata so they can be parsed into interactive dependency graphs and pedagogical
+  expositions without manual reverse-engineering.
+rule:
+  regex: "(?m)^theorem\\s+[A-Za-z0-9_]+\\s*(?:\\([^)]*\\)|\\{[^}]*\\})*\\s*:\\s*(?:[^\\n]*\\n){1,3}\\s*:=\\s*by"
+fix: ""
+metadata:
+  category: documentation-hygiene
+  weight: 60
+tags:
+  - lean
+  - blueprint
+  - pedagogy
+  - documentation

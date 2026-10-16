@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-rewrite
+language: Lean
+severity: warning
+message: "Redundant rewrite tactic detected: consecutive duplicate rw or rewrite calls"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive rw or rewrite calls on identical
+  terms introduce dead elaborator cycles, unnecessary goal churn, and bloated proof traces.
+  Combine rewrites into a single structured list rw [h1, h2] or simplify using simp only.
+rule:
+  regex: "(?m)^\\s*(?:rw|rewrite)\\s+\\[?([a-zA-Z0-9_.]+)\\]?\\s*\\n\\s*(?:rw|rewrite)\\s+\\[?\\1\\]?"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

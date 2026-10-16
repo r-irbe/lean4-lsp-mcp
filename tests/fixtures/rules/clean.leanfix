@@ -1,0 +1,7 @@
+import Mathlib.Tactic
+
+set_option maxHeartbeats 400000
+
+theorem ok_add_zero (n : Nat) : n + 0 = n := by
+  subst n
+  rfl

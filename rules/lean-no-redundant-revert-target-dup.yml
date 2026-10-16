@@ -1,0 +1,19 @@
+id: rule-lean-no-redundant-revert-target-dup
+language: Lean
+severity: warning
+message: "Redundant revert target tactic detected: consecutive duplicate revert invocations on identical hypothesis"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive revert calls targeting the identical
+  hypothesis identifier introduce dead binder reintroduction cycles, elaborator context churn,
+  and bloated proof AST traces. Revert the desired hypothesis once or chain identifiers into
+  a single revert invocation.
+rule:
+  regex: "(?m)^\\s*revert\\s+([a-zA-Z0-9_.]+)\\s*$\\n\\s*revert\\s+\\1\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

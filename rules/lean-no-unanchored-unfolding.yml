@@ -1,0 +1,19 @@
+id: rule-lean-no-unanchored-unfolding
+language: Lean
+severity: warning
+message: "Unanchored definitional unfolding detected: consecutive dsimp and bare simp without target horizon"
+note: |
+  Unanchored dsimp followed immediately by bare simp on complex function types risks uncontrolled
+  transparency unfolding loops and typeclass search stalls. Prefer explicit definitional target
+  anchoring using change or show as demonstrated in NavierStokesAndEuler (Template_DefinitionalChangeShow).
+rule:
+  regex: "(?m)^\\s*dsimp\\s*\\n\\s*simp\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard
+  - definitional-anchor

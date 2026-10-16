@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-funext
+language: Lean
+severity: warning
+message: "Redundant funext tactic detected: consecutive duplicate funext calls"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive funext calls on identical
+  variables introduce dead elaborator cycles, unnecessary goal churn, and bloated proof traces.
+  Combine extensionality introductions into a single structured ext call or chained funext x y.
+rule:
+  regex: "(?m)^\\s*funext\\s+([a-zA-Z0-9_]+)\\s*\\n\\s*funext\\s+\\1\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

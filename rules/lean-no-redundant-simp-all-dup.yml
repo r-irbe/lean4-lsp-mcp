@@ -1,0 +1,19 @@
+id: rule-lean-no-redundant-simp-all-dup
+language: Lean
+severity: warning
+message: "Redundant simp_all tactic detected: consecutive duplicate simp_all calls"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive simp_all calls create dead
+  simplifier cycles, context pollution, and runaway elaboration traces. If simp_all
+  simplifies the ambient hypotheses and goal, repeating it immediately without intermediate
+  transformations is redundant and risks stalling the compiler.
+rule:
+  regex: "(?m)^\s*simp_all\b.*\n\s*simp_all\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 75
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

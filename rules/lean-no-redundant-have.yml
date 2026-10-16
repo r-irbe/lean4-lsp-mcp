@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-have
+language: Lean
+severity: warning
+message: "Redundant anonymous have detected: consecutive anonymous hypotheses shadow proof state context"
+note: |
+  Lean 4 tactic blocks that introduce consecutive anonymous `have :` assertions shadow prior anonymous hypotheses
+  in the local context, creating unreachable or redundant terms that increase elaborator memory pressure.
+  Name hypotheses explicitly (`have h : ...`) or consume intermediate facts immediately.
+rule:
+  regex: "(?m)^\\s*have\\s*:\\s*[^=\\n]+:=[^\\n]+\\n\\s*have\\s*:\\s*"
+fix: ""
+metadata:
+  category: style
+  weight: 60
+tags:
+  - lean
+  - tactic-hygiene
+  - ast-guard

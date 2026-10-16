@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-try-target-dup
+language: Lean
+severity: warning
+message: "Redundant try target tactic detected: consecutive duplicate try invocations targeting identical block or tactic"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive try blocks targeting the identical
+  tactic or subterm introduce redundant speculative elaboration passes, diagnostic noise,
+  and bloated proof traces. Use a single try wrapper or deterministic fallback combinators.
+rule:
+  regex: "(?m)^\\s*try\\s+(.+)$\\n\\s*try\\s+\\1$"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-ring
+language: Lean
+severity: warning
+message: "Redundant ring tactic detected: consecutive ring calls"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive ring calls create dead tactic cycles
+  and redundant ring normalizer passes. If ring succeeds, subsequent ring calls are no-ops;
+  if ring fails, repeating it without modifying hypotheses will also fail.
+rule:
+  regex: "(?m)^\\s*ring\\b.*\\n\\s*ring\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-dsimp-only-dup
+language: Lean
+severity: warning
+message: "Redundant dsimp only tactic detected: consecutive duplicate dsimp only calls"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive dsimp only calls without intermediate
+  goal modification introduce redundant definitional simplifier engine passes, cache invalidation, and slow elaborator
+  traversals. Combine definitional equations into a single dsimp only [...] call or eliminate the redundant step.
+rule:
+  regex: "(?m)^\\s*dsimp only\\b.*\\n\\s*dsimp only\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 75
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

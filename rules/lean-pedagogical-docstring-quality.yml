@@ -1,0 +1,19 @@
+id: rule-lean-pedagogical-docstring-quality
+language: Lean
+severity: warning
+message: "Vacuous docstring detected: docstring merely restates declaration name without mathematical explanation"
+note: |
+  Docstrings in monumental formalizations should explain the mathematical intuition,
+  the role of the theorem in the broader argument, or define key quantities.
+  Avoid tautological descriptions like 'Proves foo' or 'The foo theorem'.
+rule:
+  regex: "(?i)/-+\\s*(?:The\\s+)?([A-Za-z0-9_]+)\\s+(?:proves|states|defines|is)\\s+\\1\\s*-+/"
+fix: ""
+metadata:
+  category: pedagogical-quality
+  weight: 65
+tags:
+  - lean
+  - pedagogy
+  - docstring-quality
+  - learning-materials

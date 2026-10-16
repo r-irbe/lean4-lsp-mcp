@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-show-target-dup
+language: Lean
+severity: warning
+message: "Redundant show target tactic detected: consecutive duplicate show invocations targeting identical goal types"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive show calls targeting
+  identical goal type expressions create redundant goal restatement churn, type horizon recalculation overhead, and bloated proof AST traces.
+  State the intended proof target once or advance intermediate sub-goals directly.
+rule:
+  regex: "(?m)^\s*show\s+([a-zA-Z0-9_. :]+)\s*$\n\s*show\s+\1\s*$"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

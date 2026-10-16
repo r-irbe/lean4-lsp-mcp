@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-unfold-target-dup
+language: Lean
+severity: warning
+message: "Redundant unfold target tactic detected: consecutive duplicate unfold invocations targeting identical identifier expressions"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive unfold calls targeting
+  identical identifiers create redundant delta-reduction elaboration passes, cache pollution,
+  and bloated proof AST traces. Use a single unfold declaration.
+rule:
+  regex: "(?m)^\\s*unfold\\s+([a-zA-Z0-9_.]+)\\s*$\\n\\s*unfold\\s+\\1\\s*$"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

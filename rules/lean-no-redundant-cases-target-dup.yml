@@ -1,0 +1,19 @@
+id: rule-lean-no-redundant-cases-target-dup
+language: Lean
+severity: warning
+message: "Redundant cases target tactic detected: consecutive duplicate cases invocations on identical term or hypothesis"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive cases calls targeting the identical
+  term or hypothesis identifier introduce redundant case splits, hypothesis context churn,
+  and bloated proof AST traces. Perform the case analysis once and eliminate the subgoals
+  within the respective branching tactic blocks.
+rule:
+  regex: "(?m)^\\s*cases\\s+([^:\\n]+?)(?:\\s+with.*)?$\\n\\s*cases\\s+\\1(?:\\s+with.*)?$"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

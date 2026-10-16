@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-dsimp-only
+language: Lean
+severity: warning
+message: "Redundant dsimp only tactic detected: consecutive duplicate dsimp only invocations"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive dsimp only calls create
+  redundant definitional simplifier cycles, type horizon recalculation overhead, and bloated proof AST traces.
+  Combine the required simp lemmas into a single dsimp only invocation or advance the goal directly.
+rule:
+  regex: "(?m)^\\s*dsimp only\\b.*\\n\\s*dsimp only\\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

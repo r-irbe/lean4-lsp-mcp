@@ -1,0 +1,19 @@
+id: rule-lean-no-raw-float
+language: Lean
+severity: error
+message: "Raw hardware Float detected: use ScaledInt (S=100) or exact Real abstractions"
+note: |
+  Subpackages across `packages/` mandate discrete integer-scaled arithmetic
+  (standard scale factor S=100) to ensure exact reproducible dynamics across platforms.
+  Direct usage of IEEE 754 hardware floats (`Float`, `Float32`, `Float64`)
+  introduces non-associative roundoff and violates formal proof decidability.
+rule:
+  regex: "\\b(?:Float|Float32|Float64)\\b"
+fix: ""
+metadata:
+  category: robustness
+  weight: 90
+tags:
+  - lean
+  - scaled-int
+  - numerical-reproducibility

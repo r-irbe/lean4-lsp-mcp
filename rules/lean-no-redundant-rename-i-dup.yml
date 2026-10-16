@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-rename-i-dup
+language: Lean
+severity: warning
+message: "Redundant rename_i tactic detected: consecutive duplicate rename_i calls"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive rename_i calls without intermediate
+  goal modification induce redundant inaccessible hypothesis renaming and context churn.
+  Combine hypothesis renaming into a single rename_i invocation or use descriptive intro binders.
+rule:
+  regex: "(?m)^\s*rename_i\b.*\n\s*rename_i\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 75
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-split-dup
+language: Lean
+severity: warning
+message: "Redundant split tactic detected: consecutive duplicate split invocations"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive split calls create dead branching
+  cycles, elaborator context churn, and bloated proof AST traces.
+  Structure case splits cleanly using structured delimiters or advance the active goal.
+rule:
+  regex: "(?m)^\s*split\b.*\n\s*split\b"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

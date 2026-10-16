@@ -1,0 +1,10 @@
+import EASCI
+
+set_option maxHeartbeats 0
+
+axiom magic : forall (n : Nat), n <= n + 1
+
+theorem broken (n : Nat) : n <= n + 1 := by
+  simp
+  simp
+  sorry

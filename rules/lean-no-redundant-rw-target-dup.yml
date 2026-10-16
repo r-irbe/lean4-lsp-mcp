@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-rw-target-dup
+language: Lean
+severity: warning
+message: "Redundant rw target tactic detected: consecutive duplicate rw invocations targeting identical theorem expressions"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive rw calls targeting
+  identical expressions create redundant term rewriting traversals, unneeded unification passes,
+  and bloated proof AST traces. Combine them using chained rewriting `rw [h, h]` or `repeat rw [h]`.
+rule:
+  regex: "(?m)^\\s*rw\\s+\\[(.+)\\]$\\n\\s*rw\\s+\\[\\1\\]$"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard
