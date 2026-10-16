@@ -18,13 +18,18 @@ parent project's investigation garden; this file is the public-facing summary.
   RULE_COMPILE_WARNING instead of crashes, CI exit codes, severity floor.
   Fixture-tested (violation fixture trips the headline rules with exact
   lines; clean fixture zero).
+- **W3 (done 2026-10-16)**: editor-integration switch - the parent
+  project's Lean rule directory is generated state, synced one-way from
+  this package's corpus; this corpus is canonical.
+- **W4 (port landed 2026-10-16)**: `lean-harvest` (bin) - the TS port of
+  the parent project's linter harvest script (parallel worker processes,
+  per-file timeout, TSV/JSON output), with a test harness
+  (`tests/test_harvest.mjs`).
 
 ## Next
 
-- **W3**: editor-integration switch - consumers (the host editor's Lean
-  rule directory) vendor this package's rules instead of their own copies.
-- **W4**: harvest CLI port - the corpus census/harvest scripts call
-  `lean-rules` instead of ad-hoc greps.
+- **W4 (adoption)**: the parent project's census/harvest scripts call
+  `lean-harvest` once parity holds.
 - npm publish (identity TBD; the package is publish-ready).
 
 ## Non-goals
