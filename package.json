@@ -93,16 +93,10 @@
     "@types/node": "^20.11.0",
     "typescript": "^5.3.3"
   },
-<<<<<<< HEAD
-  "test": "node --experimental-strip-types tests/test_lean_lsp_mcp.mjs && node --experimental-strip-types tests/test_file_worker_manager.mjs && node --experimental-strip-types tests/test_tranche1_modules.mjs && node tests/test_rules_fixtures.mjs",
+  "test": "node --experimental-strip-types tests/test_lean_lsp_mcp.mjs && node --experimental-strip-types tests/test_file_worker_manager.mjs && node --experimental-strip-types tests/test_tranche1_modules.mjs && node tests/test_rules_fixtures.mjs && node --experimental-strip-types tests/test_counterexample_verb.mjs",
   "exports": {
     ".": "./dist/index.js",
     "./core": "./dist/bounded_cache.js",
     "./package.json": "./package.json"
   }
-||||||| parent of 0719f94 (feat(clients): lean_counterexample_search - the counterexample-first verb (tranche 4))
-  "test": "node --experimental-strip-types tests/test_lean_lsp_mcp.mjs && node --experimental-strip-types tests/test_file_worker_manager.mjs && node --experimental-strip-types tests/test_tranche1_modules.mjs"
-=======
-  "test": "node --experimental-strip-types tests/test_lean_lsp_mcp.mjs && node --experimental-strip-types tests/test_file_worker_manager.mjs && node --experimental-strip-types tests/test_tranche1_modules.mjs && node --experimental-strip-types tests/test_counterexample_verb.mjs"
->>>>>>> 0719f94 (feat(clients): lean_counterexample_search - the counterexample-first verb (tranche 4))
 }
