@@ -92,10 +92,10 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     });
     assert(listRes && Array.isArray(listRes.result.tools), "tools list is array");
     const toolNames = listRes.result.tools.map(t => t.name);
-    assert.strictEqual(toolNames.length, 18, "Exposes exactly 18 tools (the consolidated 6, the recovery verb, the tranche-2 definitions, and the counterexample-search verb)");
+    assert.strictEqual(toolNames.length, 20, "Exposes exactly 20 tools (the consolidated 6, the recovery verb, the tranche-2 definitions, the axiom-closure audit, the diagnostics pull, and the counterexample-search verb)");
 
     const expectedTools = ["lean_goal", "lean_search", "lean_blueprint", "lean_metrics", "lean_ffi", "lean_exec", "lean_resync",
-        "lean_lookup_symbol", "lean_module_hierarchy", "lean_run_code", "lean_book_index_lookup", "lean_cross_itp_concordance",
+        "lean_lookup_symbol", "lean_module_hierarchy", "lean_run_code", "lean_axiom_closure", "lean_diagnostics", "lean_book_index_lookup", "lean_cross_itp_concordance",
         "lean_proof_skeleton", "lean_blueprint_scaffold", "lean_dependency_subgraph", "lean_module_census", "lean_server_status",
         "lean_counterexample_search"];
     for (const t of expectedTools) {
