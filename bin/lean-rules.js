@@ -42,9 +42,13 @@ function parseArgs(argv) {
 }
 
 function toJsRegex(pattern) {
-  let flags = "g";
+  // Multiline is the DEFAULT (the host scanner applies line-anchored
+  // semantics to every rule; some corpus patterns rely on it without
+  // carrying an inline (?m)). Inline flags are stripped and folded into
+  // the JS flag set.
+  let flags = "gm";
   let p = pattern;
-  if (p.includes("(?m)")) { flags += "m"; p = p.replaceAll("(?m)", ""); }
+  if (p.includes("(?m)")) p = p.replaceAll("(?m)", "");
   if (p.includes("(?i)")) { flags += "i"; p = p.replaceAll("(?i)", ""); }
   if (p.includes("(?s)")) { flags += "s"; p = p.replaceAll("(?s)", ""); }
   return new RegExp(p, flags);
