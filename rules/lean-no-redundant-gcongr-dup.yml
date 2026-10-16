@@ -6,7 +6,7 @@ note: |
   Lean 4 tactic scripts that execute duplicate consecutive gcongr calls
   create redundant computation churn. Ensure intermediate progress is checked.
 rule:
-  regex: "(?m)^\s*gcongr\s*$\n\s*gcongr\s*$"
+  regex: '(?m)^\s*gcongr\s*$\n\s*gcongr\s*$'
 fix: ""
 metadata:
   category: performance

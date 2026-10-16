@@ -6,7 +6,7 @@ note: |
   Lean 4 tactic scripts that execute duplicate consecutive aesop calls
   create redundant computation churn. Ensure intermediate progress is checked.
 rule:
-  regex: "(?m)^\s*aesop\s*$\n\s*aesop\s*$"
+  regex: '(?m)^\s*aesop\s*$\n\s*aesop\s*$'
 fix: ""
 metadata:
   category: performance

@@ -6,7 +6,7 @@ note: |
   Lean 4 tactic scripts that execute duplicate consecutive refl calls
   create redundant computation churn. Ensure intermediate progress is checked.
 rule:
-  regex: "(?m)^\s*refl\s*$\n\s*refl\s*$"
+  regex: '(?m)^\s*refl\s*$\n\s*refl\s*$'
 fix: ""
 metadata:
   category: performance

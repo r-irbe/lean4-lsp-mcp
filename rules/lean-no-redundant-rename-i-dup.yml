@@ -7,7 +7,7 @@ note: |
   goal modification induce redundant inaccessible hypothesis renaming and context churn.
   Combine hypothesis renaming into a single rename_i invocation or use descriptive intro binders.
 rule:
-  regex: "(?m)^\s*rename_i\b.*\n\s*rename_i\b"
+  regex: '(?m)^\s*rename_i\b.*\n\s*rename_i\b'
 fix: ""
 metadata:
   category: performance

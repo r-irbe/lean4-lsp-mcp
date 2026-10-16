@@ -6,7 +6,7 @@ note: |
   Lean 4 tactic scripts that execute duplicate consecutive simpa calls
   create redundant computation churn. Ensure intermediate progress is checked.
 rule:
-  regex: "(?m)^\s*simpa\s*$\n\s*simpa\s*$"
+  regex: '(?m)^\s*simpa\s*$\n\s*simpa\s*$'
 fix: ""
 metadata:
   category: performance

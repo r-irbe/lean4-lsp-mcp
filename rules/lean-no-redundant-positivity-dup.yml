@@ -6,7 +6,7 @@ note: |
   Lean 4 tactic scripts that execute duplicate consecutive positivity calls
   create redundant computation churn. Ensure intermediate progress is checked.
 rule:
-  regex: "(?m)^\s*positivity\s*$\n\s*positivity\s*$"
+  regex: '(?m)^\s*positivity\s*$\n\s*positivity\s*$'
 fix: ""
 metadata:
   category: performance

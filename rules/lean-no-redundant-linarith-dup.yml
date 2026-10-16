@@ -6,7 +6,7 @@ note: |
   Lean 4 tactic scripts that execute duplicate consecutive linarith calls
   create redundant computation churn. Ensure intermediate progress is checked.
 rule:
-  regex: "(?m)^\s*linarith\s*$\n\s*linarith\s*$"
+  regex: '(?m)^\s*linarith\s*$\n\s*linarith\s*$'
 fix: ""
 metadata:
   category: performance

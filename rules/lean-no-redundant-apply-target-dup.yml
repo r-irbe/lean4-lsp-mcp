@@ -7,7 +7,7 @@ note: |
   identical expressions create redundant unification search attempts, backtracking
   overhead, and bloated proof AST traces. Use a single apply invocation or chained refinement.
 rule:
-  regex: "(?m)^\s*apply\s+(.+)$\n\s*apply\s+\1$"
+  regex: '(?m)^\s*apply\s+(.+)$\n\s*apply\s+\1$'
 fix: ""
 metadata:
   category: performance

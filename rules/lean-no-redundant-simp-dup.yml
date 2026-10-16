@@ -7,7 +7,7 @@ note: |
   hypothesis rewriting or goal transformation induce redundant simplifier passes, duplicate
   congruence lemma traversals, and unnecessary proof term bloat. Combine lemmas or eliminate the redundant step.
 rule:
-  regex: "(?m)^\s*simp\b.*\n\s*simp\b"
+  regex: '(?m)^\s*simp\b.*\n\s*simp\b'
 fix: ""
 metadata:
   category: performance

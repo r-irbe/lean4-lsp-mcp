@@ -8,7 +8,7 @@ note: |
   simplifies the ambient hypotheses and goal, repeating it immediately without intermediate
   transformations is redundant and risks stalling the compiler.
 rule:
-  regex: "(?m)^\s*simp_all\b.*\n\s*simp_all\b"
+  regex: '(?m)^\s*simp_all\b.*\n\s*simp_all\b'
 fix: ""
 metadata:
   category: performance
