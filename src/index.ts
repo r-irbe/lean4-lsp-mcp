@@ -40,7 +40,7 @@ export interface McpToolDefinition {
   description: string;
   inputSchema: {
     type: "object";
-    properties: Record<string, any>;
+    properties: Record<string, unknown>;
     required?: string[];
   };
   /** MCP hints clients use for permission gating (tranche 3). */
@@ -385,6 +385,23 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     name: "lean_server_status",
     description: "Introspection: attach mode (broker vs direct), project root, open files, per-session and total server RSS, idle times. The recovery aid when results look stale.",
     inputSchema: { type: "object", properties: {} },    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "lean_counterexample_search",
+    description: "Counterexample-first proving: synthesizes a Plausible property test from a theorem's own statement, runs it in an isolated scratch file outside the project tree under a wall-clock budget, and reports one of: counterexample (concrete refuting assignment), survived (no counterexample in up to N samples; evidence, not a proof), budget_expired, or unsupported (with reason). Nothing is written under the project root (zero-sorry gates untouched).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        filePath: { type: "string", description: "Path to the Lean file containing the declaration (absolute or project-relative)" },
+        theoremName: { type: "string", description: "Name of the theorem/lemma to test (bare name; namespaced names match on their last segment)" },
+        samples: { type: "integer", description: "Plausible numInst cap: test instances to generate (default: 100, max: 10000)" },
+        budgetMs: { type: "integer", description: "Wall-clock budget for the scratch run in milliseconds (default: 60000, max: 120000)" },
+        imports: { type: "array", items: { type: "string" }, description: "Extra Lean modules to import in the scratch harness (validated module names), e.g. [\"EASCI.Testing.Samplers\"] to expose project SampleableExt instances" },
+      },
+      required: ["filePath", "theoremName"],
+    },    annotations: {
       readOnlyHint: true,
     },
   },
@@ -2584,12 +2601,138 @@ async function reservoirIndexPackages(): Promise<string[]> {
   return packages;
 }
 
+// --- Tranche 4: lean_counterexample_search support (PLAN-LEAN-LSP-MCP-COUNTEREXAMPLE-VERB) ---
+
+const CES_IDENT_RE = /^[A-Za-z_\u00C0-\uFFFF][A-Za-z0-9_'\u00C0-\uFFFF]*$/;
+const CES_MODULE_RE =
+  /^[A-Za-z_\u00C0-\uFFFF][A-Za-z0-9_'\u00C0-\uFFFF]*(\.[A-Za-z_\u00C0-\uFFFF][A-Za-z0-9_'\u00C0-\uFFFF]*)*$/;
+
+function clampInt(value: unknown, lo: number, hi: number, dflt: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return dflt;
+  return Math.min(hi, Math.max(lo, Math.floor(n)));
+}
+
+/**
+ * v1 statement extraction: returns the declaration's binders-and-type slice
+ * (the text between the name and the top-level ':='), so the scratch harness
+ * can re-state it under `example ... := by plausible`. Bounded: no block-
+ * comment handling; failures surface as unsupported, never as a throw.
+ */
+function extractDeclarationHeader(
+  content: string,
+  requestedName: string
+): { ok: true; header: string; bare: string } | { ok: false; reason: string } {
+  const bare = requestedName.includes(".")
+    ? requestedName.slice(requestedName.lastIndexOf(".") + 1)
+    : requestedName;
+  if (!CES_IDENT_RE.test(bare)) {
+    return { ok: false, reason: `invalid theoremName '${requestedName}'` };
+  }
+  const lines = content.split(/\r?\n/);
+  const declRe = new RegExp(
+    `\\b(?:theorem|lemma)\\s+${bare}(?![A-Za-z0-9_'\\u00C0-\\uFFFF])`
+  );
+  let startLine = -1;
+  let startCol = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const m = declRe.exec(lines[i]);
+    if (m) {
+      startLine = i;
+      startCol = m.index + m[0].length;
+      break;
+    }
+  }
+  if (startLine === -1) {
+    return {
+      ok: false,
+      reason: `declaration '${bare}' not found (searched theorem/lemma '${bare}')`,
+    };
+  }
+  let depth = 0;
+  let inStr = false;
+  for (let i = startLine; i < lines.length; i++) {
+    const line = lines[i];
+    for (let c = i === startLine ? startCol : 0; c < line.length; c++) {
+      const ch = line[c];
+      if (inStr) {
+        if (ch === "\\") {
+          c++;
+          continue;
+        }
+        if (ch === '"') inStr = false;
+        continue;
+      }
+      if (ch === '"') {
+        inStr = true;
+        continue;
+      }
+      if (ch === "-" && line[c + 1] === "-") break;
+      if (ch === "(" || ch === "[" || ch === "{") depth++;
+      else if (ch === ")" || ch === "]" || ch === "}") depth--;
+      else if (ch === ":" && line[c + 1] === "=" && depth === 0) {
+        const parts: string[] = [];
+        if (i === startLine) {
+          parts.push(line.slice(startCol, c));
+        } else {
+          parts.push(lines[startLine].slice(startCol));
+          for (let k = startLine + 1; k < i; k++) parts.push(lines[k]);
+          parts.push(line.slice(0, c));
+        }
+        const header = parts.join("\n").trim();
+        if (!header.includes(":")) {
+          return {
+            ok: false,
+            reason: `declaration '${bare}' has no statement before ':='`,
+          };
+        }
+        return { ok: true, header, bare };
+      }
+    }
+  }
+  return { ok: false, reason: `no top-level ':=' found after '${bare}'` };
+}
+
+/** Extracts the counterexample block from Plausible's tactic output. */
+function extractCounterexampleBlock(out: string): string {
+  const lines = out.split(/\r?\n/);
+  const start = lines.findIndex((l) => l.includes("Found a counter-example!"));
+  if (start === -1) return "";
+  const kept: string[] = [];
+  for (let i = start + 1; i < lines.length && kept.length < 16; i++) {
+    const l = lines[i].trim();
+    if (/^[=-]{5,}$/.test(l)) {
+      if (kept.length > 0) break;
+      continue;
+    }
+    kept.push(lines[i]);
+  }
+  return kept.join("\n").trim();
+}
+
+/** First compiler-error excerpt from the scratch run's output. */
+function firstErrorExcerpt(out: string): string {
+  const lines = out.split(/\r?\n/);
+  const idx = lines.findIndex((l) => l.includes("error:"));
+  if (idx === -1) return out.trim().slice(0, 600);
+  return lines
+    .slice(idx, idx + 10)
+    .join("\n")
+    .trim()
+    .slice(0, 600);
+}
+
 export class McpServer {
   private projectRoot: string;
   private ileanIndex: Lean4IleanIndex;
   private lakeManager: LakeServerManager;
   private kuzuGraph: KuzuKnowledgeGraph;
   private buffer: string = "";
+
+  // Tranche 4 (PLAN-LEAN-LSP-MCP-COUNTEREXAMPLE-VERB): the counterexample
+  // verb's backstop budget - larger than any per-call budget (max 120s), so
+  // only a never-settling child can trip it (the M10 guard shape).
+  private counterexampleFlight = createSingleFlight<string>({ settleBudgetMs: 125000 });
 
   constructor(projectRoot: string = process.cwd()) {
     this.projectRoot = projectRoot;
@@ -4660,9 +4803,194 @@ export class McpServer {
         return await this.executeTool("lean_run_code", args);
       }
 
+      case "lean_counterexample_search": {
+        return await this.counterexampleSearch(args);
+      }
+
       default:
         throw new Error(`Unknown tool: '${name}'`);
     }
+  }
+
+  private async counterexampleSearch(args: any): Promise<string> {
+    const filePath = String(args.filePath || "").trim();
+    const theoremName = String(args.theoremName || "").trim();
+    if (!filePath) return "unsupported: missing required argument 'filePath'";
+    if (!theoremName) return "unsupported: missing required argument 'theoremName'";
+    const absPath = path.isAbsolute(filePath)
+      ? filePath
+      : path.resolve(this.projectRoot, filePath);
+    if (!fs.existsSync(absPath)) return `unsupported: file not found: ${filePath}`;
+
+    const budgetMs = clampInt(args.budgetMs, 1, 120000, 60000);
+    const samples = clampInt(args.samples, 1, 10000, 100);
+
+    const importList: string[] = [];
+    if (args.imports !== undefined) {
+      if (!Array.isArray(args.imports)) {
+        return "unsupported: 'imports' must be an array of Lean module names";
+      }
+      if (args.imports.length > 32) {
+        return "unsupported: too many imports (max 32)";
+      }
+      for (const raw of args.imports) {
+        const im = String(raw).trim();
+        if (!CES_MODULE_RE.test(im)) {
+          return `unsupported: invalid import name '${im}'`;
+        }
+        importList.push(im);
+      }
+    }
+
+    let content: string;
+    try {
+      content = fs.readFileSync(absPath, "utf-8");
+    } catch (err) {
+      return `unsupported: could not read ${filePath}: ${err instanceof Error ? err.message : String(err)}`;
+    }
+    const extracted = extractDeclarationHeader(content, theoremName);
+    if (!extracted.ok) return `unsupported: ${extracted.reason}`;
+
+    const harnessLines: string[] = ["import Plausible"];
+    for (const im of importList) harnessLines.push(`import ${im}`);
+    harnessLines.push(
+      "",
+      `example ${extracted.header} := by`,
+      `  plausible (config := { numInst := ${samples} })`,
+      ""
+    );
+    const harness = harnessLines.join("\n");
+
+    const limits = exceedsLspContentLimits(harness);
+    if (limits.exceeded) {
+      return `unsupported: synthesized harness exceeds content limits (${limits.bytes} bytes / ${limits.lines} lines; limits ${limits.limitBytes} / ${limits.limitLines})`;
+    }
+
+    // Identical requests (same statement, samples, imports, budget) share one
+    // execution; the budget is part of the key so a caller's stated budget
+    // always governs its own run (#1674 ordering governs the flight).
+    const key = createHash("sha256")
+      .update(`${harness}|${budgetMs}`)
+      .digest("hex")
+      .slice(0, 16);
+
+    return this.counterexampleFlight.run(key, async () => {
+      const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), "lean-ces-"));
+      const scratchPath = path.join(scratchDir, "CounterexampleSearch.lean");
+      try {
+        fs.writeFileSync(scratchPath, harness, "utf-8");
+        const run = await this.runBoundedLean(scratchPath, budgetMs);
+        return this.formatCounterexampleOutcome(extracted.bare, run, samples, budgetMs);
+      } finally {
+        try {
+          fs.rmSync(scratchDir, { recursive: true, force: true });
+        } catch {
+          // best-effort cleanup: a locked tmpdir must not fail the verb
+        }
+      }
+    });
+  }
+
+  private runBoundedLean(
+    scratchPath: string,
+    budgetMs: number
+  ): Promise<{
+    killedForBudget: boolean;
+    exitCode: number | null;
+    output: string;
+    elapsedMs: number;
+  }> {
+    return new Promise((resolve) => {
+      const started = Date.now();
+      let output = "";
+      let done = false;
+      let killedForBudget = false;
+      let child: ChildProcess;
+      try {
+        child = spawn("lake", ["env", "lean", scratchPath], {
+          cwd: this.projectRoot,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      } catch (err) {
+        resolve({
+          killedForBudget: false,
+          exitCode: null,
+          output: `spawn error: ${err instanceof Error ? err.message : String(err)}`,
+          elapsedMs: Date.now() - started,
+        });
+        return;
+      }
+      const timer = setTimeout(() => {
+        if (done) return;
+        killedForBudget = true;
+        try {
+          child.kill("SIGKILL");
+        } catch {
+          // already gone: the close event decides the outcome
+        }
+      }, budgetMs);
+      const finish = (exitCode: number | null) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve({
+          killedForBudget,
+          exitCode,
+          output,
+          elapsedMs: Date.now() - started,
+        });
+      };
+      child.stdout?.on("data", (d) => {
+        output += d.toString();
+      });
+      child.stderr?.on("data", (d) => {
+        output += d.toString();
+      });
+      child.on("error", (err) => {
+        output += `\nspawn error: ${err.message}`;
+        finish(null);
+      });
+      child.on("close", (code) => finish(code));
+    });
+  }
+
+  private formatCounterexampleOutcome(
+    name: string,
+    run: {
+      killedForBudget: boolean;
+      exitCode: number | null;
+      output: string;
+      elapsedMs: number;
+    },
+    samples: number,
+    budgetMs: number
+  ): string {
+    const secs = `${(run.elapsedMs / 1000).toFixed(1)}s`;
+    if (run.killedForBudget) {
+      const partial = run.output.trim().slice(0, 1200);
+      return [
+        `budget_expired after ${budgetMs}ms (killed; ${secs} elapsed, samples cap ${samples})`,
+        partial ? `partial output:\n${partial}` : "partial output: (none)",
+      ].join("\n");
+    }
+    const out = run.output;
+    if (out.includes("Found a counter-example!")) {
+      const block = extractCounterexampleBlock(out);
+      return `counterexample for '${name}' (samples cap ${samples}, ${secs}):\n${block}`;
+    }
+    if (out.includes("Failed to create a `testable` instance")) {
+      return [
+        "unsupported: no testable instance for the statement (missing SampleableExt/Decidable instances, or they do not combine)",
+        firstErrorExcerpt(out),
+      ].join("\n");
+    }
+    if (run.exitCode === 0) {
+      return `survived: no counterexample in up to ${samples} samples (${secs}). Evidence, not a proof.`;
+    }
+    return [
+      "unsupported: the synthesized test did not elaborate (statement not reproducible outside its file context, or a syntax edge)",
+      firstErrorExcerpt(out),
+    ].join("\n");
   }
 
   public startStdio(): void {
