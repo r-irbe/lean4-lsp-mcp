@@ -57,6 +57,8 @@ fs.writeFileSync(
         "",
         "theorem unsupported_stmt (p : Nat -> Prop) : p 0 := by sorry",
         "",
+        "theorem far_stmt (n : Nat) : n < 150 := by sorry",
+        "",
     ].join("\n")
 );
 const fixtureBytes = fs.readFileSync(fixturePath);
@@ -184,6 +186,53 @@ async function call(toolArgs) {
         "flight cleared after settle"
     );
     console.log(`  - single-flight sharing: PASS (registered=${registered})`);
+}
+
+// 8. Dense strategy: the n < 150 case study - the default shape's
+//    sampling misses values >= 150, the wide-size candidate reaches them.
+//    (Case pinned empirically: plain survived at 100 instances; maxSize
+//    500 refuted with n := 168.)
+{
+    const sliceOut = await call({
+        filePath: fixturePath,
+        theoremName: "far_stmt",
+        budgetMs: 120000,
+    });
+    assert(
+        sliceOut.startsWith("survived"),
+        `slice misses the far counterexample (as pinned), got: ${sliceOut.slice(0, 90)}`
+    );
+    const denseOut = await call({
+        filePath: fixturePath,
+        theoremName: "far_stmt",
+        strategy: "dense",
+        budgetMs: 120000,
+        probeBudgetMs: 30000,
+    });
+    assert(
+        denseOut.startsWith("counterexample"),
+        `dense finds it, got: ${denseOut.slice(0, 90)}`
+    );
+    assert(
+        denseOut.includes("sized-wide"),
+        `dense reports the winning candidate, got: ${denseOut.slice(0, 160)}`
+    );
+    console.log("  - dense strategy: PASS (v1-unproductive case refuted)");
+}
+
+// 9. Unknown strategy values are rejected, not silently coerced.
+{
+    const out = await call({
+        filePath: fixturePath,
+        theoremName: "true_stmt",
+        strategy: "Bogus",
+        budgetMs: 60000,
+    });
+    assert(
+        out.startsWith("unsupported") && out.includes("unknown strategy"),
+        `unknown strategy rejected, got: ${out.slice(0, 90)}`
+    );
+    console.log("  - strategy validation: PASS");
 }
 
 try {

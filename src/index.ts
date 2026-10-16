@@ -825,34 +825,58 @@ export class BitsetDAGIndex {
     }
 
     const hasCycle = (tTail < tail) || (detectedCycle !== undefined);
-    if (hasCycle && !detectedCycle) {
+    if (hasCycle) {
       // 3-color DFS on the reachable subgraph to extract a directed cycle witness
+      // AND compute reverse-post-order longest simple DAG path (back-edges removed).
       const color = new Uint8Array(N);
+      const finishOrder = new Uint32Array(N);
+      const postOrder = new Uint32Array(tail);
+      let postLen = 0;
       const stack: number[] = [];
-      const dfs = (u: number): boolean => {
+      const dfs = (u: number): void => {
         color[u] = 1;
         stack.push(u);
         for (let k = off[u]; k < off[u + 1]; k++) {
           const v = dst[k];
           if ((visitedBits[v >>> 5] & (1 << (v & 31))) === 0) continue;
           if (color[v] === 1) {
-            const idx = stack.indexOf(v);
-            const cycleIds = stack.slice(idx);
-            cycleIds.push(v);
-            detectedCycle = cycleIds.map((id) => this.idToName[id]);
-            return true;
+            if (!detectedCycle) {
+              const idx = stack.indexOf(v);
+              const cycleIds = stack.slice(idx);
+              cycleIds.push(v);
+              detectedCycle = cycleIds.map((id) => this.idToName[id]);
+            }
+            continue;
           }
-          if (color[v] === 0 && dfs(v)) {
-            return true;
+          if (color[v] === 0) {
+            dfs(v);
           }
         }
         stack.pop();
         color[u] = 2;
-        return false;
+        postOrder[postLen] = u;
+        finishOrder[u] = ++postLen;
       };
       for (let i = 0; i < tail; i++) {
         const u = queue[i];
-        if (color[u] === 0 && dfs(u)) break;
+        if (color[u] === 0) dfs(u);
+      }
+      const dfsDepth = new Uint16Array(N);
+      for (let idx = postLen - 1; idx >= 0; idx--) {
+        const u = postOrder[idx];
+        const du = dfsDepth[u];
+        for (let k = off[u]; k < off[u + 1]; k++) {
+          const v = dst[k];
+          if ((visitedBits[v >>> 5] & (1 << (v & 31))) === 0) continue;
+          if (finishOrder[u] > finishOrder[v]) {
+            if (du + 1 <= maxDepth && du + 1 > dfsDepth[v]) {
+              dfsDepth[v] = du + 1;
+              if (dfsDepth[v] > maxLongestDepth) {
+                maxLongestDepth = dfsDepth[v];
+              }
+            }
+          }
+        }
       }
     }
 
@@ -881,6 +905,70 @@ export class BitsetDAGIndex {
   public getEdgeCount(): number {
     return this.dst.length;
   }
+}
+
+
+/**
+ * Build a static declaration-to-declaration reference graph from Lean 4 source text,
+ * filtering out local bindings (`let`, `have`, `fun`, and binder parameters) that
+ * shadow module-level declaration names.
+ */
+export function buildDeclReferenceGraph(source: string): Map<string, string[]> {
+  const masked = source
+    .replace(/\/-([\s\S]*?)-\//g, (m) => m.replace(/[^\n]/g, " "))
+    .replace(/--[^\n]*/g, (m) => " ".repeat(m.length))
+    .replace(/"(?:\\.|[^"\\])*"/g, (m) => " ".repeat(m.length));
+
+  const declHeaderRe = /^\s*(?:@[\w.\s\[\]=,]+\s+)*(?:private\s+|protected\s+|noncomputable\s+|partial\s+|unsafe\s+)*(?:def|theorem|lemma|abbrev|opaque|axiom|example)\s+([A-Za-z_][\w']*)/gm;
+  const headers: { name: string; start: number; headerStart: number }[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = declHeaderRe.exec(masked)) !== null) {
+    headers.push({
+      name: match[1],
+      headerStart: match.index,
+      start: match.index + match[0].length,
+    });
+  }
+
+  const declNames = new Set(headers.map((h) => h.name));
+  const graph = new Map<string, string[]>();
+
+  for (let i = 0; i < headers.length; i++) {
+    const cur = headers[i];
+    const end = i + 1 < headers.length ? headers[i + 1].headerStart : masked.length;
+    const block = masked.slice(cur.start, end);
+
+    const locals = new Set<string>();
+    // Binder groups: (x y : T) or {x y : T} or [x : T]
+    const binderGroupRe = /[({\[]\s*([A-Za-z_][\w']*(?:\s+[A-Za-z_][\w']*)*)\s*:/g;
+    let bm: RegExpExecArray | null;
+    while ((bm = binderGroupRe.exec(block)) !== null) {
+      for (const id of bm[1].trim().split(/\s+/)) {
+        if (id && id !== "_") locals.add(id);
+      }
+    }
+    // Local bindings: let x := / let x : / have x := / have x : / intro x / fun x =>
+    const localBindRe = /\b(?:let|have|obtain|rcases|intro|rintro|fun|λ)\s+([A-Za-z_][\w']*)/g;
+    while ((bm = localBindRe.exec(block)) !== null) {
+      locals.add(bm[1]);
+    }
+
+    const refs = new Set<string>();
+    const tokenRe = /\b([A-Za-z_][\w.']*)\b/g;
+    while ((bm = tokenRe.exec(block)) !== null) {
+      const tok = bm[1];
+      const base = tok.includes(".") ? tok.split(".").pop()! : tok;
+      if (base === cur.name) continue;
+      if (!tok.includes(".") && locals.has(base)) continue;
+      if (declNames.has(tok)) {
+        refs.add(tok);
+      } else if (declNames.has(base) && !locals.has(base)) {
+        refs.add(base);
+      }
+    }
+    graph.set(cur.name, Array.from(refs).sort());
+  }
+  return graph;
 }
 
 export class Lean4IleanIndex {
@@ -2984,6 +3072,114 @@ function clampInt(value: unknown, lo: number, hi: number, dflt: number): number 
   const n = Number(value);
   if (!Number.isFinite(n)) return dflt;
   return Math.min(hi, Math.max(lo, Math.floor(n)));
+}
+
+/**
+ * v2 (dense strategy): the candidate set the probe pass evaluates. All
+ * construction is pure text; unsafe or unknown shapes are simply absent
+ * (the plain candidate always exists, so dense degrades to slice-shaped
+ * probing on exotic headers).
+ */
+interface CesCandidate {
+  readonly name: string;
+  readonly header: string;
+  readonly maxSize?: number;
+}
+
+const CES_DEFAULT_MAX_SIZE = 100;
+
+function cesMaxSizeOf(cand: CesCandidate | null): number {
+  return cand && cand.maxSize !== undefined ? cand.maxSize : CES_DEFAULT_MAX_SIZE;
+}
+
+/**
+ * Conservative binder parser for the reorder candidate. Accepts only
+ * headers whose binder section is two or more plain `(...)` groups, each
+ * a simple `names : Type` with a plain dotted/applied-name type - no
+ * operators, arrows, implicits, or instance binders. Anything else
+ * returns null and the reorder candidate is skipped, never guessed.
+ */
+function splitHeaderForReorder(header: string): { reversed: string } | null {
+  let depth = 0;
+  let sep = -1;
+  for (let i = 0; i < header.length; i++) {
+    const ch = header[i];
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") depth--;
+    else if (ch === ":" && depth === 0) {
+      sep = i;
+      break;
+    }
+  }
+  if (sep === -1) return null;
+  const binderPart = header.slice(0, sep).trim();
+  const typePart = header.slice(sep + 1).trim();
+  if (!binderPart || !typePart) return null;
+  const chunks: string[] = [];
+  let i = 0;
+  while (i < binderPart.length) {
+    while (i < binderPart.length && /\s/.test(binderPart[i])) i++;
+    if (i >= binderPart.length) break;
+    if (binderPart[i] !== "(") return null;
+    let depth2 = 0;
+    let j = i;
+    for (; j < binderPart.length; j++) {
+      const ch = binderPart[j];
+      if (ch === "(") depth2++;
+      else if (ch === ")") {
+        depth2--;
+        if (depth2 === 0) {
+          j++;
+          break;
+        }
+      }
+    }
+    if (depth2 !== 0) return null;
+    chunks.push(binderPart.slice(i, j).trim());
+    i = j;
+  }
+  if (chunks.length < 2) return null;
+  const simple =
+    /^\(\s*[A-Za-z_\u00C0-\uFFFF][A-Za-z0-9_'\u00C0-\uFFFF\s]*\s*:\s*[A-Za-z_\u00C0-\uFFFF][A-Za-z0-9_.'\u00C0-\uFFFF]*(?:\s+[A-Za-z_\u00C0-\uFFFF][A-Za-z0-9_.'\u00C0-\uFFFF]*)*\s*\)$/;
+  for (const c of chunks) {
+    if (!simple.test(c)) return null;
+  }
+  return { reversed: chunks.slice().reverse().join(" ") + " : " + typePart };
+}
+
+function buildCesHarness(
+  header: string,
+  importList: string[],
+  numInst: number,
+  maxSize?: number
+): string {
+  const cfg =
+    maxSize === undefined
+      ? `{ numInst := ${numInst} }`
+      : `{ numInst := ${numInst}, maxSize := ${maxSize} }`;
+  const harnessLines: string[] = ["import Plausible"];
+  for (const im of importList) harnessLines.push(`import ${im}`);
+  harnessLines.push(
+    "",
+    `example ${header} := by`,
+    `  plausible (config := ${cfg})`,
+    ""
+  );
+  return harnessLines.join("\n");
+}
+
+function buildCesCandidates(header: string, importList: string[]): CesCandidate[] {
+  void importList;
+  const cands: CesCandidate[] = [
+    { name: "plain", header },
+    { name: "sized-small", header, maxSize: 8 },
+    { name: "sized-wide", header, maxSize: 500 },
+  ];
+  const reo = splitHeaderForReorder(header);
+  if (reo !== null) {
+    cands.push({ name: "reordered", header: reo.reversed });
+  }
+  return cands;
 }
 
 /**
@@ -5200,6 +5396,16 @@ export class McpServer {
 
     const budgetMs = clampInt(args.budgetMs, 1, 120000, 60000);
     const samples = clampInt(args.samples, 1, 10000, 100);
+    const strategy = args.strategy === undefined ? "slice" : String(args.strategy);
+    if (strategy !== "slice" && strategy !== "dense") {
+      return `unsupported: unknown strategy '${strategy}' (expected slice|dense)`;
+    }
+    // Probes live inside the same guard budget: each probe is capped by
+    // probeBudgetMs, which is itself never allowed above budgetMs.
+    const probeBudgetMs = Math.min(
+      clampInt(args.probeBudgetMs, 1000, 30000, Math.min(15000, budgetMs)),
+      budgetMs
+    );
 
     const importList: string[] = [];
     if (args.imports !== undefined) {
@@ -5227,43 +5433,84 @@ export class McpServer {
     const extracted = extractDeclarationHeader(content, theoremName);
     if (!extracted.ok) return `unsupported: ${extracted.reason}`;
 
-    const harnessLines: string[] = ["import Plausible"];
-    for (const im of importList) harnessLines.push(`import ${im}`);
-    harnessLines.push(
-      "",
-      `example ${extracted.header} := by`,
-      `  plausible (config := { numInst := ${samples} })`,
-      ""
-    );
-    const harness = harnessLines.join("\n");
+    const harness = buildCesHarness(extracted.header, importList, samples);
 
     const limits = exceedsLspContentLimits(harness);
     if (limits.exceeded) {
       return `unsupported: synthesized harness exceeds content limits (${limits.bytes} bytes / ${limits.lines} lines; limits ${limits.limitBytes} / ${limits.limitLines})`;
     }
 
-    // Identical requests (same statement, samples, imports, budget) share one
-    // execution; the budget is part of the key so a caller's stated budget
-    // always governs its own run (#1674 ordering governs the flight).
+    // Identical requests (same statement, samples, imports, budget,
+    // strategy) share one execution; the budget is part of the key so a
+    // caller's stated budget always governs its own run (#1674 ordering
+    // governs the flight).
     const key = createHash("sha256")
-      .update(`${harness}|${budgetMs}`)
+      .update(`${harness}|${budgetMs}|${strategy}|${probeBudgetMs}`)
       .digest("hex")
       .slice(0, 16);
 
     return this.counterexampleFlight.run(key, async () => {
-      const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), "lean-ces-"));
-      const scratchPath = path.join(scratchDir, "CounterexampleSearch.lean");
-      try {
-        fs.writeFileSync(scratchPath, harness, "utf-8");
-        const run = await this.runBoundedLean(scratchPath, budgetMs);
+      if (strategy === "slice") {
+        const run = await this.runCesHarness(harness, budgetMs);
         return this.formatCounterexampleOutcome(extracted.bare, run, samples, budgetMs);
-      } finally {
-        try {
-          fs.rmSync(scratchDir, { recursive: true, force: true });
-        } catch {
-          // best-effort cleanup: a locked tmpdir must not fail the verb
+      }
+      // Dense: probe the candidate set with a tiny instance cap, then
+      // spend the budget on the best-scoring shape. Scoring: refuted at
+      // probe = 3 (return immediately), survived = 2, killed by the
+      // probe cap = 1, unusable shape = 0. Survived ties prefer the
+      // wider schedule (a larger maxSize searches a superset region;
+      // v1-unproductive defaults are the case this exists for). No
+      // productive probe -> deterministic fallback to the v1 slice.
+      const candidates = buildCesCandidates(extracted.header, importList);
+      const probeInst = Math.min(8, samples);
+      let champion: CesCandidate | null = null;
+      let championScore = 0;
+      for (const cand of candidates) {
+        const run = await this.runCesHarness(
+          buildCesHarness(cand.header, importList, probeInst, cand.maxSize),
+          probeBudgetMs
+        );
+        const score = run.killedForBudget
+          ? 1
+          : run.output.includes("Found a counter-example!")
+            ? 3
+            : run.exitCode === 0
+              ? 2
+              : 0;
+        if (score === 3) {
+          return (
+            this.formatCounterexampleOutcome(
+              extracted.bare,
+              run,
+              probeInst,
+              probeBudgetMs
+            ) + `\n(dense: refuted at probe with candidate '${cand.name}')`
+          );
+        }
+        const widerOnTie =
+          score === championScore &&
+          score === 2 &&
+          cesMaxSizeOf(cand) > cesMaxSizeOf(champion);
+        if (score > championScore || widerOnTie) {
+          champion = cand;
+          championScore = score;
         }
       }
+      if (champion === null || championScore < 2) {
+        const run = await this.runCesHarness(harness, budgetMs);
+        return (
+          this.formatCounterexampleOutcome(extracted.bare, run, samples, budgetMs) +
+          "\n(dense: probes inconclusive; fell back to the slice)"
+        );
+      }
+      const run = await this.runCesHarness(
+        buildCesHarness(champion.header, importList, samples, champion.maxSize),
+        budgetMs
+      );
+      return (
+        this.formatCounterexampleOutcome(extracted.bare, run, samples, budgetMs) +
+        `\n(dense: candidate '${champion.name}')`
+      );
     });
   }
 
@@ -5291,6 +5538,29 @@ export class McpServer {
     }
   }
 
+  /** One scratch-file run of a synthesized harness (v1 slice or a v2 candidate). */
+  private async runCesHarness(
+    harness: string,
+    budgetMs: number
+  ): Promise<{
+    killedForBudget: boolean;
+    exitCode: number | null;
+    output: string;
+    elapsedMs: number;
+  }> {
+    const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), "lean-ces-"));
+    const scratchPath = path.join(scratchDir, "CounterexampleSearch.lean");
+    try {
+      fs.writeFileSync(scratchPath, harness, "utf-8");
+      return await this.runBoundedLean(scratchPath, budgetMs);
+    } finally {
+      try {
+        fs.rmSync(scratchDir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup: a locked tmpdir must not fail the verb
+      }
+    }
+  }
   private runBoundedLean(
     scratchPath: string,
     budgetMs: number
@@ -5310,6 +5580,11 @@ export class McpServer {
         child = spawn("lake", ["env", "lean", scratchPath], {
           cwd: this.projectRoot,
           stdio: ["ignore", "pipe", "pipe"],
+          // Own process group: the budget kill must reach the `lean`
+          // grandchild too, not just the `lake` shim (bench 2026-10-16:
+          // a shim-only SIGKILL left the call waiting ~5.5s past a 1.5s
+          // budget while the grandchild and its pipes outlived the kill).
+          detached: true,
         });
       } catch (err) {
         resolve({
@@ -5323,10 +5598,19 @@ export class McpServer {
       const timer = setTimeout(() => {
         if (done) return;
         killedForBudget = true;
+        // Kill the whole process group (negative pid: the detached child
+        // is its group leader, and `lean` inherits the group), so the
+        // budget bounds the actual wall, not just the shim's lifetime.
         try {
-          child.kill("SIGKILL");
+          if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+          else child.kill("SIGKILL");
         } catch {
-          // already gone: the close event decides the outcome
+          // group already gone: fall back to the child handle alone
+          try {
+            child.kill("SIGKILL");
+          } catch {
+            // already gone: the close event decides the outcome
+          }
         }
       }, budgetMs);
       const finish = (exitCode: number | null) => {
