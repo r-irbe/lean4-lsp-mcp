@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-delta-target-dup
+language: Lean
+severity: warning
+message: "Redundant delta target tactic detected: consecutive duplicate delta invocations targeting identical goal types"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive delta calls targeting
+  identical expressions create redundant churn and bloated proof AST traces.
+  State the intended form once, or advance intermediate sub-goals directly.
+rule:
+  regex: "(?m)^\\s*delta\\s+([a-zA-Z0-9_. :]+)\\s*$\\n\\s*delta\\s+\\1\\s*$"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

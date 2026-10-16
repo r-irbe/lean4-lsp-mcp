@@ -1,0 +1,18 @@
+id: rule-lean-no-redundant-guard-target-dup
+language: Lean
+severity: warning
+message: "Redundant guard_target target tactic detected: consecutive duplicate guard_target invocations targeting identical goal types"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive guard_target calls targeting
+  identical expressions create redundant churn and bloated proof AST traces.
+  State the intended form once, or advance intermediate sub-goals directly.
+rule:
+  regex: "(?m)^\\s*guard_target\\s+([a-zA-Z0-9_. :]+)\\s*$\\n\\s*guard_target\\s+\\1\\s*$"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard
