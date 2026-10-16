@@ -7,7 +7,7 @@ note: |
   cycles, elaborator context churn, and bloated proof AST traces.
   Structure case splits cleanly using structured delimiters or advance the active goal.
 rule:
-  regex: '(?m)^\s*split\b.*\n\s*split\b'
+  regex: "(?m)^\s*split\b.*\n\s*split\b"
 fix: ""
 metadata:
   category: performance

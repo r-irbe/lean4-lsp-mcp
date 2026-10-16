@@ -1,13 +1,13 @@
 id: rule-lean-no-redundant-change-target-dup
 language: Lean
 severity: warning
-message: "Redundant change target tactic detected: consecutive duplicate change invocations targeting identical expressions"
+message: "Redundant change target tactic detected: consecutive duplicate change invocations targeting identical goal types"
 note: |
   Lean 4 tactic scripts that execute duplicate consecutive change calls targeting
-  identical expressions create redundant definitional equality elaboration passes,
-  cache pollution, and bloated proof AST traces. Use a single change specification.
+  identical goal type expressions create redundant goal restatement churn and bloated proof AST traces.
+  State the intended goal form once, or advance intermediate sub-goals directly.
 rule:
-  regex: "(?m)^\\s*change\\s+(.+)$\\n\\s*change\\s+\\1$"
+  regex: "(?m)^\\s*change\\s+([a-zA-Z0-9_. :]+)\\s*$\\n\\s*change\\s+\\1\\s*$"
 fix: ""
 metadata:
   category: performance

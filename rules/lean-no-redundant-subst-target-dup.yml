@@ -1,14 +1,13 @@
 id: rule-lean-no-redundant-subst-target-dup
 language: Lean
 severity: warning
-message: "Redundant subst target tactic detected: consecutive duplicate subst invocations targeting identical variable hypotheses"
+message: "Redundant subst target tactic detected: consecutive duplicate subst invocations targeting identical goal types"
 note: |
   Lean 4 tactic scripts that execute duplicate consecutive subst calls targeting
-  identical variable hypotheses create redundant variable elimination passes, unnecessary context
-  rebuilding, and bloated proof AST traces. Variable substitution eliminates the target variable;
-  a duplicate call is either a no-op or causes an elaborator failure.
+  identical expressions create redundant churn and bloated proof AST traces.
+  State the intended form once, or advance intermediate sub-goals directly.
 rule:
-  regex: "(?m)^\\s*subst\\s+(\\w+)(?:\\s+\\1)+$"
+  regex: "(?m)^\\s*subst\\s+([a-zA-Z0-9_. :]+)\\s*$\\n\\s*subst\\s+\\1\\s*$"
 fix: ""
 metadata:
   category: performance

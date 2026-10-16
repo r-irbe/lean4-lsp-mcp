@@ -1,0 +1,17 @@
+id: rule-lean-no-redundant-aesop-dup
+language: Lean
+severity: warning
+message: "Redundant aesop tactic detected: consecutive duplicate aesop invocations on identical goals"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive aesop calls
+  create redundant computation churn. Ensure intermediate progress is checked.
+rule:
+  regex: "(?m)^\s*aesop\s*$\n\s*aesop\s*$"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

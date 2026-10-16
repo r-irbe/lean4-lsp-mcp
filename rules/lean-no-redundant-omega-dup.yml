@@ -1,0 +1,17 @@
+id: rule-lean-no-redundant-omega-dup
+language: Lean
+severity: warning
+message: "Redundant omega tactic detected: consecutive duplicate omega invocations on identical goals"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive omega calls
+  create redundant computation churn. Ensure intermediate progress is checked.
+rule:
+  regex: "(?m)^\s*omega\s*$\n\s*omega\s*$"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

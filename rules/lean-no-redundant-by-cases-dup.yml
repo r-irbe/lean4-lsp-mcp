@@ -1,0 +1,17 @@
+id: rule-lean-no-redundant-by-cases-dup
+language: Lean
+severity: warning
+message: "Redundant by_cases tactic detected: consecutive duplicate by_cases invocations on identical propositions"
+note: |
+  Lean 4 tactic scripts that execute duplicate consecutive by_cases calls
+  create redundant case analysis churn. Retain the established cases in local context.
+rule:
+  regex: "(?m)^\\s*by_cases\\s+([a-zA-Z0-9_. :]+)\\s*$\\n\\s*by_cases\\s+\\1\\s*$"
+fix: ""
+metadata:
+  category: performance
+  weight: 70
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

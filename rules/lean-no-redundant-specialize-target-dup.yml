@@ -1,14 +1,13 @@
 id: rule-lean-no-redundant-specialize-target-dup
 language: Lean
 severity: warning
-message: "Redundant specialize target tactic detected: consecutive duplicate specialize invocations on identical hypothesis or identifier"
+message: "Redundant specialize target tactic detected: consecutive duplicate specialize invocations targeting identical hypothesis identifiers"
 note: |
-  Lean 4 tactic scripts that execute duplicate consecutive specialize calls targeting the identical
-  hypothesis identifier without intermediate term modification introduce redundant instantiation cycles,
-  hypothesis context pollution, and bloated proof AST traces. Specialize the target hypothesis once
-  with appropriate arguments or chain application steps directly.
+  Lean 4 tactic scripts that execute duplicate consecutive specialize calls targeting
+  identical hypothesis expressions create redundant specialization churn and bloated proof AST traces.
+  Specialize the hypothesis with all needed arguments in a single step, or advance intermediate goals directly.
 rule:
-  regex: "(?m)^\\s*specialize\\s+([a-zA-Z0-9_.]+)\\s*$\\n\\s*specialize\\s+\\1\\b"
+  regex: "(?m)^\\s*specialize\\s+([a-zA-Z0-9_. :]+)\\s*$\\n\\s*specialize\\s+\\1\\s*$"
 fix: ""
 metadata:
   category: performance

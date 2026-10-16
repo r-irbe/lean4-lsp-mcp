@@ -7,7 +7,7 @@ note: |
   goal modification introduce redundant definition unfolding passes, cache invalidation, and
   bloated proof trees. Combine unfolded definitions into a single unfold invocation or use dsimp.
 rule:
-  regex: '(?m)^\s*unfold\b.*\n\s*unfold\b'
+  regex: "(?m)^\s*unfold\b.*\n\s*unfold\b"
 fix: ""
 metadata:
   category: performance
