@@ -5,3 +5,11 @@ set_option maxHeartbeats 400000
 theorem ok_add_zero (n : Nat) : n + 0 = n := by
   subst n
   rfl
+
+/-! Prose that must NOT be read as code (regression: rule-lean-no-sorry-cheat
+    fired on this sentence in a judge-accepted artifact):
+
+    No `sorry`, no `admit`, no `native_decide`, no `set_option`; `import Spec` only.
+    A proof may legitimately discuss `admit` and `cheat` in a comment. -/
+
+def prose_note : String := "no sorry here, and no admit either"

@@ -2,6 +2,24 @@
 
 This directory holds repository-specific AST-grep rules that govern the architecture and invariants of `tacit-mui`.
 
+## Code vs prose (`scope`)
+
+`lean-rules` matches a rule's regex against **masked code**: comments (`--`,
+nested `/- … -/`) and string literals are blanked out first, with newlines
+preserved so line numbers are unchanged. A soundness rule therefore cannot fire
+on a comment that *says* "No `sorry`, no `admit`" — which it did on a
+judge-accepted artifact before this option existed — and cannot be blinded by a
+`sorry` hiding inside a docstring.
+
+A rule that genuinely targets prose opts in explicitly:
+
+```yaml
+scope: any      # match raw file text (comments and strings included)
+```
+
+Default is code-only. If you add a rule about comment markers or docstring
+wording, set `scope: any`; otherwise leave it out.
+
 ## Dynamic Rule Ingestion
 
 `pi-lens` automatically discovers and loads rules from `.pi-lens/rules/` when scanning or linting this repository. Project-local rules take precedence over built-in catalog rules and are merged dynamically into the effective rule catalog and the synthesized `baseline.sgconfig.yml`.

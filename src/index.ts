@@ -34,12 +34,26 @@ export interface IleanSymbolEntry {
   kind?: string;
 }
 
+/** One constant a declaration references, as `.ilean` records it. */
+export interface IleanReferenceKey {
+  c?: { m?: string; n?: string };
+}
+
+export interface IleanReferenceEntry {
+  /** Source position of the referenced constant when it is defined in-file. */
+  definition?: number[] | null;
+  /** [startLine, startCol, endLine, endCol, usingDeclName] per occurrence. */
+  usages?: Array<[number, number, number, number, string]>;
+}
+
 export interface IleanFile {
   version?: number;
   module?: string;
   directImports?: Array<[string, boolean, boolean, boolean]> | string[];
   decls?: Record<string, number[]>;
   entries?: Record<string, { line: number; col: number; endLine?: number; endCol?: number }>;
+  /** Keyed by JSON-encoded {c:{m,n}}; lemma-level edges between declarations. */
+  references?: Record<string, IleanReferenceEntry>;
 }
 
 export interface McpToolDefinition {
@@ -241,6 +255,22 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       },
       required: ["symbol"],
     },    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "lean_decl_references",
+    description: "Declaration-level reference graph from the .ilean `references` map: which constants a declaration uses, and which declarations use a constant (lemma -> theorem edges inside one file included). Offline; no Lake or Mathlib needed",
+    inputSchema: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "Declaration or constant name (bare or module-qualified)" },
+        direction: { type: "string", enum: ["uses", "usedBy", "both"], description: "Edge direction (default: both)" },
+        limit: { type: "integer", description: "Maximum edges listed per direction (default: 50)" },
+      },
+      required: ["symbol"],
+    },
+    annotations: {
       readOnlyHint: true,
     },
   },
@@ -776,6 +806,10 @@ export class Lean4IleanIndex {
   private symbolIndex: Map<string, IleanSymbolEntry> = new Map();
   private moduleImportsMap: Map<string, string[]> = new Map();
   private dagIndex: BitsetDAGIndex = new BitsetDAGIndex();
+  /** decl (bare + module-qualified) -> constant ids "Module.name" it references. */
+  private declToRefs: Map<string, Set<string>> = new Map();
+  /** constant id "Module.name" -> declarations that reference it. */
+  private refToDecls: Map<string, Set<string>> = new Map();
   private lastScanTime: number = 0;
 
   constructor(projectRoot: string) {
@@ -786,6 +820,8 @@ export class Lean4IleanIndex {
     this.cache.clear();
     this.symbolIndex.clear();
     this.moduleImportsMap.clear();
+    this.declToRefs.clear();
+    this.refToDecls.clear();
 
     // Resolve workspace root if projectRoot is inside a subpackage or docs/easci/lean
     let wsRoot = this.projectRoot;
@@ -1018,6 +1054,46 @@ export class Lean4IleanIndex {
         }
         this.moduleImportsMap.set(moduleName, imps);
       }
+
+      // 4. Process references: the lemma-level edges the decls table cannot give.
+      //    Key = JSON-encoded {c:{m,n}}; usages[i][4] names the using declaration.
+      if (parsed.references && typeof parsed.references === "object") {
+        for (const [encodedKey, refEntry] of Object.entries(parsed.references)) {
+          let constant: IleanReferenceKey | null = null;
+          try {
+            constant = JSON.parse(encodedKey) as IleanReferenceKey;
+          } catch {
+            continue;
+          }
+          const refModule = constant?.c?.m;
+          const refName = constant?.c?.n;
+          if (!refModule || !refName) continue;
+          const refId = `${refModule}.${refName}`;
+          const usages = Array.isArray(refEntry?.usages) ? refEntry.usages : [];
+          for (const usage of usages) {
+            const declName = usage?.[4];
+            if (typeof declName !== "string" || declName.length === 0) continue;
+            const qualified = moduleName && !declName.startsWith(moduleName)
+              ? `${moduleName}.${declName}`
+              : declName;
+            const declKeys = qualified === declName ? [declName] : [declName, qualified];
+            for (const key of declKeys) {
+              let refs = this.declToRefs.get(key);
+              if (!refs) {
+                refs = new Set<string>();
+                this.declToRefs.set(key, refs);
+              }
+              refs.add(refId);
+            }
+            let users = this.refToDecls.get(refId);
+            if (!users) {
+              users = new Set<string>();
+              this.refToDecls.set(refId, users);
+            }
+            users.add(qualified);
+          }
+        }
+      }
     } catch {
       // Ignore transient or unparseable lockfiles
     }
@@ -1048,6 +1124,68 @@ export class Lean4IleanIndex {
       }
     }
     return null;
+  }
+
+  /**
+   * Declaration-level reference edges from the `.ilean` `references` map:
+   * `uses` = constants a declaration references, `usedBy` = declarations that
+   * reference a constant. Offline (no Lake, no Mathlib) and cheap: the map is
+   * read during the same scan that builds the symbol index.
+   */
+  public lookupReferences(
+    symbol: string,
+    direction: "uses" | "usedBy" | "both",
+    limit: number = 50
+  ): { direction: string; lines: string[]; total: number; resolved: boolean } {
+    if (this.declToRefs.size === 0) this.refresh();
+
+    const resolve = (map: Map<string, Set<string>>, sym: string): { key: string; value: Set<string> } | null => {
+      const exact = map.get(sym);
+      if (exact) return { key: sym, value: exact };
+      for (const [key, value] of map.entries()) {
+        if (key.endsWith("." + sym)) return { key, value };
+      }
+      return null;
+    };
+
+    const describe = (refId: string): string => {
+      const entry = this.symbolIndex.get(refId) || this.symbolIndex.get(refId.split(".").pop() || "");
+      return entry ? `${refId} (${entry.filePath}:${entry.line})` : refId;
+    };
+
+    const lines: string[] = [];
+    let total = 0;
+    let resolved = false;
+
+    if (direction === "uses" || direction === "both") {
+      const hit = resolve(this.declToRefs, symbol);
+      if (hit) {
+        resolved = true;
+        const refs = Array.from(hit.value).sort();
+        total += refs.length;
+        lines.push(`uses (${refs.length} constant(s)):`);
+        for (const refId of refs.slice(0, limit)) lines.push(`  ${describe(refId)}`);
+        if (refs.length > limit) lines.push(`  ... ${refs.length - limit} more`);
+      }
+    }
+    if (direction === "usedBy" || direction === "both") {
+      const hit = resolve(this.refToDecls, symbol);
+      if (hit) {
+        resolved = true;
+        const users = Array.from(hit.value).sort();
+        total += users.length;
+        lines.push(`usedBy (${users.length} declaration(s)):`);
+        for (const decl of users.slice(0, limit)) lines.push(`  ${describe(decl)}`);
+        if (users.length > limit) lines.push(`  ... ${users.length - limit} more`);
+      }
+    }
+    if (!resolved) {
+      lines.push(
+        `no reference edges recorded for '${symbol}' (indexed declarations with edges: ${this.declToRefs.size}). ` +
+          `Run lake build so .ilean files carry a 'references' map, or check the symbol name.`
+      );
+    }
+    return { direction, lines, total, resolved };
   }
 
   public getModuleImports(moduleName: string): string[] {
@@ -3151,6 +3289,18 @@ export class McpServer {
           `Position: line ${match.line}, col ${match.col}` + (match.endLine ? ` to line ${match.endLine}, col ${match.endCol}` : ""),
           match.module ? `Module: ${match.module}` : "",
         ].filter(Boolean).join("\n");
+      }
+
+      case "lean_decl_references": {
+        const symbol = String(args.symbol || "").trim();
+        if (!symbol) throw new Error("Missing required argument: 'symbol'");
+        const direction = (args.direction as "uses" | "usedBy" | "both") || "both";
+        if (!["uses", "usedBy", "both"].includes(direction)) {
+          throw new Error("Invalid argument: 'direction' (expected uses|usedBy|both)");
+        }
+        const limit = clampInt(args.limit, 1, 500, 50);
+        const result = this.ileanIndex.lookupReferences(symbol, direction, limit);
+        return [`Declaration references for '${symbol}':`, ...result.lines].join("\n");
       }
 
       case "lean_module_hierarchy":

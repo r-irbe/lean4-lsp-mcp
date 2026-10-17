@@ -54,6 +54,52 @@ function toJsRegex(pattern) {
   return new RegExp(p, flags);
 }
 
+// Lean-aware mask: replace comments and string literals with spaces while
+// preserving every newline, so line/column arithmetic on the masked text is
+// identical to the raw source. An audit gate that cannot tell prose from code
+// is unsound in both directions: it flags a comment that SAYS "no sorry" and it
+// green-lights a proof whose only remaining `sorry` sits inside a docstring.
+// Rules therefore match against masked code by default; a rule that really
+// targets prose opts in with `scope: any`.
+export function maskLeanNonCode(text) {
+  const out = text.split("");
+  const blank = (i) => { if (out[i] !== "\n") out[i] = " "; };
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    const ch = text[i];
+    const next = text[i + 1];
+    // line comment
+    if (ch === "-" && next === "-") {
+      while (i < n && text[i] !== "\n") { blank(i); i++; }
+      continue;
+    }
+    // block comment, Lean nests them
+    if (ch === "/" && next === "-") {
+      let depth = 0;
+      while (i < n) {
+        if (text[i] === "/" && text[i + 1] === "-") { depth++; blank(i); blank(i + 1); i += 2; continue; }
+        if (text[i] === "-" && text[i + 1] === "/") { depth--; blank(i); blank(i + 1); i += 2; if (depth === 0) break; continue; }
+        blank(i); i++;
+      }
+      continue;
+    }
+    // string literal
+    if (ch === '"') {
+      blank(i); i++;
+      while (i < n) {
+        if (text[i] === "\\") { blank(i); blank(i + 1); i += 2; continue; }
+        if (text[i] === '"') { blank(i); i++; break; }
+        if (text[i] === "\n") { i++; break; } // unterminated: do not swallow the file
+        blank(i); i++;
+      }
+      continue;
+    }
+    i++;
+  }
+  return out.join("");
+}
+
 // Evaluate a rule node against the content. Returns the matching pattern
 // strings or null when the node does not match. A regex node matches only if
 // the compiled pattern actually MATCHES the content (compile success is not
@@ -144,10 +190,13 @@ export function runScan({ rulesDir, targets, minSeverity = "warning" }) {
   const files = walkLean(targets);
   for (const file of files) {
     const content = fs.readFileSync(file, "utf-8");
+    // `scope: any` opts a rule into raw text (prose rules); default is code.
+    const codeContent = maskLeanNonCode(content);
     for (const rule of rules) {
+      const haystack = rule.scope === "any" ? content : codeContent;
       let matched = null;
       try {
-        matched = evalNode(rule.rule, content, compiled);
+        matched = evalNode(rule.rule, haystack, compiled);
       } catch (e) {
         warnings.push({ rule: rule.id, reason: `eval: ${e.message}` });
         continue;
@@ -161,8 +210,8 @@ export function runScan({ rulesDir, targets, minSeverity = "warning" }) {
       const re = typeof firstPattern === "string" ? compiled(firstPattern) : null;
       if (re) {
         re.lastIndex = 0;
-        const m = re.exec(content);
-        if (m) line = content.slice(0, m.index).split("\n").length;
+        const m = re.exec(haystack);
+        if (m) line = haystack.slice(0, m.index).split("\n").length;
       }
       findings.push({
         file,
