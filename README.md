@@ -138,6 +138,34 @@ also use `node dist/index.js`.
 }
 ```
 
+### Choosing the project root
+
+The server serves the project it is launched in. Root resolution is: the
+`LEAN_PROJECT_ROOT` directory when set, else the launch directory when it holds
+a Lake marker, else the nearest Lake root above it, else the launch directory
+unchanged (never another project). Lake markers are `lakefile.lean`,
+`lakefile.toml`, `lake-manifest.json`, and `packages/`; a directory with only
+`lean-toolchain` is used as a last resort.
+
+Pin the root explicitly when your host starts MCP servers from an unrelated
+working directory:
+
+```json
+{
+  "mcpServers": {
+    "lean-lsp": {
+      "command": "lean-lsp-mcp",
+      "env": { "LEAN_PROJECT_ROOT": "/path/to/your/lake/project" }
+    }
+  }
+}
+```
+
+`lakefile.toml` projects are fully supported (`lake env lean` is used for every
+Lean invocation, so project modules are on `LEAN_PATH`). `lean_server_status`
+reports the resolved root, how it was found, and the exact stdin invocation in
+use.
+
 ### Cursor & Windsurf (`.cursor/mcp.json`)
 ```json
 {

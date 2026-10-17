@@ -12,6 +12,13 @@ import { createHash } from "node:crypto";
 import { ContentLimitError, exceedsLspContentLimits, contentLimitBounds } from "./content_limits.ts";
 import { createSingleFlight } from "./single_flight.ts";
 import { BoundedCache } from "./bounded_cache.ts";
+import {
+  planLeanInvocation,
+  resolveProjectRoot,
+  explainLeanFailure,
+  LAKE_ROOT_MARKERS,
+  type ProjectRootResolution,
+} from "./project_root.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1339,10 +1346,14 @@ export class LeanSysrootBridge {
 }
 
 export function formatGoalAsMarkdown(goalText: string): string {
-  if (!goalText || goalText.trim().length === 0) {
+  const text = (goalText ?? "").trim();
+  if (text.length === 0) {
     return "No active goals (proof complete or out of tactic scope).";
   }
-  return "```lean\n" + goalText.trim() + "\n```";
+  // Lean's $/lean/plainGoal already answers with fenced markdown; wrapping it
+  // again produced nested ```lean blocks in every client.
+  if (text.startsWith("```")) return text;
+  return "```lean\n" + text + "\n```";
 }
 
 export function filterGoalText(goalText: string, opts: GoalFilterOptions = {}): string {
@@ -1457,6 +1468,12 @@ export function filterGoalText(goalText: string, opts: GoalFilterOptions = {}): 
   return "```lean\n" + filteredBlocks.join("\n\n") + "\n```";
 }
 
+/** What the kernel says about a live pid (the /proc links, resolved). */
+export interface ProcessIdentity {
+  exe: string;
+  cwd: string;
+}
+
 export interface BuildLockStatus {
   isLocked: boolean;
   pid?: number;
@@ -1545,13 +1562,14 @@ export class LakeBuildGuard {
       }).trim();
 
       if (pgrepOut) {
-        const pids = pgrepOut.split("\n").map((p) => parseInt(p.trim(), 10)).filter(Boolean);
-        if (pids.length > 0) {
+        const allPids = pgrepOut.split("\n").map((p) => parseInt(p.trim(), 10)).filter(Boolean);
+        const scoped = allPids.filter((pid) => this.isBuildOfRoot(pid, leanRoot));
+        if (scoped.length > 0) {
           return {
             isLocked: true,
-            pid: pids[0],
+            pid: scoped[0],
             source: "process_table",
-            detail: `Active lake build processes detected: [${pids.join(", ")}]`,
+            detail: `Active lake build in ${leanRoot}: [${scoped.join(", ")}]`,
           };
         }
       }
@@ -1560,6 +1578,45 @@ export class LakeBuildGuard {
     }
 
     return { isLocked: false, source: "none" };
+  }
+
+  /**
+   * Does `pid` actually build `leanRoot`?
+   *
+   * The pgrep pattern is host-global and matches any command line containing
+   * `lake build|compile|env` - including a shell whose heredoc merely quotes one,
+   * and including every OTHER project on the host. Suspending the interactive
+   * worker for those is a false positive: their writes cannot touch this root's
+   * .olean tree. Require (a) the executable to be the lake binary and (b) the
+   * process cwd to be this root or below it. Platforms without /proc keep the
+   * conservative host-global answer.
+   */
+  public static isBuildOfRoot(
+    pid: number,
+    leanRoot: string,
+    identity: ProcessIdentity | null = this.readProcessIdentity(pid)
+  ): boolean {
+    if (identity === null) {
+      // No /proc (non-Linux) or the process died between pgrep and here: keep
+      // the old, conservative behaviour rather than missing a real build.
+      return true;
+    }
+    if (!/^lake(\.exe)?$/.test(path.basename(identity.exe))) return false;
+    const root = path.resolve(leanRoot);
+    const rel = path.relative(root, path.resolve(identity.cwd));
+    return rel === "" || (!rel.startsWith("..") && !path.isAbsolute(rel));
+  }
+
+  /** /proc view of a process; null when it cannot be read. */
+  public static readProcessIdentity(pid: number): ProcessIdentity | null {
+    try {
+      return {
+        exe: fs.readlinkSync(`/proc/${pid}/exe`),
+        cwd: fs.readlinkSync(`/proc/${pid}/cwd`),
+      };
+    } catch {
+      return null;
+    }
   }
 
   public static isPidAlive(pid: number): boolean {
@@ -1921,12 +1978,34 @@ export interface FileWorkerSession {
   pendingRequests: Map<number, { resolve: (val: any) => void; reject: (err: any) => void }>;
   openFiles: Map<string, TrackedFileWorker>;
   diagnostics: Map<string, { version: number | null; diags: any[]; ts: number }>;
+  /** `$/lean/fileProgress` per uri: pending region count + when it was reported. */
+  progress?: Map<string, { pending: number; version: number | null; ts: number }>;
   buffer: Buffer;
   lastActiveMs: number;
 }
 
 export class FileWorkerManager {
   private projectRoot: string;
+  /** Root provenance, surfaced by lean_server_status (main() sets it in stdio mode). */
+  private projectRootResolution: ProjectRootResolution | null = null;
+
+  public setProjectRootResolution(resolution: ProjectRootResolution): void {
+    this.projectRootResolution = resolution;
+  }
+
+  /**
+   * Resolve a caller-supplied path. Project-relative first, then the server's
+   * launch directory: MCP clients write relative paths against their own cwd, so
+   * rejecting those that resolve outside the root is a pure papercut.
+   */
+  public resolveTargetPath(filePath: string): string {
+    if (path.isAbsolute(filePath)) return filePath;
+    const fromRoot = path.resolve(this.projectRoot, filePath);
+    if (fs.existsSync(fromRoot)) return fromRoot;
+    const fromCwd = path.resolve(process.cwd(), filePath);
+    if (fs.existsSync(fromCwd)) return fromCwd;
+    return fromRoot;
+  }
   /** pi-lens port: identical in-flight read-only requests coalesce (one
    *  execution per key under the broker multiplex). */
   // M10 (pi-lens #2939): the guard bounds the flight at twice the
@@ -2080,6 +2159,7 @@ export class FileWorkerManager {
       pendingRequests: new Map(),
       openFiles: new Map(),
       diagnostics: new Map(),
+      progress: new Map(),
       buffer: Buffer.alloc(0),
       lastActiveMs: Date.now(),
     };
@@ -2100,28 +2180,7 @@ export class FileWorkerManager {
         const body = session!.buffer.subarray(idx + 4, idx + 4 + len).toString("utf-8");
         session!.buffer = session!.buffer.subarray(idx + 4 + len);
         try {
-          const parsed = JSON.parse(body);
-          if (parsed.id !== undefined && session!.pendingRequests.has(parsed.id)) {
-            const handler = session!.pendingRequests.get(parsed.id)!;
-            session!.pendingRequests.delete(parsed.id);
-            if (parsed.error) {
-              handler.reject(new Error(parsed.error.message || JSON.stringify(parsed.error)));
-            } else {
-              handler.resolve(parsed.result);
-            }
-          } else if (parsed.method === "textDocument/publishDiagnostics") {
-            // Deep-audit P8: stash the semantic layer (elaboration +
-            // custom-linter findings) instead of dropping it - the
-            // lean_diagnostics tool serves this stash on demand.
-            const du = String(parsed.params?.uri ?? "");
-            if (du) {
-              session!.diagnostics.set(du, {
-                version: parsed.params?.version ?? null,
-                diags: Array.isArray(parsed.params?.diagnostics) ? parsed.params.diagnostics : [],
-                ts: Date.now(),
-              });
-            }
-          }
+          this.handleServerMessage(session!, JSON.parse(body));
         } catch {
           // Ignore transient parsing errors
         }
@@ -2144,6 +2203,57 @@ export class FileWorkerManager {
     this.sendNotification(session, "initialized", {});
     this.warmSeed(session, leanRoot);
     return session;
+  }
+
+  /**
+   * Apply one server frame to session state: resolve a pending request, stash
+   * diagnostics, or record analysis progress.
+   *
+   * `textDocument/publishDiagnostics` alone cannot answer "is the file clean?":
+   * Lean publishes an EMPTY diagnostic set when analysis starts, so the first
+   * latch is always "no problems" even for a file full of errors. The
+   * `$/lean/fileProgress` notification (processing regions, empty when done) is
+   * the completion signal getDiagnostics waits for.
+   */
+  public handleServerMessage(
+    session: FileWorkerSession,
+    parsed: any
+  ): void {
+    if (parsed?.id !== undefined && session.pendingRequests.has(parsed.id)) {
+      const handler = session.pendingRequests.get(parsed.id)!;
+      session.pendingRequests.delete(parsed.id);
+      if (parsed.error) {
+        handler.reject(new Error(parsed.error.message || JSON.stringify(parsed.error)));
+      } else {
+        handler.resolve(parsed.result);
+      }
+      return;
+    }
+    if (parsed?.method === "textDocument/publishDiagnostics") {
+      // Deep-audit P8: stash the semantic layer (elaboration +
+      // custom-linter findings) instead of dropping it - the
+      // lean_diagnostics tool serves this stash on demand.
+      const du = String(parsed.params?.uri ?? "");
+      if (du) {
+        session.diagnostics.set(du, {
+          version: parsed.params?.version ?? null,
+          diags: Array.isArray(parsed.params?.diagnostics) ? parsed.params.diagnostics : [],
+          ts: Date.now(),
+        });
+      }
+      return;
+    }
+    if (parsed?.method === "$/lean/fileProgress") {
+      const pu = String(parsed.params?.textDocument?.uri ?? "");
+      if (pu) {
+        if (!session.progress) session.progress = new Map();
+        session.progress.set(pu, {
+          pending: Array.isArray(parsed.params?.processing) ? parsed.params.processing.length : 0,
+          version: parsed.params?.textDocument?.version ?? null,
+          ts: Date.now(),
+        });
+      }
+    }
   }
 
   /**
@@ -2332,7 +2442,7 @@ export class FileWorkerManager {
 
   /** Public entry for the lean_resync tool: root-finding + session + force. */
   async resyncFile(filePath: string): Promise<string> {
-    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.projectRoot, filePath);
+    const absPath = this.resolveTargetPath(filePath);
     if (!fs.existsSync(absPath)) {
       return `File not found: ${filePath}`;
     }
@@ -2351,6 +2461,15 @@ export class FileWorkerManager {
     const useDirect = process.env.LEAN_SERVE_DIRECT === "1";
     const lines: string[] = [];
     lines.push(`projectRoot: ${this.projectRoot}`);
+    if (this.projectRootResolution) {
+      const r = this.projectRootResolution;
+      lines.push(`projectRoot source: ${r.source}${r.marker ? ` (marker ${r.marker})` : ""}`);
+    }
+    const invocation = planLeanInvocation(this.projectRoot, ["--stdin"]);
+    lines.push(`stdin invocation: ${invocation.command} ${invocation.args.join(" ")} (cwd ${invocation.cwd}, via ${invocation.via})`);
+    if (invocation.via === "bare") {
+      lines.push(`root markers: none of ${LAKE_ROOT_MARKERS.join(", ")} found; set LEAN_PROJECT_ROOT to a Lake project root for project imports`);
+    }
     lines.push(`attach mode: ${useDirect ? "direct (LEAN_SERVE_DIRECT=1)" : "broker (lean-serve-broker singleton)"}`);
     lines.push(`sessions: ${this.sessions.size}`);
     let openFiles = 0;
@@ -2373,7 +2492,7 @@ export class FileWorkerManager {
     filterOpts?: GoalFilterOptions,
     ileanIndex?: Lean4IleanIndex
   ): Promise<string> {
-    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.projectRoot, filePath);
+    const absPath = this.resolveTargetPath(filePath);
     if (!fs.existsSync(absPath)) {
       return `File not found: ${filePath}`;
     }
@@ -2414,7 +2533,7 @@ export class FileWorkerManager {
   }
 
   public async getTermGoal(filePath: string, line: number, col: number): Promise<string> {
-    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.projectRoot, filePath);
+    const absPath = this.resolveTargetPath(filePath);
     if (!fs.existsSync(absPath)) {
       return `File not found: ${filePath}`;
     }
@@ -2456,7 +2575,7 @@ export class FileWorkerManager {
    * diagnostics to arrive before reporting the stash.
    */
   public async getDiagnostics(filePath: string, maxWaitMs: number): Promise<string> {
-    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.projectRoot, filePath);
+    const absPath = this.resolveTargetPath(filePath);
     if (!fs.existsSync(absPath)) {
       return `File not found: ${filePath}`;
     }
@@ -2467,18 +2586,51 @@ export class FileWorkerManager {
       const uri = this.syncDocument(session, absPath);
       const deadline = startedAt + Math.max(250, maxWaitMs);
       let entry = session.diagnostics.get(uri);
-      while ((!entry || entry.ts < startedAt) && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 150));
+      // Analysis is finished when the LAST fileProgress frame for this uri
+      // carries no pending region AND a diagnostics snapshot newer than the
+      // sync exists. Waiting for "some snapshot" latched the empty set Lean
+      // publishes when analysis STARTS, reporting a broken file as clean.
+      const analysisComplete = () => {
+        const progress = session.progress?.get(uri);
+        return (
+          progress !== undefined &&
+          progress.ts >= startedAt &&
+          progress.pending === 0 &&
+          entry !== undefined &&
+          entry.ts >= startedAt
+        );
+      };
+      while (!analysisComplete() && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
         entry = session.diagnostics.get(uri);
-      }
-      if (!entry || entry.diags.length === 0) {
-        return `No diagnostics reported for ${filePath} (clean, or analysis has not completed yet).`;
+        if (analysisComplete()) {
+          // A final publishDiagnostics may still be in flight behind the
+          // completion frame; give it one poll window before judging.
+          await new Promise((r) => setTimeout(r, 120));
+          entry = session.diagnostics.get(uri);
+          break;
+        }
       }
       const sevName = (s: number) => (s === 1 ? "error" : s === 2 ? "warning" : s === 3 ? "info" : "hint");
-      const lines = entry.diags.slice(0, 40).map((d: any) => {
-        const r = d.range?.start ?? { line: 0, character: 0 };
-        return `L${(r.line ?? 0) + 1}:${(r.character ?? 0) + 1} ${sevName(d.severity ?? 2)}: ${String(d.message ?? "").split("\n")[0].slice(0, 220)}`;
-      });
+      const formatDiagnosticLines = (diagList: any[], limit: number) =>
+        diagList.slice(0, limit).map((d: any) => {
+          const r = d.range?.start ?? { line: 0, character: 0 };
+          return `L${(r.line ?? 0) + 1}:${(r.character ?? 0) + 1} ${sevName(d.severity ?? 2)}: ${String(d.message ?? "").split("\n")[0].slice(0, 220)}`;
+        });
+      if (!analysisComplete()) {
+        const partial = entry && entry.diags.length > 0
+          ? `${entry.diags.length} diagnostic(s) seen before the deadline:\n${formatDiagnosticLines(entry.diags, 10).join("\n")}`
+          : "no diagnostics seen";
+        return (
+          `analysis_incomplete: ${filePath} did not report a completed analysis within ${Math.max(250, maxWaitMs)}ms ` +
+          `(server pending regions: ${session.progress?.get(uri)?.pending ?? "unknown"}; ${partial}). ` +
+          `This is NOT a clean result - re-run with a larger maxWaitMs, or check lean_server_status for a stuck session.`
+        );
+      }
+      if (entry === undefined || entry.diags.length === 0) {
+        return `No diagnostics reported for ${filePath} (analysis completed, 0 findings).`;
+      }
+      const lines = formatDiagnosticLines(entry.diags, 40);
       const counts: Record<string, number> = {};
       for (const d of entry.diags) {
         const k = sevName(d.severity ?? 2);
@@ -2740,6 +2892,15 @@ export class McpServer {
     this.ileanIndex.refresh();
     this.lakeManager = new LakeServerManager(projectRoot);
     this.kuzuGraph = new KuzuKnowledgeGraph();
+  }
+
+  /** Root provenance travels with the file worker, which serves the status verb. */
+  public setProjectRootResolution(resolution: ProjectRootResolution): void {
+    this.lakeManager.setProjectRootResolution(resolution);
+  }
+
+  private resolveTargetPath(filePath: string): string {
+    return this.lakeManager.resolveTargetPath(filePath);
   }
 
   public getKuzuGraph(): KuzuKnowledgeGraph {
@@ -3063,17 +3224,7 @@ export class McpServer {
       case "lean_run_code": {
         const code = args.code;
         if (!code) throw new Error("Missing required argument: 'code'");
-        try {
-          const out = execSync("lean --stdin", {
-            input: code,
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
-            timeout: 15000,
-          });
-          return out.trim() || "No output";
-        } catch (err: any) {
-          return `Error: ${err.message || String(err)}\nOutput: ${err.stdout || ""}\nError Output: ${err.stderr || ""}`;
-        }
+        return this.runLeanStdin(code);
       }
 
       case "lean_axiom_closure": {
@@ -3094,17 +3245,9 @@ export class McpServer {
           throw new Error("Invalid argument: 'module' (expected a Lean module name without whitespace/semicolons)");
         }
         const code = (module ? `import ${module}\n\n` : "") + `#print axioms ${symbol}\n`;
-        try {
-          const out = execSync("lean --stdin", {
-            input: code,
-            encoding: "utf-8",
-            stdio: ["pipe", "pipe", "pipe"],
-            timeout: 15000,
-          });
-          return out.trim() || `${symbol}: no axiom output (is the symbol in scope? pass the declaring module via 'module')`;
-        } catch (err: any) {
-          return `Error: ${err.message || String(err)}\nOutput: ${err.stdout || ""}\nError Output: ${err.stderr || ""}`;
-        }
+        const out = this.runLeanStdin(code);
+        if (out.startsWith("Error:")) return out;
+        return out.trim() || `${symbol}: no axiom output (is the symbol in scope? pass the declaring module via 'module')`;
       }
 
       case "lean_diagnostics": {
@@ -3687,7 +3830,7 @@ export class McpServer {
         if (!filePath) {
           throw new Error("Missing required argument: 'filePath' (or valid 'symbol')");
         }
-        const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.projectRoot, filePath);
+        const absPath = this.resolveTargetPath(filePath);
         if (!fs.existsSync(absPath)) {
           return `File not found: ${filePath}`;
         }
@@ -3762,7 +3905,7 @@ export class McpServer {
         let usesDirect: string[] = [];
 
         if (filePath) {
-          const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.projectRoot, filePath);
+          const absPath = this.resolveTargetPath(filePath);
           if (fs.existsSync(absPath)) {
             const content = fs.readFileSync(absPath, "utf-8");
             const lines = content.split(/\r?\n/);
@@ -4285,7 +4428,7 @@ export class McpServer {
         let rawContent = "";
         let lines: string[] = [];
         if (filePath) {
-          absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.projectRoot, filePath);
+          absPath = this.resolveTargetPath(filePath);
           if (fs.existsSync(absPath)) {
             rawContent = fs.readFileSync(absPath, "utf-8");
             lines = rawContent.split(/\r?\n/);
@@ -4620,7 +4763,7 @@ export class McpServer {
         let absPath = "";
         let lines: string[] = [];
         if (filePath) {
-          absPath = path.isAbsolute(filePath) ? filePath : path.resolve(this.projectRoot, filePath);
+          absPath = this.resolveTargetPath(filePath);
           if (fs.existsSync(absPath)) {
             lines = fs.readFileSync(absPath, "utf-8").split(/\r?\n/);
           }
@@ -4891,6 +5034,30 @@ export class McpServer {
     });
   }
 
+  /**
+   * Run Lean over stdin against the served project's environment.
+   *
+   * Uses `lake env lean --stdin` whenever the root is a Lake project, so project
+   * modules resolve; the failure text carries a [hint] when the error is an
+   * environment error (`unknown module prefix`, `unknown package`).
+   */
+  private runLeanStdin(code: string): string {
+    const invocation = planLeanInvocation(this.projectRoot, ["--stdin"]);
+    try {
+      const out = execSync(`${invocation.command} ${invocation.args.join(" ")}`, {
+        input: code,
+        cwd: invocation.cwd,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+        timeout: 15000,
+      });
+      return out.trim() || "No output";
+    } catch (err: any) {
+      const combined = `${err.stdout || ""}${err.stderr || ""}` || String(err.message || err);
+      return `Error: ${err.message || String(err)}\nOutput: ${err.stdout || ""}\nError Output: ${err.stderr || ""}${explainLeanFailure(combined, invocation)}`;
+    }
+  }
+
   private runBoundedLean(
     scratchPath: string,
     budgetMs: number
@@ -5072,15 +5239,13 @@ export class McpServer {
 }
 
 export function main(): void {
-  let projectRoot = process.cwd();
-  if (!fs.existsSync(path.join(projectRoot, "lakefile.lean")) && !fs.existsSync(path.join(projectRoot, "packages"))) {
-    const defaultRoot = "/home/radu/code/tacit-mui";
-    if (fs.existsSync(defaultRoot)) {
-      projectRoot = defaultRoot;
-    }
-  }
-  const server = new McpServer(projectRoot);
-  process.stderr.write(`[lean-lsp-mcp] Initialized for project ${projectRoot}\n`);
+  const resolution = resolveProjectRoot(process.cwd());
+  const server = new McpServer(resolution.root);
+  server.setProjectRootResolution(resolution);
+  process.stderr.write(
+    `[lean-lsp-mcp] Initialized for project ${resolution.root} ` +
+      `(source ${resolution.source}${resolution.marker ? `, marker ${resolution.marker}` : ""})\n`
+  );
   server.startStdio();
 }
 

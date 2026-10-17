@@ -36,6 +36,12 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
         "```lean\ncase intro\nx : Nat\n|- x + 0 = x\n```",
         "Active goal formatted with lean markdown block"
     );
+    const fencedGoal = formatGoalAsMarkdown("```lean\nx : Nat\n|- x = x\n```");
+    assert.strictEqual(
+        fencedGoal,
+        "```lean\nx : Nat\n|- x = x\n```",
+        "Already-fenced plainGoal output is not double-wrapped"
+    );
     console.log("  - formatGoalAsMarkdown: PASS");
 }
 
