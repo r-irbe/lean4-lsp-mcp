@@ -627,6 +627,8 @@ export class BitsetDAGIndex {
 
     this.isAcyclic = (topoIdx === N);
     if (!this.isAcyclic) {
+      this.forwardClosureMatrix = null;
+      this.reverseClosureMatrix = null;
       return false; // Graph has cycles, fallback to dynamic BFS
     }
 
@@ -682,33 +684,6 @@ export class BitsetDAGIndex {
     const N = this.numNodes;
     const W = this.wordsPerNode;
 
-    // Fast-path: Precomputed bitset matrix available and unconstrained depth
-    const matrix = direction === "imports" ? this.forwardClosureMatrix : this.reverseClosureMatrix;
-    if (matrix && maxDepth >= N) {
-      const base = rootId * W;
-      const items: string[] = [];
-      for (let w = 0; w < W; w++) {
-        let word = matrix[base + w];
-        if (word === 0) continue;
-        const bitOffset = w * 32;
-        while (word !== 0) {
-          const t = word & -word;
-          const bit = 31 - Math.clz32(t);
-          const targetId = bitOffset + bit;
-          if (targetId < N) {
-            items.push(this.idToName[targetId]);
-          }
-          word ^= t;
-        }
-      }
-      return {
-        items,
-        depth: items.length > 0 ? 1 : 0,
-        hasCycle: false,
-      };
-    }
-
-    // Zero-allocation pointer BFS
     const off = direction === "imports" ? this.off : this.boff;
     const dst = direction === "imports" ? this.dst : this.bdst;
 
@@ -719,63 +694,165 @@ export class BitsetDAGIndex {
 
     let head = 0;
     let tail = 0;
-
-    // Enqueue root
-    queue[tail++] = rootId;
-    visitedBits[rootId >>> 5] |= (1 << (rootId & 31));
-
     let maxDepthReached = 0;
     let detectedCycle: string[] | undefined;
 
-    while (head < tail) {
-      const u = queue[head++];
-      const d = depth[u];
+    // Fast-path reachability extraction from precomputed bitset matrix when acyclic and unconstrained
+    const matrix = direction === "imports" ? this.forwardClosureMatrix : this.reverseClosureMatrix;
+    if (matrix && this.isAcyclic && maxDepth >= N) {
+      const base = rootId * W;
+      queue[tail++] = rootId;
+      for (let w = 0; w < W; w++) {
+        visitedBits[w] = matrix[base + w];
+        let word = matrix[base + w];
+        if (word === 0) continue;
+        const bitOffset = w * 32;
+        while (word !== 0) {
+          const t = word & -word;
+          const bit = 31 - Math.clz32(t);
+          const targetId = bitOffset + bit;
+          if (targetId < N && targetId !== rootId) {
+            queue[tail++] = targetId;
+          }
+          word ^= t;
+        }
+      }
+      visitedBits[rootId >>> 5] |= (1 << (rootId & 31));
+    } else {
+      // Zero-allocation pointer BFS
+      queue[tail++] = rootId;
+      visitedBits[rootId >>> 5] |= (1 << (rootId & 31));
 
-      if (d >= maxDepth) continue;
+      while (head < tail) {
+        const u = queue[head++];
+        const d = depth[u];
 
+        if (d >= maxDepth) continue;
+
+        const start = off[u];
+        const end = off[u + 1];
+
+        for (let k = start; k < end; k++) {
+          const v = dst[k];
+
+          // O(1) cycle detection: walk parent chain backwards
+          let p = u;
+          let isCycle = false;
+          while (p !== -1) {
+            if (p === v) {
+              isCycle = true;
+              break;
+            }
+            p = parent[p];
+          }
+
+          if (isCycle) {
+            if (!detectedCycle) {
+              const cycleIds: number[] = [v];
+              let curr = u;
+              while (curr !== -1) {
+                cycleIds.push(curr);
+                if (curr === v) break;
+                curr = parent[curr];
+              }
+              cycleIds.reverse();
+              detectedCycle = cycleIds.map((id) => this.idToName[id]);
+            }
+            continue;
+          }
+
+          // Bitset visited test
+          const wordIdx = v >>> 5;
+          const bitMask = 1 << (v & 31);
+
+          if ((visitedBits[wordIdx] & bitMask) === 0) {
+            visitedBits[wordIdx] |= bitMask;
+            parent[v] = u;
+            depth[v] = d + 1;
+            if (d + 1 > maxDepthReached) maxDepthReached = d + 1;
+            queue[tail++] = v;
+          }
+        }
+      }
+    }
+
+    // Compute exact topological longest-path depth and cycle status on the induced reachable subgraph
+    const inDeg = new Uint32Array(N);
+    for (let i = 0; i < tail; i++) {
+      const u = queue[i];
       const start = off[u];
       const end = off[u + 1];
-
       for (let k = start; k < end; k++) {
         const v = dst[k];
-
-        // O(1) cycle detection: walk parent chain backwards
-        let p = u;
-        let isCycle = false;
-        while (p !== -1) {
-          if (p === v) {
-            isCycle = true;
-            break;
-          }
-          p = parent[p];
+        if ((visitedBits[v >>> 5] & (1 << (v & 31))) !== 0) {
+          inDeg[v]++;
         }
+      }
+    }
 
-        if (isCycle) {
-          if (!detectedCycle) {
-            const cycleIds: number[] = [v];
-            let curr = u;
-            while (curr !== -1) {
-              cycleIds.push(curr);
-              if (curr === v) break;
-              curr = parent[curr];
+    const topoQueue = new Uint32Array(tail);
+    let tHead = 0;
+    let tTail = 0;
+    for (let i = 0; i < tail; i++) {
+      const u = queue[i];
+      if (inDeg[u] === 0) {
+        topoQueue[tTail++] = u;
+      }
+    }
+
+    const longestDepth = new Uint16Array(N);
+    let maxLongestDepth = 0;
+    while (tHead < tTail) {
+      const u = topoQueue[tHead++];
+      const du = longestDepth[u];
+      const start = off[u];
+      const end = off[u + 1];
+      for (let k = start; k < end; k++) {
+        const v = dst[k];
+        if ((visitedBits[v >>> 5] & (1 << (v & 31))) !== 0) {
+          if (du + 1 <= maxDepth && du + 1 > longestDepth[v]) {
+            longestDepth[v] = du + 1;
+            if (longestDepth[v] > maxLongestDepth) {
+              maxLongestDepth = longestDepth[v];
             }
-            cycleIds.reverse();
-            detectedCycle = cycleIds.map((id) => this.idToName[id]);
           }
-          continue;
+          inDeg[v]--;
+          if (inDeg[v] === 0) {
+            topoQueue[tTail++] = v;
+          }
         }
+      }
+    }
 
-        // Bitset visited test
-        const wordIdx = v >>> 5;
-        const bitMask = 1 << (v & 31);
-
-        if ((visitedBits[wordIdx] & bitMask) === 0) {
-          visitedBits[wordIdx] |= bitMask;
-          parent[v] = u;
-          depth[v] = d + 1;
-          if (d + 1 > maxDepthReached) maxDepthReached = d + 1;
-          queue[tail++] = v;
+    const hasCycle = (tTail < tail) || (detectedCycle !== undefined);
+    if (hasCycle && !detectedCycle) {
+      // 3-color DFS on the reachable subgraph to extract a directed cycle witness
+      const color = new Uint8Array(N);
+      const stack: number[] = [];
+      const dfs = (u: number): boolean => {
+        color[u] = 1;
+        stack.push(u);
+        for (let k = off[u]; k < off[u + 1]; k++) {
+          const v = dst[k];
+          if ((visitedBits[v >>> 5] & (1 << (v & 31))) === 0) continue;
+          if (color[v] === 1) {
+            const idx = stack.indexOf(v);
+            const cycleIds = stack.slice(idx);
+            cycleIds.push(v);
+            detectedCycle = cycleIds.map((id) => this.idToName[id]);
+            return true;
+          }
+          if (color[v] === 0 && dfs(v)) {
+            return true;
+          }
         }
+        stack.pop();
+        color[u] = 2;
+        return false;
+      };
+      for (let i = 0; i < tail; i++) {
+        const u = queue[i];
+        if (color[u] === 0 && dfs(u)) break;
       }
     }
 
@@ -787,10 +864,12 @@ export class BitsetDAGIndex {
       items[outIdx++] = this.idToName[queue[i]];
     }
 
+    const effectiveDepth = Math.min(maxDepth, Math.max(maxLongestDepth, maxDepthReached));
+
     return {
       items,
-      depth: maxDepthReached,
-      hasCycle: detectedCycle !== undefined,
+      depth: effectiveDepth,
+      hasCycle,
       cyclePath: detectedCycle,
     };
   }
@@ -3020,7 +3099,7 @@ export class McpServer {
   private projectRoot: string;
   private ileanIndex: Lean4IleanIndex;
   private lakeManager: LakeServerManager;
-  private kuzuGraph: KuzuKnowledgeGraph;
+  public readonly kuzuGraph: KuzuKnowledgeGraph;
   private buffer: string = "";
 
   // Tranche 4 (PLAN-LEAN-LSP-MCP-COUNTEREXAMPLE-VERB): the counterexample
@@ -3033,7 +3112,7 @@ export class McpServer {
     this.ileanIndex = new Lean4IleanIndex(projectRoot);
     this.ileanIndex.refresh();
     this.lakeManager = new LakeServerManager(projectRoot);
-    this.kuzuGraph = new KuzuKnowledgeGraph();
+    this.kuzuGraph = new KuzuKnowledgeGraph(undefined, { workspaceRoot: projectRoot });
   }
 
   /** Root provenance travels with the file worker, which serves the status verb. */

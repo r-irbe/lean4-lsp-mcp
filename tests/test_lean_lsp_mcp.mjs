@@ -396,4 +396,59 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     console.log("  - MultiPackageWorkspaceCoordinator: PASS (packages=" + count + ")");
 }
 
+// 8. BitsetDAGIndex topological longest-path depth & cycle detection (BUG-1)
+{
+    const { BitsetDAGIndex } = await import("../src/index.ts");
+    const dag = new BitsetDAGIndex();
+    // Diamond DAG: A -> B -> C -> D and A -> D (longest path = 3, shortest BFS path = 2)
+    dag.build(new Map([
+        ["A", ["B", "D"]],
+        ["B", ["C"]],
+        ["C", ["D"]],
+        ["D", []],
+    ]));
+
+    const unprecomputed = dag.getTransitiveClosure("A", "imports", 20);
+    assert.strictEqual(unprecomputed.depth, 3, "Topological longest-path depth on diamond DAG is 3 without precompute");
+    assert.strictEqual(unprecomputed.hasCycle, false, "Diamond DAG has no cycle");
+    assert.strictEqual(unprecomputed.items.length, 3, "Reachable items count is 3");
+
+    const precomputedOk = dag.precomputeClosureMatrix();
+    assert.strictEqual(precomputedOk, true, "precomputeClosureMatrix succeeds on acyclic DAG");
+    const precomputed = dag.getTransitiveClosure("A", "imports", 20);
+    assert.strictEqual(precomputed.depth, 3, "Topological longest-path depth on diamond DAG is 3 with precomputed matrix");
+    assert.strictEqual(precomputed.hasCycle, false, "Diamond DAG has no cycle with precomputed matrix");
+
+    // Cyclic graph: X -> Y -> Z -> Y
+    const cyclic = new BitsetDAGIndex();
+    cyclic.build(new Map([
+        ["X", ["Y"]],
+        ["Y", ["Z"]],
+        ["Z", ["Y"]],
+    ]));
+    assert.strictEqual(cyclic.precomputeClosureMatrix(), false, "precomputeClosureMatrix detects cycle");
+    const cycRes = cyclic.getTransitiveClosure("X", "imports", 20);
+    assert.strictEqual(cycRes.hasCycle, true, "getTransitiveClosure reports hasCycle=true on cyclic graph");
+    assert(Array.isArray(cycRes.cyclePath) && cycRes.cyclePath.length >= 2, "cyclePath populated");
+    console.log("  - BitsetDAGIndex (topological longest-path depth & cycle detection): PASS");
+}
+
+// 9. KuzuKnowledgeGraph parameterized / env-configured paths (BUG-2/7/8)
+{
+    const { KuzuKnowledgeGraph } = await import("../src/kuzu_graph.ts");
+    const customDbDir = path.join(os.tmpdir(), `test_kuzu_db_${process.pid}`);
+    const prevEnv = process.env.KUZU_DB_PATH;
+    process.env.KUZU_DB_PATH = customDbDir;
+    try {
+        const kgEnv = new KuzuKnowledgeGraph();
+        assert.strictEqual(kgEnv.dbPath, customDbDir, "KUZU_DB_PATH env configures dbPath");
+    } finally {
+        if (prevEnv === undefined) delete process.env.KUZU_DB_PATH;
+        else process.env.KUZU_DB_PATH = prevEnv;
+    }
+    const kgOpt = new KuzuKnowledgeGraph({ dbPath: "/tmp/custom-opt-kuzu" });
+    assert.strictEqual(kgOpt.dbPath, "/tmp/custom-opt-kuzu", "options.dbPath configures dbPath");
+    console.log("  - KuzuKnowledgeGraph (parameterized & env-configured dbPath): PASS");
+}
+
 console.log("=== All lean4-lsp-mcp Tests Passed ===");
