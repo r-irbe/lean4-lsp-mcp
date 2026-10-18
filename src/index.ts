@@ -435,6 +435,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         theoremName: { type: "string", description: "Name of the theorem/lemma to test (bare name; namespaced names match on their last segment)" },
         samples: { type: "integer", description: "Plausible numInst cap: test instances to generate (default: 100, max: 10000)" },
         budgetMs: { type: "integer", description: "Wall-clock budget for the scratch run in milliseconds (default: 60000, max: 120000)" },
+        strategy: { type: "string", description: "Harness-search strategy: \"slice\" (default; the single v1 shape, byte-identical behavior) or \"dense\" (probe a small candidate set - size schedules and, when the binders are simple and independent, a reversed order - then spend the budget on the best-scoring shape)" },
+        probeBudgetMs: { type: "integer", description: "Dense strategy only: per-probe wall-clock cap in milliseconds (default: min(15000, budgetMs); clamped to 1000..30000 and never above budgetMs)" },
         imports: { type: "array", items: { type: "string" }, description: "Extra Lean modules to import in the scratch harness (validated module names), e.g. [\"EASCI.Testing.Samplers\"] to expose project SampleableExt instances" },
       },
       required: ["filePath", "theoremName"],
