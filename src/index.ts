@@ -948,7 +948,7 @@ export function buildDeclReferenceGraph(source: string): Map<string, string[]> {
       }
     }
     // Local bindings: let x := / let x : / have x := / have x : / intro x / fun x =>
-    const localBindRe = /\b(?:let|have|obtain|rcases|intro|rintro|fun|λ)\s+([A-Za-z_][\w']*)/g;
+    const localBindRe = /\b(?:let|have|obtain|rcases|intro|rintro|fun|\u03BB)\s+([A-Za-z_][\w']*)/g;
     while ((bm = localBindRe.exec(block)) !== null) {
       locals.add(bm[1]);
     }
