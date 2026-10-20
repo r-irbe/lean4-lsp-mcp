@@ -3629,7 +3629,7 @@ export class McpServer {
 
       case "lean_lookup_symbol":
       case "lean_jump_definition": {
-        const symbol = args.symbol;
+        const symbol = args.symbol || args.name || args.query || args.decl;
         if (!symbol) {
           throw new Error("Missing required argument: 'symbol'");
         }
@@ -3646,7 +3646,7 @@ export class McpServer {
       }
 
       case "lean_decl_references": {
-        const symbol = String(args.symbol || "").trim();
+        const symbol = String(args.symbol || args.name || args.query || args.decl || "").trim();
         if (!symbol) throw new Error("Missing required argument: 'symbol'");
         const direction = (args.direction as "uses" | "usedBy" | "both") || "both";
         if (!["uses", "usedBy", "both"].includes(direction)) {
@@ -3659,7 +3659,7 @@ export class McpServer {
 
       case "lean_module_hierarchy":
       case "lean_module_dag": {
-        const moduleName = args.moduleName;
+        const moduleName = args.moduleName || args.module || args.target;
         if (!moduleName) {
           throw new Error("Missing required argument: 'moduleName'");
         }
@@ -4132,10 +4132,10 @@ export class McpServer {
       }
 
       case "lean_book_index_lookup": {
-        const term = String(args.term ?? "").trim().toLowerCase();
+        const term = String(args.term ?? args.query ?? args.concept ?? "").trim().toLowerCase();
         if (!term) throw new Error("Missing required argument: 'term'");
-        const bookFilter = args.book ? String(args.book).trim().toLowerCase() : undefined;
-        const proverFilter = args.prover ? String(args.prover).trim().toLowerCase() : undefined;
+        const bookFilter = (args.book ?? args.book_filter) ? String(args.book ?? args.book_filter).trim().toLowerCase() : undefined;
+        const proverFilter = (args.prover ?? args.prover_filter ?? args.proverFilter) ? String(args.prover ?? args.prover_filter ?? args.proverFilter).trim().toLowerCase() : undefined;
 
         const candidateIndexDirs = [
           path.resolve(__dirname, "../data/itp-ontology/book-indexes"),
@@ -4184,10 +4184,10 @@ export class McpServer {
       }
 
       case "lean_cross_itp_concordance": {
-        const concept = String(args.concept ?? "").trim().toLowerCase();
+        const concept = String(args.concept ?? args.query ?? args.term ?? "").trim().toLowerCase();
         if (!concept) throw new Error("Missing required argument: 'concept'");
-        const sourceFilter = args.source_prover ? String(args.source_prover).trim().toLowerCase() : undefined;
-        const targetFilter = (args.target_prover ?? args.prover) ? String(args.target_prover ?? args.prover).trim().toLowerCase() : undefined;
+        const sourceFilter = (args.source_prover ?? args.sourceProver) ? String(args.source_prover ?? args.sourceProver).trim().toLowerCase() : undefined;
+        const targetFilter = (args.target_prover ?? args.targetProver ?? args.prover) ? String(args.target_prover ?? args.targetProver ?? args.prover).trim().toLowerCase() : undefined;
 
         const lines: string[] = [];
 
@@ -4447,7 +4447,7 @@ export class McpServer {
       }
 
       case "lean_dependency_subgraph": {
-        const moduleName = String(args.moduleName || "").trim();
+        const moduleName = String(args.moduleName || args.module || args.target || "").trim();
         if (!moduleName) throw new Error("Missing required argument: 'moduleName'");
 
         const maxDepth = Number(args.maxDepth ?? 5);
@@ -4496,7 +4496,7 @@ export class McpServer {
       }
 
       case "lean_module_census": {
-        const targetPath = String(args.targetPath || "").trim();
+        const targetPath = String(args.targetPath || args.target || args.path || args.filePath || "").trim();
         if (!targetPath) throw new Error("Missing required argument: 'targetPath'");
 
         const absTarget = path.isAbsolute(targetPath) ? targetPath : path.resolve(this.projectRoot, targetPath);
@@ -5559,8 +5559,8 @@ export class McpServer {
   }
 
   private async counterexampleSearch(args: any): Promise<string> {
-    const filePath = String(args.filePath || "").trim();
-    const theoremName = String(args.theoremName || "").trim();
+    const filePath = String(args.filePath || args.path || args.file || "").trim();
+    const theoremName = String(args.theoremName || args.theorem || args.symbol || args.name || "").trim();
     if (!filePath) return "unsupported: missing required argument 'filePath'";
     if (!theoremName) return "unsupported: missing required argument 'theoremName'";
     const absPath = path.isAbsolute(filePath)

@@ -1,4 +1,4 @@
-# lean-lsp-mcp -- Standalone Lean 4 & C FFI Model Context Protocol Server
+# lean-lsp-mcp: Standalone Lean 4 & C FFI Model Context Protocol Server
 
 `lean-lsp-mcp` is an open-source, standalone Model Context Protocol (MCP) server
 providing AI coding agents (Claude Code, Cursor, Windsurf, Zed, Antigravity) with
@@ -35,23 +35,14 @@ working directory (or set `LEAN_PROJECT_ROOT`); `elan` / `lake` should be on `PA
 
 ---
 
-## 1. Key Capabilities
+## 1. Key Capabilities (21 MCP Tools)
 
-1. **Interactive Proof State (`lean_plain_goal`)**: Queries `$/lean/plainGoal` via
-   persistent `lake serve` child processes, formatting proof goals directly into
-   markdown without file pollution.
-2. **Expected Term Types (`lean_plain_term_goal`)**: Queries `$/lean/plainTermGoal`
-   for exact sub-term typing and implicit argument inspection.
-3. **Sub-millisecond Offline Navigation (`lean_jump_definition`)**: Direct binary
-   JSON parsing of pre-compiled `.lake/build/ir/**/*.ilean` files, returning
-   instant symbol definitions without waiting for compiler elaboration.
-4. **Module Dependency Hierarchy (`lean_module_dag`)**: Fast forward (`imports`)
-   and reverse (`importedBy`) DAG traversal, determining blast radius before edits.
-5. **Cross-Language C FFI Navigation (`lean_c_ffi`)**: Bidirectional resolution
-   between Lean `@[extern]` declarations and human-authored C FFI implementations,
-   plus automatic injection of `lean --print-prefix` headers into `clangd`.
-6. **Code Action Harvesting (`lean_code_actions`)**: Retrieval of suggested `Try this`
-   proof scripts from search tactics (`exact?`, `simp?`, `grind?`).
+1. **Interactive Proof State & AltProof Advisor (`lean_goal`)**: Queries `$/lean/plainGoal` (`target: "tactic"` or `"filtered"`), `$/lean/plainTermGoal` (`target: "term"`), or the static/hybrid AltProof tactic & route advisor (`target: "altproof"`) via persistent `lake serve` broker sessions.
+2. **Live Diagnostics & Abstract Interpretation (`lean_diagnostics`)**: Streams compiler elaboration errors, warnings, unsolved goals, and static abstract-interpretation certificates (`NatSubTruncation` on `a - b` without `b <= a`, `NatDivModByZero` on `/ d` without `0 < d`).
+3. **Counterexample-First Proving (`lean_counterexample_search`)**: Synthesizes and runs an isolated Plausible property test outside the project root using Galois-pruned interval domains (`a <= 100`, `0 < d`, `a + b <= 100`) and AST threshold constants (`strategy: "slice" | "dense"`).
+4. **Sub-5ms Offline `.ilean` Navigation (`lean_lookup_symbol`, `lean_decl_references`, `lean_module_hierarchy`, `lean_dependency_subgraph`)**: Direct binary/JSON parsing of `.lake/build/lib/**/*.ilean` files for instant jump-to-definition, declaration reference graphs (`uses` / `usedBy`), and module import/dependent DAGs without starting `lake serve`.
+5. **Unified Multi-Source Search & Librarian Concordance (`lean_search`, `lean_book_index_lookup`, `lean_cross_itp_concordance`)**: Local ripgrep declaration search, Loogle, LeanSearch, Reservoir, arXiv, Kuzu knowledge graph, 65+ author-curated textbook indexes, and cross-prover tactic concordance (`lean4`, `coq`, `isabelle`, `hol_light`, `agda`).
+6. **Metrics, Axiom Closure, Blueprints & C FFI (`lean_metrics`, `lean_module_census`, `lean_axiom_closure`, `lean_blueprint`, `lean_blueprint_scaffold`, `lean_proof_skeleton`, `lean_ffi`, `lean_exec`, `lean_resync`, `lean_server_status`)**: Project censuses, Milner Place-Link bigraph projections, `#print axioms` trust checks, PlasTeX Blueprint scaffolding, and C FFI sysroot inspection.
 
 ---
 
@@ -62,59 +53,52 @@ working directory (or set `LEAN_PROJECT_ROOT`); `elan` / `lake` should be on `PA
 |                          lean-lsp-mcp ARCHITECTURE                          |
 +-----------------------------------------------------------------------------+
 |                                                                             |
-|  [ AI Host ] (Claude Code / Cursor / Windsurf / Antigravity)                |
+|  [ AI Host ] (Antigravity / Claude Code / Cursor / Windsurf / Copilot)      |
 |       |                                                                     |
 |  stdio JSON-RPC (MCP Protocol)                                              |
 |       v                                                                     |
 |  [ lean-lsp-mcp Server ]                                                    |
-|    |-- Request Dispatcher & Cache Manager                                   |
-|    |-- .ilean Zero-Latency Indexer (Sub-millisecond offline symbol lookup)  |
-|    |-- Lake Server Process Manager (Persistent `lake serve` session)        |
+|    |-- Request Dispatcher, Alias Normalizer & LRU Search Cache              |
+|    |-- .ilean Zero-Latency Indexer (Sub-5ms symbol & reference lookup)      |
+|    |-- Abstract Interpreter (Interval/Zone/Octagon + AltProof Advisor)      |
+|    |-- Plausible Counterexample Harness (Galois-pruned scratch runner)      |
+|    |-- Lake Serve Broker Client (Multiplexed persistent FileWorkers)        |
 |    |-- Clangd C FFI Sysroot Bridge (Injects `lean --print-prefix` headers)  |
 |       |                                                                     |
-|       +---> Lean 4 Toolchain (`lake serve` / `elan`)                        |
-|       +---> Clangd Language Server (`clangd`)                               |
-|       +---> Project Filesystem (`.lake/build/ir/**/*.ilean`, `.olean`)      |
+|       +---> Lean 4 Toolchain (`lake serve` broker / `lake env lean`)        |
+|       +---> Project Filesystem (`.lake/build/lib/**/*.ilean`, `.olean`)     |
 |                                                                             |
 +-----------------------------------------------------------------------------+
 ```
 
 ---
 
-## 3. Tool Specifications
+## 3. Tool Specifications & Agent Quick Reference
 
-### `lean_plain_goal`
-- **Arguments**:
-  - `filePath` (string, required): Absolute or relative path to the `.lean` file.
-  - `line` (number, 1-indexed): Cursor line position.
-  - `character` (number, 1-indexed): Cursor column position.
-- **Returns**: Markdown-rendered proof state with open goals, hypotheses, and types.
+See [`instructions.md`](./instructions.md) for full copy-paste examples and parameter pitfall notes.
 
-### `lean_plain_term_goal`
-- **Arguments**:
-  - `filePath` (string, required)
-  - `line` (number)
-  - `character` (number)
-- **Returns**: Markdown-rendered expected term type at cursor position.
-
-### `lean_jump_definition`
-- **Arguments**:
-  - `symbol` (string, required): Qualified symbol name (e.g. `List.length`).
-  - `sourceFile` (string, optional): Context file for relative namespace resolution.
-  - `preferOfflineIlean` (boolean, default `true`): Use sub-millisecond `.ilean` cache.
-- **Returns**: Target file path, line number, and character range.
-
-### `lean_module_dag`
-- **Arguments**:
-  - `moduleName` (string, required): Dot-separated module name (e.g. `Mathlib.Data.List`).
-  - `direction` (enum: `"imports" | "importedBy"`, default `"imports"`).
-- **Returns**: List of direct and transitive module dependencies.
-
-### `lean_c_ffi`
-- **Arguments**:
-  - `symbol` (string, required): Declaration name or C function identifier.
-  - `action` (enum: `"jump_to_c" | "jump_to_lean" | "inspect_ir"`).
-- **Returns**: Target location or compiled C99 IR excerpt.
+| Tool Name | Required Parameters | Key Optional Parameters |
+| :--- | :--- | :--- |
+| `lean_goal` | `filePath`, `line` (1-indexed) | `col` (1-indexed), `target` (`"tactic" \| "term" \| "filtered" \| "altproof"`), `hideTypeclasses`, `hideInaccessible`, `onlyTarget`, `goal`, `proof` |
+| `lean_diagnostics` | `filePath` | `maxWaitMs` (default `4000`) |
+| `lean_counterexample_search` | `filePath`, `theoremName` | `strategy` (`"slice" \| "dense"`), `samples` (default `100`), `budgetMs` (default `60000`), `imports` |
+| `lean_exec` (alias `lean_run_code`) | `code` | `timeoutMs` (default `15000`) |
+| `lean_resync` | `filePath` | *(none)* |
+| `lean_server_status` | *(none)* | *(none)* |
+| `lean_lookup_symbol` | `symbol` | *(none)* |
+| `lean_decl_references` | `symbol` | `direction` (`"uses" \| "usedBy" \| "both"`), `limit` (default `50`) |
+| `lean_module_hierarchy` | `moduleName` | `direction` (`"imports" \| "importedBy" \| "both"`), `transitive` (bool), `maxDepth` |
+| `lean_dependency_subgraph` | `moduleName` | `maxDepth` (default `5`), `format` (`"mermaid" \| "dot" \| "json"`) |
+| `lean_search` | `query` | `source` (`"code" \| "loogle" \| "ontology" \| "arxiv" \| "datasets" \| "reservoir" \| "book" \| "concordance" \| "symbol" \| "graph"`), `limit`, `prover`, `book` |
+| `lean_book_index_lookup` | `term` (alias `query`) | `book` (corpus substring), `prover` (`"lean4" \| "coq" \| "isabelle" \| "hol_light"`) |
+| `lean_cross_itp_concordance` | `concept` (alias `query`) | `source_prover`, `target_prover` |
+| `lean_metrics` | `target` | `action` (`"census" \| "hierarchy" \| "subgraph" \| "bigraph" \| "axiom_audit" \| "altproof"`), `format`, `goal`, `proof` |
+| `lean_module_census` | `targetPath` (alias `target`) | `format` (`"markdown" \| "json" \| "summary"`) |
+| `lean_axiom_closure` | `symbol` | `module` (declaring module to import first) |
+| `lean_blueprint` | *(none)* | `action` (`"status" \| "scaffold" \| "zettel" \| "skeleton" \| "walkthrough" \| "graph_neighborhood"`), `symbol`, `filePath`, `formalizationDir`, `blueprintDir` |
+| `lean_blueprint_scaffold` | `symbol` | `filePath`, `line` |
+| `lean_proof_skeleton` | `filePath` or `symbol` | *(none)* |
+| `lean_ffi` | *(none)* | `action` (`"inspect_env" \| "resolve_symbol" \| "verify_headers" \| "sysroot"`), `externName`, `cHeaderPath` |
 
 ---
 
