@@ -10,9 +10,13 @@ import { fileURLToPath } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-let defaultWasmInstance: WebAssembly.Instance | null | undefined = undefined;
+export interface WasmInstanceLike {
+  exports: Record<string, any>;
+}
 
-export function getDefaultWasmInstance(): WebAssembly.Instance | null {
+let defaultWasmInstance: WasmInstanceLike | null | undefined = undefined;
+
+export function getDefaultWasmInstance(): WasmInstanceLike | null {
   if (defaultWasmInstance !== undefined) {
     return defaultWasmInstance;
   }
@@ -36,7 +40,7 @@ export function getDefaultWasmInstance(): WebAssembly.Instance | null {
   } catch {
     defaultWasmInstance = null;
   }
-  return defaultWasmInstance;
+  return defaultWasmInstance ?? null;
 }
 
 /**
@@ -343,10 +347,10 @@ export class LeanAbstractInterpreter {
   private declarations: Map<string, AbstractLatticeState> = new Map();
   private wasmModule: any = null;
 
-  constructor(wasmInstance?: WebAssembly.Instance | null | any) {
+  constructor(wasmInstance?: WasmInstanceLike | null | any) {
     const resolved = wasmInstance === undefined ? getDefaultWasmInstance() : wasmInstance;
     if (resolved && typeof resolved === "object" && "exports" in resolved) {
-      this.wasmModule = (resolved as WebAssembly.Instance).exports;
+      this.wasmModule = (resolved as WasmInstanceLike).exports;
     } else {
       this.wasmModule = resolved || null;
     }
