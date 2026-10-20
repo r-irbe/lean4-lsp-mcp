@@ -3168,6 +3168,25 @@ function buildCesHarness(
   return harnessLines.join("\n");
 }
 
+/**
+ * Harvests literal Nat constants from a theorem header (`MOLLERSPA s5.12 p1`, `RIVALYI s6.1 p1`)
+ * and returns a tailored `maxSize` (`maxLiteral + 2`, clamped to `[502, 5000]`) when the header
+ * contains a threshold beyond the standard `sized-wide` (`500`) candidate.
+ */
+export function harvestHeaderNatMaxSize(header: string): number | null {
+  const matches = header.match(/\b[0-9]+\b/g);
+  if (!matches || matches.length === 0) return null;
+  let maxLit = 0;
+  for (const raw of matches) {
+    const val = Number(raw);
+    if (Number.isFinite(val) && val > maxLit && val <= 100000) {
+      maxLit = Math.floor(val);
+    }
+  }
+  if (maxLit <= 500) return null;
+  return Math.min(5000, maxLit + 2);
+}
+
 function buildCesCandidates(header: string, importList: string[]): CesCandidate[] {
   void importList;
   const cands: CesCandidate[] = [
@@ -3175,6 +3194,10 @@ function buildCesCandidates(header: string, importList: string[]): CesCandidate[
     { name: "sized-small", header, maxSize: 8 },
     { name: "sized-wide", header, maxSize: 500 },
   ];
+  const astMaxSize = harvestHeaderNatMaxSize(header);
+  if (astMaxSize !== null) {
+    cands.push({ name: "ast-threshold", header, maxSize: astMaxSize });
+  }
   const reo = splitHeaderForReorder(header);
   if (reo !== null) {
     cands.push({ name: "reordered", header: reo.reversed });

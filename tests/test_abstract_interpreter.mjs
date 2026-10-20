@@ -312,6 +312,15 @@ console.log("Starting Lean Abstract Interpreter Test Suite...");
   console.log("  [PASS] Granger Reduction, Bitwise Ops, Threshold Widening & Zone Termination");
 }
 
+// 6. AST Constant-Harvesting for Counterexample Search (MOLLERSPA s5.12 p1 / RIVALYI s6.1 p1)
+{
+  const { harvestHeaderNatMaxSize } = await import("../dist/index.js");
+  assert.equal(harvestHeaderNatMaxSize("(n : Nat) : n < 150"), null);
+  assert.equal(harvestHeaderNatMaxSize("(n : Nat) : n < 1200"), 1202);
+  assert.equal(harvestHeaderNatMaxSize("(n : Nat) : n < 8000"), 5000);
+  console.log("  [PASS] AST Constant-Harvesting for Counterexample Search");
+}
+
 console.log("All Lean Abstract Interpreter tests passed 100% cleanly!");
 
 
