@@ -451,4 +451,94 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     console.log("  - KuzuKnowledgeGraph (parameterized & env-configured dbPath): PASS");
 }
 
+// 10. AltProof Hybrid Integration (LeanAbstractInterpreter + McpServer lean_goal/lean_metrics/lean_altproof)
+{
+    const { McpServer, LeanAbstractInterpreter } = await import("../src/index.ts");
+    const interp = new LeanAbstractInterpreter();
+
+    // 10a. Pointwise sum monotonicity (finset_mono) + static Nat certificate
+    const monoReport = interp.analyzeAltProof(
+        "Finset.sum s (fun i => c i * f i) <= Finset.sum s (fun i => c i * g i)",
+        "  have h := Nat.div 10 0\n  refine Finset.sum_le_sum fun i _ => ?_\n  exact mul_le_mul_of_nonneg_left (hfg i) (hc i)"
+    );
+    assert.strictEqual(monoReport.features.hasFinsetSum, true, "Detects Finset.sum feature");
+    assert.strictEqual(monoReport.features.hasFinsetMono, true, "Detects Finset.sum monotonicity feature");
+    assert.strictEqual(monoReport.bestTactic, "finset_mono", "Ranks finset_mono first for sum <= sum goal");
+    assert.strictEqual(monoReport.legibility.steps, 3, "Counts 3 non-comment proof steps");
+    assert.strictEqual(monoReport.legibility.verboseScore, 1.0, "All 3 steps are renderable");
+    assert.strictEqual(monoReport.staticCertificates.length, 1, "LeanAbstractInterpreter detects Nat.div 10 0 hazard");
+    assert.strictEqual(monoReport.staticCertificates[0].kind, "NatDivModByZero", "Certificate kind is NatDivModByZero");
+
+    // 10b. McpServer dispatch via lean_altproof, lean_goal (target: "altproof"), and lean_metrics (action: "altproof")
+    const server = new McpServer(process.cwd());
+    try {
+        const mdOut = await server.executeTool("lean_altproof", {
+            goal: "0 <= Finset.sum s (fun i => d i * (u i) ^ 2)",
+            proof: "  finset_nonneg"
+        });
+        assert(mdOut.includes("AltProof Hybrid Tactic & Route Advisor"), "Markdown header rendered");
+        assert(mdOut.includes("`finset_nonneg`"), "Recommends finset_nonneg");
+
+        const jsonViaGoal = await server.executeTool("lean_goal", {
+            target: "altproof",
+            goal: "Opinion.WellFormed op",
+            proof: "  wellformed_tac [op]",
+            format: "json"
+        });
+        const parsedGoal = JSON.parse(jsonViaGoal);
+        assert.strictEqual(parsedGoal.bestTactic, "wellformed_tac", "lean_goal target=altproof recommends wellformed_tac");
+
+        const jsonViaMetrics = await server.executeTool("lean_metrics", {
+            action: "altproof",
+            target: "Channel (Fin 3) (Fin 2)",
+            format: "json"
+        });
+        const parsedMetrics = JSON.parse(jsonViaMetrics);
+        assert.strictEqual(parsedMetrics.bestTactic, "channel_fields", "lean_metrics action=altproof recommends channel_fields");
+
+        // 10c. Multiline LSP goal turnstile isolation (hypotheses before |- do not bleed into target conclusion)
+        const multilineGoal = [
+            "s : Finset Nat",
+            "f : Nat -> Real",
+            "h_le : Finset.sum s f <= 1",
+            "h_nonneg : 0 <= c",
+            "|- Finset.sum s (fun i => 2 * f i) = Finset.sum s (fun i => f i + f i)"
+        ].join("\n");
+        const multiReport = interp.analyzeAltProof(multilineGoal, "");
+        assert.strictEqual(multiReport.features.hasFinsetMono, false, "Hypothesis <= does not trigger hasFinsetMono on equality target");
+        assert.strictEqual(multiReport.features.hasFinsetNonneg, false, "Hypothesis 0 <= does not trigger hasFinsetNonneg on equality target");
+        assert.strictEqual(multiReport.bestTactic, "sum_congr_ring", "Multiline LSP sum equality selects sum_congr_ring");
+
+        // 10d. Symbolic Finset.sum over Fin n does not recommend decide ahead of sum_congr_ring
+        const finSumReport = interp.analyzeAltProof(
+            "Finset.sum univ (fun i : Fin 3 => 2 * f i) = Finset.sum univ (fun i : Fin 3 => f i + f i)",
+            ""
+        );
+        assert.strictEqual(finSumReport.bestTactic, "sum_congr_ring", "Symbolic Finset.sum over Fin 3 selects sum_congr_ring, not decide");
+        assert(!finSumReport.recommendations.some(r => r.tactic === "decide"), "decide suppressed on Finset.sum goal");
+
+        // 10e. Live LSP session goal extraction path via lakeManager.getGoal when (filePath, line, col) is passed without explicit goal
+        const lm = server.getLakeManager();
+        lm.sessions.set(server.leanRoot, { lastUsed: Date.now() });
+        lm.getGoal = async (_filePath, line, col) => {
+            return `\`\`\`lean\nh : 0 <= w i\n|- Finset.sum s (fun i => w i * f i) <= Finset.sum s (fun i => w i * g i)\n\`\`\` (at ${line}:${col})`;
+        };
+        const liveSessionJson = await server.executeTool("lean_altproof", {
+            filePath: "EASCI/Tests/TacticAltProof.lean",
+            line: 40,
+            col: 4,
+            proof: "  finset_mono",
+            format: "json"
+        });
+        const parsedLive = JSON.parse(liveSessionJson);
+        assert.strictEqual(parsedLive.bestTactic, "finset_mono", "Live LSP goal fetched via lakeManager.getGoal and dispatched to finset_mono");
+        assert.strictEqual(parsedLive.features.hasFinsetNonneg, false, "Turnstile isolation holds on fenced LSP getGoal output");
+    } finally {
+        server.getLakeManager().dispose();
+    }
+    console.log("  - AltProof Hybrid Integration (LeanAbstractInterpreter + McpServer): PASS");
+}
+
 console.log("=== All lean4-lsp-mcp Tests Passed ===");
+
+

@@ -110,7 +110,7 @@ export interface TransitiveClosureResult {
 export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   {
     name: "lean_goal",
-    description: "Queries interactive Lean 4 tactic proof state, filtered proof state, or expected term type at cursor position ($/lean/plainGoal, $/lean/plainTermGoal)",
+    description: "Queries interactive Lean 4 tactic proof state, filtered proof state, expected term type, or AltProof route/tactic advisor at cursor position ($/lean/plainGoal, $/lean/plainTermGoal, AltProof)",
     inputSchema: {
       type: "object",
       properties: {
@@ -118,7 +118,10 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         line: { type: "integer", description: "1-based line number" },
         col: { type: "integer", description: "1-based column number (synonym: character)" },
         character: { type: "integer", description: "Synonym for col" },
-        target: { type: "string", enum: ["tactic", "term", "filtered"], description: "Goal target type (default: tactic)" },
+        target: { type: "string", enum: ["tactic", "term", "filtered", "altproof"], description: "Goal target type (default: tactic)" },
+        goal: { type: "string", description: "Optional explicit goal string for target='altproof' when offline" },
+        proof: { type: "string", description: "Optional current proof block for target='altproof' legibility and cost scoring" },
+        format: { type: "string", enum: ["markdown", "json"], description: "Output format for target='altproof' (default: markdown)" },
         filter: { type: "string", enum: ["all", "hypotheses", "target"], description: "Filtering intensity (default: all)" },
         hideTypeclasses: { type: "boolean", description: "Filter out ambient typeclass instances" },
         hideInaccessible: { type: "boolean", description: "Filter out compiler internal/dagger variables" },
@@ -182,16 +185,18 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "lean_metrics",
-    description: "Module and project metrics: static code census, module dependency hierarchy DAG, dependency subgraphs, dual Place-Link bigraph projection, and certified axiom audit",
+    description: "Module and project metrics: static code census, module dependency hierarchy DAG, dependency subgraphs, dual Place-Link bigraph projection, certified axiom audit, and AltProof elegance/tactic analysis",
     inputSchema: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["census", "hierarchy", "subgraph", "bigraph", "axiom_audit"],
+          enum: ["census", "hierarchy", "subgraph", "bigraph", "axiom_audit", "altproof"],
           description: "Metric action to perform (default: census)",
         },
-        target: { type: "string", description: "Target file path, directory path, or module name" },
+        target: { type: "string", description: "Target file path, directory path, module name, or goal string" },
+        goal: { type: "string", description: "Optional explicit goal string for action='altproof'" },
+        proof: { type: "string", description: "Optional proof block for action='altproof'" },
         direction: { type: "string", enum: ["imports", "importedBy", "both"], description: "Traversal direction for hierarchy (default: both)" },
         transitive: { type: "boolean", description: "Whether to compute full transitive closure (default: false)" },
         maxDepth: { type: "integer", description: "Max traversal depth (default: 10)" },
@@ -3518,13 +3523,17 @@ export class McpServer {
     switch (name) {
       case "lean_goal":
       case "lean_plain_goal": {
+        const target = String(args.target || "tactic").toLowerCase();
+        if (target === "altproof") {
+          return await this.evaluateAltProof(args);
+        }
+
         const filePath = args.filePath || args.path || args.file;
         if (!filePath) {
           throw new Error("Missing required argument: 'filePath'");
         }
         const line = Number(args.line ?? 1);
         const col = Number(args.col ?? args.character ?? 1);
-        const target = String(args.target || "tactic").toLowerCase();
 
         if (target === "term") {
           return await this.lakeManager.getTermGoal(filePath, line, col);
@@ -5393,12 +5402,22 @@ export class McpServer {
             targetPath: target,
             format: args.format,
           });
+        } else if (action === "altproof") {
+          return await this.evaluateAltProof({
+            ...args,
+            goal: args.goal || (typeof target === "string" && target !== "." ? target : ""),
+          });
         } else {
           return await this.executeTool("lean_module_census", {
             targetPath: target,
             format: args.format,
           });
         }
+      }
+
+      case "lean_altproof":
+      case "lean_tactic_advisor": {
+        return await this.evaluateAltProof(args);
       }
 
       case "lean_ffi": {
@@ -5421,6 +5440,95 @@ export class McpServer {
       default:
         throw new Error(`Unknown tool: '${name}'`);
     }
+  }
+
+  public async evaluateAltProof(args: any): Promise<string> {
+    let goalText = String(args.goal || args.goalText || "").trim();
+    let proofText = String(args.proof || args.proofText || "").trim();
+    const filePath = args.filePath || args.path || args.file;
+    const line = Number(args.line ?? 0);
+    const col = Number(args.col ?? args.character ?? 1);
+
+    if (filePath) {
+      const absPath = this.resolveTargetPath(String(filePath));
+      if (fs.existsSync(absPath)) {
+        if (!proofText && line > 0) {
+          try {
+            const srcLines = fs.readFileSync(absPath, "utf-8").split(/\r?\n/);
+            const startIdx = Math.max(0, line - 1);
+            const endIdx = Math.min(srcLines.length, startIdx + 25);
+            proofText = srcLines.slice(startIdx, endIdx).join("\n");
+          } catch {
+            // ignore read error
+          }
+        }
+        if (!goalText && line > 0 && process.env.LEAN_ALTPROOF_SKIP_LSP !== "1") {
+          const leanRoot = this.lakeManager.findLeanRoot(absPath);
+          const buildStatus = LakeBuildGuard.inspectBuildActivity(leanRoot);
+          if (!buildStatus.isLocked && (this.lakeManager as any).sessions?.has(leanRoot)) {
+            try {
+              const liveGoal = await this.lakeManager.getGoal(String(filePath), line, col, {
+                hideTypeclasses: true,
+                hideInaccessible: true,
+              });
+              if (liveGoal && !liveGoal.startsWith("Lake LSP error:")) {
+                goalText = liveGoal;
+              }
+            } catch {
+              // fallback to static proof window
+            }
+          }
+        }
+      }
+    }
+
+    if (!goalText && !proofText) {
+      throw new Error("Missing required argument: provide 'goal', 'proof', or ('filePath' and 'line')");
+    }
+
+    const interp = new LeanAbstractInterpreter();
+    const report = interp.analyzeAltProof(goalText, proofText);
+    const format = String(args.format || "markdown").toLowerCase();
+    if (format === "json") {
+      return JSON.stringify(report, null, 2);
+    }
+
+    const lines: string[] = [
+      `# AltProof Hybrid Tactic & Route Advisor`,
+      `- **Best Recommended Tactic**: \`${report.bestTactic || "elegance?"}\` (est. ${report.bestEstimatedHeartbeats} heartbeats)`,
+      `- **Legibility Score (S7 v1)**: ${report.legibility.verboseScore.toFixed(2)} (${report.legibility.renderable}/${report.legibility.steps} steps renderable, baseline costX10=${report.baselineCostX10})`,
+      `- **Detected Features**: finsetSum=${report.features.hasFinsetSum}, finsetNonneg=${report.features.hasFinsetNonneg}, finsetMono=${report.features.hasFinsetMono}, abs=${report.features.hasAbs}, natArith=${report.features.hasNatArith}, wellFormed=${report.features.hasWellFormed}, channel=${report.features.hasChannelOrPrior}`,
+      "",
+      `## Recommended Tactics (${report.recommendations.length})`,
+    ];
+
+    if (report.recommendations.length === 0) {
+      lines.push(`- No single-step closer matched statically; run interactive \`elegance?\` or decompose via the routes below.`);
+    } else {
+      for (const r of report.recommendations) {
+        lines.push(
+          `- **\`${r.tactic}\`** [${r.targetPattern}] (est. ${r.estimatedHeartbeats} hb, confidence ${(r.confidence * 100).toFixed(0)}%, costX10=${r.projectedCostX10}): ${r.rationale}`
+        );
+      }
+    }
+
+    lines.push("", `## Relevant Transformation Routes (${report.relevantRoutes.length})`);
+    for (const rt of report.relevantRoutes) {
+      lines.push(`- **[${rt.family}] \`${rt.id}\`**: ${rt.rewriteHint} *(${rt.costHint})*`);
+    }
+
+    if (report.staticCertificates.length > 0) {
+      lines.push("", `## Static Abstract Interpretation Certificates (${report.staticCertificates.length})`);
+      for (const c of report.staticCertificates) {
+        lines.push(`- L${c.line}:${c.col} [${c.kind}] ${c.summary} Hint: ${c.hint}`);
+      }
+    }
+
+    if (report.zoneDecreasingHint) {
+      lines.push("", `## Zone Domain Termination Certificate`, `- ${report.zoneDecreasingHint}`);
+    }
+
+    return lines.join("\n");
   }
 
   private async counterexampleSearch(args: any): Promise<string> {

@@ -437,6 +437,84 @@ export class LeanAbstractInterpreter {
     return "TOP";
   }
 
+  /**
+   * Tightens two natural-number intervals `iv0 = [min0, max0]` and `iv1 = [min1, max1]`
+   * under relational octagon constraints `sumLo <= x0 + x1 <= sumHi` and `x0 - x1 <= diffHi`
+   * (`NatOctagonDomain`, Mine 2006 / Pelleau 2015).
+   * Returns `[reducedIv0, reducedIv1]` or `null` if the system is unsatisfiable (`Bottom`).
+   */
+  reduceOctagonTwoVars(
+    iv0: IntervalBound,
+    iv1: IntervalBound,
+    sumLo: number,
+    sumHi: number,
+    diffHi: number = Number.POSITIVE_INFINITY
+  ): [IntervalBound, IntervalBound] | null {
+    const MAX_I64 = 9223372036854775807n;
+    const toI64 = (v: number): bigint =>
+      !Number.isFinite(v) ? MAX_I64 : BigInt(Math.trunc(v));
+
+    if (
+      this.wasmModule &&
+      typeof this.wasmModule.lean_analyzer_octagon_reduce_two_vars === "function" &&
+      this.wasmModule.memory &&
+      typeof this.wasmModule.lean_analyzer_get_scratch_ptr === "function"
+    ) {
+      const ptr = this.wasmModule.lean_analyzer_get_scratch_ptr();
+      const ok = this.wasmModule.lean_analyzer_octagon_reduce_two_vars(
+        toI64(Math.max(0, iv0.min)),
+        toI64(iv0.max),
+        toI64(Math.max(0, iv1.min)),
+        toI64(iv1.max),
+        toI64(Math.max(0, sumLo)),
+        toI64(sumHi),
+        toI64(diffHi),
+        ptr
+      );
+      if (ok === 0) return null;
+      const view = new BigInt64Array(this.wasmModule.memory.buffer, ptr, 4);
+      const fromI64 = (b: bigint): number =>
+        b >= MAX_I64 ? Number.POSITIVE_INFINITY : Number(b);
+      return [
+        { min: fromI64(view[0]), max: fromI64(view[1]) },
+        { min: fromI64(view[2]), max: fromI64(view[3]) }
+      ];
+    }
+
+    // Pure-TS fallback: iterative interval-sum-diff propagation + integer halving
+    let lo0 = Math.max(0, Math.trunc(iv0.min));
+    let hi0 = Number.isFinite(iv0.max) ? Math.trunc(iv0.max) : Number.POSITIVE_INFINITY;
+    let lo1 = Math.max(0, Math.trunc(iv1.min));
+    let hi1 = Number.isFinite(iv1.max) ? Math.trunc(iv1.max) : Number.POSITIVE_INFINITY;
+    const sLo = Math.max(0, Math.trunc(sumLo));
+    const sHi = Number.isFinite(sumHi) ? Math.trunc(sumHi) : Number.POSITIVE_INFINITY;
+    const dHi = Number.isFinite(diffHi) ? Math.trunc(diffHi) : Number.POSITIVE_INFINITY;
+
+    for (let iter = 0; iter < 4; iter++) {
+      if (Number.isFinite(hi1)) lo0 = Math.max(lo0, sLo - hi1);
+      if (Number.isFinite(sHi)) hi0 = Math.min(hi0, sHi - lo1);
+      if (Number.isFinite(hi0)) lo1 = Math.max(lo1, sLo - hi0);
+      if (Number.isFinite(sHi)) hi1 = Math.min(hi1, sHi - lo0);
+
+      if (Number.isFinite(dHi)) {
+        if (Number.isFinite(hi1)) hi0 = Math.min(hi0, hi1 + dHi);
+        lo1 = Math.max(lo1, lo0 - dHi);
+        if (Number.isFinite(sHi)) {
+          hi0 = Math.min(hi0, Math.floor((sHi + dHi) / 2));
+        }
+      }
+      if (lo0 > hi0 || lo1 > hi1) return null;
+    }
+
+    if (lo0 + lo1 > sHi || hi0 + hi1 < sLo) return null;
+    if (Number.isFinite(dHi) && lo0 - hi1 > dHi) return null;
+
+    return [
+      { min: lo0, max: hi0 },
+      { min: lo1, max: hi1 }
+    ];
+  }
+
   private evalBinaryNatOp(
     op: string,
     leftRaw: AbstractLatticeState,
@@ -1060,5 +1138,403 @@ export class LeanAbstractInterpreter {
 
     return out;
   }
+
+  /**
+   * Evaluates a Lean 4 goal and optional proof script using the hybrid
+   * `lean-analyzer` + AltProof route/tactic/legibility/cost pipeline
+   * (`SPEC-ALT-PROOF-DES`, `ALT_PROOF_SAIR_BRIDGE`).
+   */
+  analyzeAltProof(goalText: string, proofText: string = ""): AltProofAnalysisReport {
+    return analyzeAltProofGoalAndBlock(this, goalText, proofText);
+  }
 }
+
+export interface AltProofRoute {
+  id: string;
+  family: string;
+  matchShape: string;
+  rewriteHint: string;
+  costHint: string;
+  provenance: string;
+}
+
+export interface AltProofGoalFeatures {
+  hasFinsetSum: boolean;
+  hasFinsetNonneg: boolean;
+  hasFinsetMono: boolean;
+  hasAbs: boolean;
+  hasIteOrDecide: boolean;
+  hasNegOrContra: boolean;
+  hasNatArith: boolean;
+  hasWellFounded: boolean;
+  hasWellFormed: boolean;
+  hasChannelOrPrior: boolean;
+}
+
+export interface AltProofTacticRecommendation {
+  tactic: string;
+  targetPattern: string;
+  rationale: string;
+  estimatedHeartbeats: number;
+  confidence: number;
+  projectedCostX10: number;
+}
+
+export interface AltProofLegibilityScore {
+  steps: number;
+  renderable: number;
+  verboseScore: number;
+  heavySteps: string[];
+}
+
+export interface AltProofAnalysisReport {
+  goal: string;
+  features: AltProofGoalFeatures;
+  relevantRoutes: AltProofRoute[];
+  recommendations: AltProofTacticRecommendation[];
+  legibility: AltProofLegibilityScore;
+  baselineCostX10: number;
+  bestTactic: string | null;
+  bestEstimatedHeartbeats: number;
+  staticCertificates: Array<DiagnosticCertificate & { line: number; col: number }>;
+  zoneDecreasingHint?: string;
+}
+
+export const ALTPROOF_ROUTE_TABLE: AltProofRoute[] = [
+  {
+    id: "extract-shared-block",
+    family: "extraction",
+    matchShape: "a >=3-line proof block reused verbatim or modulo renaming",
+    rewriteHint: "name the block as a lemma; call it at each site",
+    costHint: "high-yield: counts once, serves N sites",
+    provenance: "long-proof campaign fixtures 1-15, 17 (36 shared lemmas)"
+  },
+  {
+    id: "extract-mathlib-absent",
+    family: "extraction",
+    matchShape: "a generic block with no Mathlib equivalent (verified absent before naming)",
+    rewriteHint: "name it in the owning module; flag as an upstreaming candidate",
+    costHint: "highest yield: reusable beyond the corpus",
+    provenance: "fixtures 10-11 (cesaro_tendsto_of_geometric_bound -> PR #44591; sum_mul_le_sum_mul_sum)"
+  },
+  {
+    id: "extract-horizon-package",
+    family: "extraction",
+    matchShape: "three or more inline steps serving one standing theorem family",
+    rewriteHint: "package the steps as a named lemma trio in the theorem's module",
+    costHint: "high-yield: the Doeblin package pattern",
+    provenance: "fixture 12 (doeblin_card_mul_le_one, realStep_iterate_mul, stationary_ge_of_doeblin)"
+  },
+  {
+    id: "extract-cauchy-toolkit",
+    family: "extraction",
+    matchShape: "a Cauchy/convergence argument assembled from pointwise and sum-level lemmas",
+    rewriteHint: "extract the four standard sub-steps as reusable convergence lemmas",
+    costHint: "high-yield: the GAP-7 pattern (154 -> ~40)",
+    provenance: "fixture 17 (iterate_sum_cauchy, pointwise_cauchy_of_sum_cauchy, sum_dist_tendsto_of_pointwise, step_fixedpoint_of_sum_dist_tendsto)"
+  },
+  {
+    id: "uniform-simp-collapse",
+    family: "reflection",
+    matchShape: "branched case analysis where one uniform simp set closes every branch",
+    rewriteHint: "replace the branches with one uniform simp call (the boolean-reflection pattern)",
+    costHint: "high-yield: 76 lines/6 branches -> cleared (fixture 16)",
+    provenance: "fixture 16 (gate_row_diff_bound)"
+  },
+  {
+    id: "redirect-by-contradiction",
+    family: "redirect",
+    matchShape: "by_contra-heavy proofs with a constructible direct witness",
+    rewriteHint: "restate as a direct construction (the JAR 2016 redirect class)",
+    costHint: "reserved: no corpus fixture yet - the tool's first hit becomes it",
+    provenance: "JAR16 redirect procedure; ballot B3"
+  },
+  {
+    id: "algorithm-class-substitution",
+    family: "algorithm-class-substitution",
+    matchShape: "exponential or unhoisted recursion with an equivalent closed-form or DP reduction",
+    rewriteHint: "substitute algorithm class (e.g. in-place DP or structural sieve) and prove equivalence to spec",
+    costHint: "highest kernel yield: 20-30x reduction in kernel steps / rfl time",
+    provenance: "SAIR Lean Kernel Challenge lanes (partition in-place DP S1/S1b, primecount sieve S6)"
+  },
+  {
+    id: "kernel-friendly-term-design",
+    family: "kernel-friendly-term-design",
+    matchShape: "structural recursion or helper calls with heavy defeq unfolding overhead",
+    rewriteHint: "refactor to kernel-friendly primitives (structural Nat.rec, unrolled trial division, import-minimal path)",
+    costHint: "high kernel yield: reduces defeq heartbeats and avoids WellFounded.fix traps",
+    provenance: "SAIR Lean Kernel Challenge lanes (primecount L1 structural trial division S5)"
+  }
+];
+
+export function computeAltProofCostX10(
+  lines: number,
+  sharedLemmas: number = 0,
+  upstream: boolean = false,
+  kernelCostUnits: number = 0
+): number {
+  const base = Math.max(0, Math.trunc(lines)) * 1;
+  const bonus = Math.max(0, Math.trunc(sharedLemmas)) * 50;
+  const up = upstream ? 200 : 0;
+  const kCost = Math.max(0, Math.trunc(kernelCostUnits)) * 10;
+  return base - bonus - up + kCost;
+}
+
+const ALTPROOF_RENDERABLE_PATTERNS: RegExp[] = [
+  /^exact\s+\S/,
+  /^apply\s+\S/,
+  /^have\s+\w+\s*:?=?\s*\S+/,
+  /^(unfold|simp|simp_rw|rw|erw)\b/,
+  /^(linarith|nlinarith|omega|ring|ring_nf|field_simp|positivity|norm_num|rfl|exact\?|aesop|grind|decide|sum_congr_ring|finset_nonneg|finset_mono|wellformed_tac|channel_fields|alt_proof|elegance\?)\b/,
+  /^(constructor|refine|use|exists|intro|intros|induction|cases|rcases|obtain|fin_cases)\b/
+];
+
+export function scoreAltProofLegibility(proofText: string): AltProofLegibilityScore {
+  const steps = (proofText || "")
+    .split(/\r?\n/)
+    .map((ln) => ln.trim())
+    .filter((ln) => ln.length > 0 && !ln.startsWith("--"));
+  let renderable = 0;
+  const heavySteps: string[] = [];
+  for (const st of steps) {
+    const ok = ALTPROOF_RENDERABLE_PATTERNS.some((p) => p.test(st));
+    if (ok) {
+      renderable++;
+    } else if (heavySteps.length < 5) {
+      heavySteps.push(st.slice(0, 80));
+    }
+  }
+  const total = steps.length;
+  return {
+    steps: total,
+    renderable,
+    verboseScore: total > 0 ? Number((renderable / total).toFixed(4)) : 1.0,
+    heavySteps
+  };
+}
+
+function extractGoalTarget(goalText: string): string {
+  let raw = (goalText || "").trim();
+  if (raw.startsWith("```")) {
+    raw = raw.replace(/^```[a-zA-Z0-9_-]*\s*/, "").replace(/\s*```$/, "");
+  }
+  const parts = raw.split(/(?:\|-|\u22A2)/);
+  return parts.length > 1 ? parts[parts.length - 1].trim() : raw;
+}
+
+export function analyzeAltProofGoalAndBlock(
+  interpreter: LeanAbstractInterpreter,
+  goalText: string,
+  proofText: string = ""
+): AltProofAnalysisReport {
+  const goal = goalText || "";
+  const target = extractGoalTarget(goal);
+  const proof = proofText || "";
+  const combined = `${goal}\n${proof}`;
+  const targetNoArrows = target.replace(/->/g, " ").replace(/=>/g, " ");
+
+  const hasFinsetSum = /(?:\bFinset\.sum\b|\u2211|\bsum_sub_distrib\b|\bsum_add_distrib\b|\bmul_sum\b|\bsum_mul\b)/.test(combined);
+  const hasFinsetSumInTargetOrProof = /(?:\bFinset\.sum\b|\u2211|\bsum_sub_distrib\b|\bsum_add_distrib\b|\bmul_sum\b|\bsum_mul\b)/.test(`${target}\n${proof}`);
+  const hasFinsetNonneg =
+    /(?:0\s*(?:<=|\u2264)\s*(?:Finset\.sum\b|\u2211))/.test(target) ||
+    /\b(?:Finset\.sum_nonneg|finset_nonneg)\b/.test(proof);
+  const hasFinsetMono =
+    /(?:(?:Finset\.sum\b|\u2211)[\s\S]*?(?:<=|\u2264)[\s\S]*?(?:Finset\.sum\b|\u2211))/.test(target) ||
+    /\b(?:Finset\.sum_le_sum|finset_mono)\b/.test(proof);
+  const hasAbs = /(?:\babs\b|\bNorm\.norm\b|\bDist\.dist\b|\|[^|]+\|)/.test(combined);
+  const hasIteOrDecide = /(?:\bite\b|\bdite\b|\bdecide\b|\bif\b[\s\S]+?\bthen\b|\bFin\s+\d+|\btrue\b|\bfalse\b)/.test(combined);
+  const hasNegOrContra = /(?:\bNot\b|\bFalse\b|\bby_contra\b|\u00AC)/.test(combined);
+  const hasNatContext = /(?:\bNat\b|\bInt\b|\bdiv\b|\bmod\b|\u2115|\u2124)/.test(goal) ||
+    /\b\d+\s*(?:\+|-|\*|<=|<|>=|>)\s*\d+\b/.test(targetNoArrows);
+  const hasArithOp = /(?:\+|-|\*|<=|<|>=|>|\u2264|\u2265)/.test(targetNoArrows);
+  const hasRealLin = /(?:\bReal\b|\u211d|\blinarith\b)/.test(combined);
+  const hasWellFounded = /(?:\bWellFounded\.fix\b|\btermination_by\b|\bdecreasing_by\b)/.test(combined);
+  const hasWellFormed = /(?:\bWellFormed\b|\bwellformed_tac\b|\bfin_cases\b[\s\S]*?\bnorm_num\b)/.test(`${target}\n${proof}`);
+  const hasChannelOrPrior = /(?:\bChannel\b|\bPrior\b|\bchannel_fields\b)/.test(`${target}\n${proof}`);
+  const hasNatArith = Boolean(
+    (hasNatContext || (hasArithOp && !hasFinsetSumInTargetOrProof && !hasWellFormed)) &&
+    hasArithOp &&
+    !hasRealLin &&
+    !hasFinsetSumInTargetOrProof
+  );
+
+  const features: AltProofGoalFeatures = {
+    hasFinsetSum,
+    hasFinsetNonneg,
+    hasFinsetMono,
+    hasAbs,
+    hasIteOrDecide,
+    hasNegOrContra,
+    hasNatArith,
+    hasWellFounded,
+    hasWellFormed,
+    hasChannelOrPrior
+  };
+
+  const pickedRoutes = ALTPROOF_ROUTE_TABLE.filter((r) => {
+    switch (r.id) {
+      case "extract-shared-block":
+      case "extract-mathlib-absent":
+        return features.hasFinsetSum || features.hasAbs;
+      case "extract-horizon-package":
+        return features.hasFinsetSum && features.hasAbs;
+      case "extract-cauchy-toolkit":
+        return features.hasAbs;
+      case "uniform-simp-collapse":
+        return features.hasIteOrDecide || features.hasNatArith;
+      case "redirect-by-contradiction":
+        return features.hasNegOrContra;
+      case "algorithm-class-substitution":
+        return features.hasFinsetSum || features.hasWellFounded;
+      case "kernel-friendly-term-design":
+        return features.hasWellFounded || features.hasNatArith;
+      default:
+        return false;
+    }
+  });
+  const relevantRoutes = pickedRoutes.length > 0 ? pickedRoutes : ALTPROOF_ROUTE_TABLE.slice(0, 3);
+
+  const recommendations: AltProofTacticRecommendation[] = [];
+  const pushRec = (
+    tactic: string,
+    targetPattern: string,
+    rationale: string,
+    estimatedHeartbeats: number,
+    confidence: number
+  ) => {
+    const kUnits = Math.floor(estimatedHeartbeats / 1000);
+    recommendations.push({
+      tactic,
+      targetPattern,
+      rationale,
+      estimatedHeartbeats,
+      confidence,
+      projectedCostX10: computeAltProofCostX10(1, 0, false, kUnits)
+    });
+  };
+
+  if (hasNatArith) {
+    pushRec(
+      "omega",
+      "linear-nat-int-arithmetic",
+      "Native Lean 4 Presburger arithmetic decision procedure; eliminates manual induction on inequalities.",
+      150,
+      0.92
+    );
+  }
+  if (hasRealLin) {
+    pushRec(
+      "linarith",
+      "linear-real-inequalities",
+      "Fourier-Motzkin elimination over real linear combinations.",
+      350,
+      0.88
+    );
+  }
+  if (hasFinsetSumInTargetOrProof) {
+    pushRec(
+      "sum_congr_ring",
+      "finset-sum-linearity-pointwise-ring",
+      "Normalizes Finset.sum linearity (sum_add_distrib, sum_sub_distrib, mul_sum, sum_mul) and closes pointwise ring equalities via Finset.sum_congr.",
+      260,
+      0.91
+    );
+  }
+  if (hasFinsetNonneg) {
+    pushRec(
+      "finset_nonneg",
+      "finset-sum-nonneg-positivity",
+      "Discharges 0 <= sum_i f i via Finset.sum_nonneg, pointwise hypothesis instantiation, and positivity/linarith/nlinarith/omega.",
+      240,
+      0.90
+    );
+  }
+  if (hasFinsetMono) {
+    pushRec(
+      "finset_mono",
+      "finset-sum-pointwise-monotonicity",
+      "Discharges sum_i f i <= sum_i g i via Finset.sum_le_sum, pointwise hypothesis instantiation, and ordered-ring monotonicity closers.",
+      250,
+      0.91
+    );
+  }
+  if (hasWellFormed) {
+    pushRec(
+      "wellformed_tac",
+      "finite-simplex-wellformed-conjunction",
+      "Discharges five-field WellFormed conjunctions over Fin 1..8 via fin_cases and Fin.sum_univ_one..eight + norm_num.",
+      190,
+      0.93
+    );
+  }
+  if (hasChannelOrPrior) {
+    pushRec(
+      "channel_fields",
+      "channel-prior-constructor-obligations",
+      "Constructs Channel or Prior and discharges nonneg and rowMass/mass obligations over Fin 1..8.",
+      180,
+      0.92
+    );
+  }
+  const hasInductiveProof = /\b(?:cases|rcases|induction|constructor)\b/.test(proof);
+  if (hasInductiveProof) {
+    pushRec(
+      "aesop",
+      "whitebox-best-first-search",
+      "Best-first search over safe/unsafe rulesets; replaces manual intro/case/constructor chains.",
+      800,
+      0.85
+    );
+  }
+  if (/\bapply\b/.test(proof) && !hasInductiveProof) {
+    pushRec(
+      "solve_by_elim",
+      "bounded-backtracking-unification",
+      "Backtracking unification over local hypotheses without expanding external lemmas.",
+      220,
+      0.80
+    );
+  }
+  if (
+    /(?:\bFin\s+\d+|\bFinset\b|\bdecide\b|\btrue\b|\bfalse\b)/.test(target) &&
+    !hasChannelOrPrior &&
+    !hasWellFormed &&
+    (!hasFinsetSumInTargetOrProof || /\b(?:decide|true|false)\b/.test(target))
+  ) {
+    pushRec(
+      "decide",
+      "decidable-proposition-evaluation",
+      "Kernel reflection on Decidable instance; zero search branching.",
+      80,
+      0.95
+    );
+  }
+
+  recommendations.sort((a, b) => a.estimatedHeartbeats - b.estimatedHeartbeats);
+
+  const legibility = scoreAltProofLegibility(proof);
+  const baselineLines = Math.max(1, legibility.steps);
+  const baselineCostX10 = computeAltProofCostX10(baselineLines, 0, false, 0);
+  const staticCertificates = interpreter.scanSourceForNatCertificates(combined);
+
+  let zoneDecreasingHint: string | undefined;
+  if (/\b[A-Za-z_]\w*\s*-\s*\(\s*[A-Za-z_]\w*\s*\+\s*1\s*\)\s*<\s*[A-Za-z_]\w*\s*-\s*[A-Za-z_]\w*/.test(combined)) {
+    const verdict = interpreter.checkZoneSubDecreasing(-1, 1);
+    zoneDecreasingHint = `Zone DBM termination check (n - (i + 1) < n - i under i < n): ${verdict} (discharge via omega).`;
+  }
+
+  return {
+    goal,
+    features,
+    relevantRoutes,
+    recommendations,
+    legibility,
+    baselineCostX10,
+    bestTactic: recommendations.length > 0 ? recommendations[0].tactic : null,
+    bestEstimatedHeartbeats: recommendations.length > 0 ? recommendations[0].estimatedHeartbeats : 0,
+    staticCertificates,
+    zoneDecreasingHint
+  };
+}
+
 
