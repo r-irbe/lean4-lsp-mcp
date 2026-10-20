@@ -138,6 +138,20 @@ assert.ok(wasmOctEven !== null);
 assert.equal(wasmOctEven[0].max, 3);
 console.log("  [PASS] WASM-Accelerated Wave 6 Octagon Relational Domain & Integer Strong Closure");
 
+const wasmWeighted = interp.reduceWeightedLinearTwoVars(
+  2,
+  3,
+  100,
+  100,
+  { min: 10, max: 100 },
+  { min: 0, max: 100 }
+);
+assert.ok(wasmWeighted !== null);
+assert.deepEqual(wasmWeighted[0], { min: 11, max: 50 });
+assert.deepEqual(wasmWeighted[1], { min: 0, max: 26 });
+console.log("  [PASS] WASM-Accelerated Wave 9 Weighted Linear / Karr Affine Conservation");
+
 console.log("All Real Lean WASM Engine Integration tests passed 100% cleanly!");
+
 
 

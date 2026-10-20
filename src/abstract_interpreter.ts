@@ -614,6 +614,102 @@ export class LeanAbstractInterpreter {
     ];
   }
 
+  /**
+   * Tightens two natural-number intervals `iv0 = [xMin, xMax]` and `iv1 = [yMin, yMax]`
+   * under a weighted linear / Karr affine conservation bound `sumMin <= a * x + b * y <= sumMax`
+   * (`a > 0`, `b > 0`).
+   * Returns `[reducedIv0, reducedIv1]` or `null` if the system is unsatisfiable (`Bottom`).
+   */
+  reduceWeightedLinearTwoVars(
+    a: number,
+    b: number,
+    sumMin: number,
+    sumMax: number,
+    iv0: IntervalBound,
+    iv1: IntervalBound
+  ): [IntervalBound, IntervalBound] | null {
+    const MAX_I64 = 9223372036854775807n;
+    const toI64 = (v: number): bigint =>
+      !Number.isFinite(v) ? MAX_I64 : BigInt(Math.trunc(v));
+
+    const wasmFn =
+      this.wasmModule
+        ? this.wasmModule.lean_analyzer_weighted_linear_reduce ||
+          this.wasmModule.lean_analyzer_WeightedSimplexReduce
+        : null;
+    if (
+      typeof wasmFn === "function" &&
+      this.wasmModule.memory &&
+      typeof this.wasmModule.lean_analyzer_get_scratch_ptr === "function"
+    ) {
+      const ptr = this.wasmModule.lean_analyzer_get_scratch_ptr();
+      const ok = wasmFn(
+        toI64(a),
+        toI64(b),
+        toI64(Math.max(0, sumMin)),
+        toI64(sumMax),
+        toI64(Math.max(0, iv0.min)),
+        toI64(iv0.max),
+        toI64(Math.max(0, iv1.min)),
+        toI64(iv1.max),
+        ptr
+      );
+      if (ok === 0) return null;
+      const view = new BigInt64Array(this.wasmModule.memory.buffer, ptr, 4);
+      const fromI64 = (v: bigint): number =>
+        v >= MAX_I64 ? Number.POSITIVE_INFINITY : Number(v);
+      return [
+        { min: fromI64(view[0]), max: fromI64(view[1]) },
+        { min: fromI64(view[2]), max: fromI64(view[3]) }
+      ];
+    }
+
+    const wa = Math.trunc(a);
+    const wb = Math.trunc(b);
+    if (wa <= 0 || wb <= 0) return null;
+    let xLo = Math.max(0, Math.trunc(iv0.min));
+    let xHi = Number.isFinite(iv0.max) ? Math.trunc(iv0.max) : Number.POSITIVE_INFINITY;
+    let yLo = Math.max(0, Math.trunc(iv1.min));
+    let yHi = Number.isFinite(iv1.max) ? Math.trunc(iv1.max) : Number.POSITIVE_INFINITY;
+    if (xLo > xHi || yLo > yHi) return null;
+
+    const sLo = Math.max(0, Math.trunc(sumMin));
+    const sHi = Number.isFinite(sumMax) ? Math.trunc(sumMax) : Number.POSITIVE_INFINITY;
+    if (sLo > sHi) return null;
+
+    for (let iter = 0; iter < 3; iter++) {
+      if (Number.isFinite(sHi)) {
+        const remU = sHi - wb * yLo;
+        if (remU < 0) return null;
+        xHi = Math.min(xHi, Math.floor(remU / wa));
+      }
+      if (Number.isFinite(yHi) && sLo > 0) {
+        const remL = Math.max(0, sLo - wb * yHi);
+        xLo = Math.max(xLo, Math.ceil(remL / wa));
+      }
+      if (xLo > xHi) return null;
+
+      if (Number.isFinite(sHi)) {
+        const remU = sHi - wa * xLo;
+        if (remU < 0) return null;
+        yHi = Math.min(yHi, Math.floor(remU / wb));
+      }
+      if (Number.isFinite(xHi) && sLo > 0) {
+        const remL = Math.max(0, sLo - wa * xHi);
+        yLo = Math.max(yLo, Math.ceil(remL / wb));
+      }
+      if (yLo > yHi) return null;
+    }
+
+    if (Number.isFinite(sHi) && wa * xLo + wb * yLo > sHi) return null;
+    if (Number.isFinite(xHi) && Number.isFinite(yHi) && wa * xHi + wb * yHi < sLo) return null;
+
+    return [
+      { min: xLo, max: xHi },
+      { min: yLo, max: yHi }
+    ];
+  }
+
   private evalBinaryNatOp(
     op: string,
     leftRaw: AbstractLatticeState,
@@ -1277,6 +1373,10 @@ export class LeanAbstractInterpreter {
     for (const m of header.matchAll(parenGroupRe)) {
       hypChunks.push(m[0]);
     }
+    const turnstileParts = header.split(/\|-|\u22A2/);
+    if (turnstileParts.length > 1) {
+      hypChunks.push(turnstileParts[0]);
+    }
     const arrowParts = header.split(/->|\u2192/);
     if (arrowParts.length > 1) {
       for (let i = 0; i < arrowParts.length - 1; i++) {
@@ -1285,16 +1385,21 @@ export class LeanAbstractInterpreter {
     }
     const hypText = hypChunks.join(" ; ");
 
-    // 2. Unary upper bounds: `x <= C`, `x < C`
-    const upperRe = /\b([A-Za-z_][A-Za-z0-9_']*)\s*(<=|\u2264|<)\s*(\d+)\b/g;
+    // 2. Unary upper bounds: `x <= C`, `x < C`, `x = C`
+    const upperRe = /\b([A-Za-z_][A-Za-z0-9_']*)\s*(<=|\u2264|<|={1,2})\s*(\d+)\b/g;
     for (const m of hypText.matchAll(upperRe)) {
       const v = m[1];
       const op = m[2];
       const c = Number.parseInt(m[3], 10);
       if (Number.isFinite(c)) {
         const entry = ensureVar(v);
-        const cap = op === "<" ? c - 1 : c;
-        entry.interval.max = Math.min(entry.interval.max, cap);
+        if (op === "=" || op === "==") {
+          entry.interval.min = Math.max(entry.interval.min, c);
+          entry.interval.max = Math.min(entry.interval.max, c);
+        } else {
+          const cap = op === "<" ? c - 1 : c;
+          entry.interval.max = Math.min(entry.interval.max, cap);
+        }
       }
     }
 
@@ -1355,7 +1460,7 @@ export class LeanAbstractInterpreter {
 
     // 6. Octagonal two-variable sum constraints: `x + y <= C`, `x + y < C`, `x + y = C`
     const sumRe =
-      /\b([A-Za-z_][A-Za-z0-9_']*)\s*\+\s*([A-Za-z_][A-Za-z0-9_']*)\s*(<=|\u2264|<|={1,2})\s*(\d+)\b/g;
+      /(?:^|[^*\w])([A-Za-z_][A-Za-z0-9_']*)\s*\+\s*([A-Za-z_][A-Za-z0-9_']*)\s*(<=|\u2264|<|={1,2})\s*(\d+)\b/g;
     for (const m of hypText.matchAll(sumRe)) {
       const v0 = m[1];
       const v1 = m[2];
@@ -1375,6 +1480,60 @@ export class LeanAbstractInterpreter {
         }
         e0.interval = oct[0];
         e1.interval = oct[1];
+      }
+    }
+
+    // 7. Weighted two-variable linear / Karr affine constraints: `a * x + b * y <= C`, `< C`, `= C`, `>= C`
+    const weightedSumRe =
+      /(?:(\d+)\s*\*\s*)?([A-Za-z_][A-Za-z0-9_']*)\s*\+\s*(?:(\d+)\s*\*\s*)?([A-Za-z_][A-Za-z0-9_']*)\s*(<=|\u2264|<|={1,2}|>=|\u2265|>)\s*(\d+)\b/g;
+    for (const m of hypText.matchAll(weightedSumRe)) {
+      const w0 = m[1] !== undefined ? Number.parseInt(m[1], 10) : 1;
+      const v0 = m[2];
+      const w1 = m[3] !== undefined ? Number.parseInt(m[3], 10) : 1;
+      const v1 = m[4];
+      const op = m[5];
+      const c = Number.parseInt(m[6], 10);
+      if (
+        v0 !== v1 &&
+        Number.isFinite(w0) &&
+        Number.isFinite(w1) &&
+        w0 > 0 &&
+        w1 > 0 &&
+        Number.isFinite(c) &&
+        (m[1] !== undefined || m[3] !== undefined || op === ">=" || op === "\u2265" || op === ">")
+      ) {
+        const e0 = ensureVar(v0);
+        const e1 = ensureVar(v1);
+        let sumLo = 0;
+        let sumHi = Number.POSITIVE_INFINITY;
+        if (op === "=" || op === "==") {
+          sumLo = c;
+          sumHi = c;
+        } else if (op === "<") {
+          sumHi = c - 1;
+        } else if (op === "<=" || op === "\u2264") {
+          sumHi = c;
+        } else if (op === ">=" || op === "\u2265") {
+          sumLo = c;
+        } else if (op === ">") {
+          sumLo = c + 1;
+        }
+        if (sumHi < 0) {
+          return { domains: {}, isVacuous: true, recommendedMaxSize: null };
+        }
+        const reduced = this.reduceWeightedLinearTwoVars(
+          w0,
+          w1,
+          sumLo,
+          sumHi,
+          e0.interval,
+          e1.interval
+        );
+        if (!reduced) {
+          return { domains: {}, isVacuous: true, recommendedMaxSize: null };
+        }
+        e0.interval = reduced[0];
+        e1.interval = reduced[1];
       }
     }
 
@@ -1453,6 +1612,15 @@ export interface AltProofLegibilityScore {
   heavySteps: string[];
 }
 
+export interface AltProofAbstractCertification {
+  certified: boolean;
+  isVacuous: boolean;
+  targetVerified: boolean;
+  domains: Record<string, { interval: IntervalBound; congruence?: NatCongruence }>;
+  targetSummary?: string;
+  natSubTruncationWarning?: string;
+}
+
 export interface AltProofAnalysisReport {
   goal: string;
   features: AltProofGoalFeatures;
@@ -1464,6 +1632,7 @@ export interface AltProofAnalysisReport {
   bestEstimatedHeartbeats: number;
   staticCertificates: Array<DiagnosticCertificate & { line: number; col: number }>;
   zoneDecreasingHint?: string;
+  abstractCertification?: AltProofAbstractCertification;
 }
 
 export const ALTPROOF_ROUTE_TABLE: AltProofRoute[] = [
@@ -1585,7 +1754,145 @@ function extractGoalTarget(goalText: string): string {
     raw = raw.replace(/^```[a-zA-Z0-9_-]*\s*/, "").replace(/\s*```$/, "");
   }
   const parts = raw.split(/(?:\|-|\u22A2)/);
-  return parts.length > 1 ? parts[parts.length - 1].trim() : raw;
+  if (parts.length > 1) {
+    return parts[parts.length - 1].trim();
+  }
+  const arrowParts = raw.split(/->|\u2192/);
+  if (arrowParts.length > 1) {
+    return arrowParts[arrowParts.length - 1].trim();
+  }
+  return raw;
+}
+
+function evalLinearExprInterval(
+  expr: string,
+  domains: Record<string, { interval: IntervalBound; congruence?: NatCongruence }>
+): { interval: IntervalBound; natSubWarning?: string } | null {
+  const s = expr.trim();
+  if (/^\d+$/.test(s)) {
+    const v = Number.parseInt(s, 10);
+    return { interval: { min: v, max: v } };
+  }
+  if (/^[A-Za-z_][A-Za-z0-9_']*$/.test(s)) {
+    const d = domains[s];
+    return d ? { interval: { ...d.interval } } : null;
+  }
+  const mulMatch = s.match(/^(\d+)\s*\*\s*([A-Za-z_][A-Za-z0-9_']*)$/);
+  if (mulMatch) {
+    const k = Number.parseInt(mulMatch[1], 10);
+    const d = domains[mulMatch[2]];
+    if (!d) return null;
+    return {
+      interval: {
+        min: k * d.interval.min,
+        max: Number.isFinite(d.interval.max) ? k * d.interval.max : Number.POSITIVE_INFINITY
+      }
+    };
+  }
+  const addMatch = s.match(
+    /^(?:(\d+)\s*\*\s*)?([A-Za-z_][A-Za-z0-9_']*)\s*\+\s*(?:(\d+)\s*\*\s*)?([A-Za-z_][A-Za-z0-9_']*|\d+)$/
+  );
+  if (addMatch) {
+    const w0 = addMatch[1] !== undefined ? Number.parseInt(addMatch[1], 10) : 1;
+    const d0 = domains[addMatch[2]];
+    if (!d0) return null;
+    const leftMin = w0 * d0.interval.min;
+    const leftMax = Number.isFinite(d0.interval.max) ? w0 * d0.interval.max : Number.POSITIVE_INFINITY;
+    const rhsToken = addMatch[4];
+    if (/^\d+$/.test(rhsToken)) {
+      const c = Number.parseInt(rhsToken, 10);
+      return { interval: { min: leftMin + c, max: leftMax + c } };
+    }
+    const w1 = addMatch[3] !== undefined ? Number.parseInt(addMatch[3], 10) : 1;
+    const d1 = domains[rhsToken];
+    if (!d1) return null;
+    const rightMin = w1 * d1.interval.min;
+    const rightMax = Number.isFinite(d1.interval.max) ? w1 * d1.interval.max : Number.POSITIVE_INFINITY;
+    return { interval: { min: leftMin + rightMin, max: leftMax + rightMax } };
+  }
+  const subMatch = s.match(/^([A-Za-z_][A-Za-z0-9_']*|\d+)\s*-\s*([A-Za-z_][A-Za-z0-9_']*|\d+)$/);
+  if (subMatch) {
+    const l = evalLinearExprInterval(subMatch[1], domains);
+    const r = evalLinearExprInterval(subMatch[2], domains);
+    if (!l || !r) return null;
+    const min = Math.max(0, l.interval.min - r.interval.max);
+    const max = Math.max(0, l.interval.max - r.interval.min);
+    let natSubWarning: string | undefined;
+    if (l.interval.max <= r.interval.min && r.interval.min > 0) {
+      natSubWarning = `Natural subtraction \`${s}\` on [${l.interval.min}, ${l.interval.max}] - [${r.interval.min}, ${r.interval.max}] saturates to [0, 0] (NatSubTruncation).`;
+    } else if (l.interval.min < r.interval.max && r.interval.max > 0) {
+      natSubWarning = `Natural subtraction \`${s}\` on [${l.interval.min}, ${l.interval.max}] - [${r.interval.min}, ${r.interval.max}] can underflow and truncate at 0; add guard \`${subMatch[2]} <= ${subMatch[1]}\`.`;
+    }
+    return { interval: { min, max }, natSubWarning };
+  }
+  return null;
+}
+
+export function computeAltProofAbstractCertification(
+  interpreter: LeanAbstractInterpreter,
+  goalText: string,
+  target: string
+): AltProofAbstractCertification | undefined {
+  const domRes = interpreter.analyzeHeaderHypothesisDomains(goalText);
+  const hasDomains = Object.keys(domRes.domains).length > 0;
+  let targetVerified = false;
+  let targetSummary: string | undefined;
+  let natSubTruncationWarning: string | undefined;
+
+  if (domRes.isVacuous) {
+    return {
+      certified: true,
+      isVacuous: true,
+      targetVerified: true,
+      domains: domRes.domains,
+      targetSummary: "Hypotheses reduce to Bottom (unreachable / vacuous branch); discharge via omega."
+    };
+  }
+
+  const relMatch = target.match(/^(.+?)\s*(<=|\u2264|<|>=|\u2265|>|={1,2})\s*(.+)$/);
+  if (relMatch && hasDomains) {
+    const lhsExpr = relMatch[1].trim();
+    const op = relMatch[2];
+    const rhsExpr = relMatch[3].trim();
+    const lhsEval = evalLinearExprInterval(lhsExpr, domRes.domains);
+    const rhsEval = evalLinearExprInterval(rhsExpr, domRes.domains);
+    if (lhsEval?.natSubWarning) {
+      natSubTruncationWarning = lhsEval.natSubWarning;
+    } else if (rhsEval?.natSubWarning) {
+      natSubTruncationWarning = rhsEval.natSubWarning;
+    }
+    if (lhsEval && rhsEval) {
+      const l = lhsEval.interval;
+      const r = rhsEval.interval;
+      if (op === "<=" || op === "\u2264") {
+        targetVerified = l.max <= r.min;
+      } else if (op === "<") {
+        targetVerified = l.max < r.min;
+      } else if (op === ">=" || op === "\u2265") {
+        targetVerified = l.min >= r.max;
+      } else if (op === ">") {
+        targetVerified = l.min > r.max;
+      } else if (op === "=" || op === "==") {
+        targetVerified = l.min === l.max && r.min === r.max && l.min === r.min;
+      }
+      if (targetVerified) {
+        targetSummary = `Certified \`${target}\` via abstract domain reduction (\`${lhsExpr}\` in [${l.min}, ${l.max}], \`${rhsExpr}\` in [${r.min}, ${r.max}]).`;
+      }
+    }
+  }
+
+  if (!hasDomains && !targetVerified && !natSubTruncationWarning) {
+    return undefined;
+  }
+
+  return {
+    certified: targetVerified || domRes.isVacuous,
+    isVacuous: domRes.isVacuous,
+    targetVerified,
+    domains: domRes.domains,
+    targetSummary,
+    natSubTruncationWarning
+  };
 }
 
 export function analyzeAltProofGoalAndBlock(
@@ -1660,6 +1967,19 @@ export function analyzeAltProofGoalAndBlock(
   });
   const relevantRoutes = pickedRoutes.length > 0 ? pickedRoutes : ALTPROOF_ROUTE_TABLE.slice(0, 3);
 
+  const abstractCertification = computeAltProofAbstractCertification(interpreter, goal, target);
+  const staticCertificates = interpreter.scanSourceForNatCertificates(combined);
+  if (abstractCertification?.natSubTruncationWarning) {
+    staticCertificates.push({
+      kind: "NatSubTruncation",
+      operator: "Nat.sub",
+      summary: abstractCertification.natSubTruncationWarning,
+      hint: "Add guard `b <= a` or switch to `Int` subtraction before invoking `omega`.",
+      line: 1,
+      col: 1
+    });
+  }
+
   const recommendations: AltProofTacticRecommendation[] = [];
   const pushRec = (
     tactic: string,
@@ -1679,13 +1999,17 @@ export function analyzeAltProofGoalAndBlock(
     });
   };
 
-  if (hasNatArith) {
+  if (hasNatArith || abstractCertification?.certified) {
+    const certBoost = abstractCertification?.certified ? 0.07 : 0;
+    const certNote = abstractCertification?.targetSummary
+      ? ` (${abstractCertification.targetSummary})`
+      : "";
     pushRec(
       "omega",
       "linear-nat-int-arithmetic",
-      "Native Lean 4 Presburger arithmetic decision procedure; eliminates manual induction on inequalities.",
-      150,
-      0.92
+      `Native Lean 4 Presburger arithmetic decision procedure; eliminates manual induction on inequalities.${certNote}`,
+      abstractCertification?.certified ? 120 : 150,
+      Math.min(0.99, Number((0.92 + certBoost).toFixed(2)))
     );
   }
   if (hasRealLin) {
@@ -1725,12 +2049,13 @@ export function analyzeAltProofGoalAndBlock(
     );
   }
   if (hasWellFormed) {
+    const wfBoost = abstractCertification?.certified ? 0.05 : 0;
     pushRec(
       "wellformed_tac",
       "finite-simplex-wellformed-conjunction",
       "Discharges five-field WellFormed conjunctions over Fin 1..8 via fin_cases and Fin.sum_univ_one..eight + norm_num.",
       190,
-      0.93
+      Math.min(0.99, Number((0.93 + wfBoost).toFixed(2)))
     );
   }
   if (hasChannelOrPrior) {
@@ -1781,7 +2106,6 @@ export function analyzeAltProofGoalAndBlock(
   const legibility = scoreAltProofLegibility(proof);
   const baselineLines = Math.max(1, legibility.steps);
   const baselineCostX10 = computeAltProofCostX10(baselineLines, 0, false, 0);
-  const staticCertificates = interpreter.scanSourceForNatCertificates(combined);
 
   let zoneDecreasingHint: string | undefined;
   if (/\b[A-Za-z_]\w*\s*-\s*\(\s*[A-Za-z_]\w*\s*\+\s*1\s*\)\s*<\s*[A-Za-z_]\w*\s*-\s*[A-Za-z_]\w*/.test(combined)) {
@@ -1799,8 +2123,10 @@ export function analyzeAltProofGoalAndBlock(
     bestTactic: recommendations.length > 0 ? recommendations[0].tactic : null,
     bestEstimatedHeartbeats: recommendations.length > 0 ? recommendations[0].estimatedHeartbeats : 0,
     staticCertificates,
-    zoneDecreasingHint
+    zoneDecreasingHint,
+    abstractCertification
   };
 }
+
 
 

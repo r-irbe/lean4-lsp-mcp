@@ -5601,6 +5601,20 @@ export class McpServer {
       lines.push("", `## Zone Domain Termination Certificate`, `- ${report.zoneDecreasingHint}`);
     }
 
+    if (report.abstractCertification) {
+      lines.push(
+        "",
+        `## Abstract Domain Certification (Wave 10)`,
+        `- **Certified**: ${report.abstractCertification.certified} (targetVerified=${report.abstractCertification.targetVerified}, isVacuous=${report.abstractCertification.isVacuous})`
+      );
+      if (report.abstractCertification.targetSummary) {
+        lines.push(`- **Summary**: ${report.abstractCertification.targetSummary}`);
+      }
+      if (report.abstractCertification.natSubTruncationWarning) {
+        lines.push(`- **Warning**: ${report.abstractCertification.natSubTruncationWarning}`);
+      }
+    }
+
     return lines.join("\n");
   }
 

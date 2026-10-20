@@ -432,6 +432,60 @@ console.log("Starting Lean Abstract Interpreter Test Suite...");
   console.log("  [PASS] Wave 8 Galois-Guided Counterexample Search Domain Pruning");
 }
 
+// 9. Wave 9 & Wave 10: Weighted Linear / Karr Affine Conservation & AltProof Abstract Certification Fusion
+{
+  const interp = new LeanAbstractInterpreter();
+
+  // Weighted two-variable simplex reduction: 2 * x + 3 * y == 100, x in [10, 100], y in [0, 100]
+  // => x in [11, 50], y in [0, 26]
+  const weighted = interp.reduceWeightedLinearTwoVars(
+    2,
+    3,
+    100,
+    100,
+    { min: 10, max: 100 },
+    { min: 0, max: 100 }
+  );
+  assert.ok(weighted !== null);
+  assert.deepEqual(weighted[0], { min: 11, max: 50 });
+  assert.deepEqual(weighted[1], { min: 0, max: 26 });
+
+  const weightedUnsat = interp.reduceWeightedLinearTwoVars(
+    4,
+    5,
+    0,
+    30,
+    { min: 5, max: 20 },
+    { min: 3, max: 20 }
+  );
+  assert.equal(weightedUnsat, null);
+
+  // AltProof fusion: weighted linear bound 2 * x + 3 * y <= 100 with x >= 20 certifies y <= 20
+  const altCert = interp.analyzeAltProof(
+    "(x y : Nat) (hx : 20 <= x) (hsum : 2 * x + 3 * y <= 100) |- y <= 20"
+  );
+  assert.ok(altCert.abstractCertification, "Expected abstractCertification on altproof report");
+  assert.equal(altCert.abstractCertification.certified, true);
+  assert.equal(altCert.abstractCertification.targetVerified, true);
+  assert.deepEqual(altCert.abstractCertification.domains.y.interval, { min: 0, max: 20 });
+  const omegaRec = altCert.recommendations.find((r) => r.tactic === "omega");
+  assert.ok(omegaRec, "Expected omega recommendation");
+  assert.equal(omegaRec.confidence, 0.99);
+  assert.equal(omegaRec.estimatedHeartbeats, 120);
+
+  // AltProof NatSubTruncation guard warning when subtraction can underflow
+  const altSubWarn = interp.analyzeAltProof(
+    "(x y : Nat) (hx : x <= 4) (hy : 10 <= y) |- x - y = 0"
+  );
+  assert.ok(altSubWarn.abstractCertification?.natSubTruncationWarning);
+  assert.ok(
+    altSubWarn.staticCertificates.some((c) => c.kind === "NatSubTruncation"),
+    "Expected NatSubTruncation certificate when subtraction saturates"
+  );
+  console.log("  [PASS] Wave 9 & Wave 10 Weighted Linear Reduction & AltProof Abstract Certification Fusion");
+}
+
 console.log("All Lean Abstract Interpreter tests passed 100% cleanly!");
+
 
 
