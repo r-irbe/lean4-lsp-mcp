@@ -3,7 +3,7 @@
  *
  * Embedded Kuzu Knowledge Graph Engine for lean4-lsp-mcp.
  * Directly indexes and queries the canonical 29-book, 1,759-section
- * ITP / Lean formalization knowledge base (`easci-knowledge.kz` / `prover_knowledge.kz`).
+ * ITP / Lean formalization knowledge base (`lean-knowledge.kz` / `prover_knowledge.kz`).
  *
  * Strict 7-bit ASCII only (INV-001).
  */
@@ -102,8 +102,8 @@ function collectCandidateRoots(workspaceRoot?: string): string[] {
 
   const seeds = [
     workspaceRoot,
-    process.env.TACIT_ROOT,
     process.env.LEAN_PROJECT_ROOT,
+    process.env.WORKSPACE_ROOT,
     process.cwd(),
     __dirname,
   ];
@@ -113,10 +113,6 @@ function collectCandidateRoots(workspaceRoot?: string): string[] {
     let curr = path.resolve(seed);
     for (let depth = 0; depth < 8; depth++) {
       addRoot(curr);
-      const siblingTacit = path.join(curr, "tacit-mui");
-      if (fs.existsSync(siblingTacit)) {
-        addRoot(siblingTacit);
-      }
       const parent = path.dirname(curr);
       if (parent === curr) break;
       curr = parent;
@@ -150,11 +146,23 @@ export class KuzuKnowledgeGraph {
     // 1. Resolve .kuzu-config.json if available
     const configCandidates: string[] = [
       opts.configPath || "",
+      process.env.LEAN_KUZU_CONFIG_PATH || "",
       process.env.KUZU_CONFIG || "",
     ];
     for (const root of candidateRoots) {
       configCandidates.push(path.join(root, ".kuzu-config.json"));
-      configCandidates.push(path.join(root, "docs", "investigation-garden", ".kuzu-config.json"));
+      const docsDir = path.join(root, "docs");
+      if (fs.existsSync(docsDir)) {
+        try {
+          for (const ent of fs.readdirSync(docsDir, { withFileTypes: true })) {
+            if (ent.isDirectory()) {
+              configCandidates.push(path.join(docsDir, ent.name, ".kuzu-config.json"));
+            }
+          }
+        } catch {
+          // Ignore unreadable docs directory
+        }
+      }
     }
 
     for (const cp of configCandidates) {
@@ -188,8 +196,9 @@ export class KuzuKnowledgeGraph {
       }
     }
 
-    // 2. Resolve kuzu_db directory / path (parameterized or env-configured via KUZU_DB_PATH)
-    const explicitDbPath = opts.dbPath || process.env.KUZU_DB_PATH || "";
+    // 2. Resolve kuzu_db directory / path (parameterized or env-configured via LEAN_KUZU_DB_PATH / KUZU_DB_PATH)
+    const explicitDbPath =
+      opts.dbPath || process.env.LEAN_KUZU_DB_PATH || process.env.KUZU_DB_PATH || "";
     if (explicitDbPath) {
       this.dbPath = path.resolve(explicitDbPath);
     } else if (this.federationConfig && this.configPath) {
@@ -201,10 +210,27 @@ export class KuzuKnowledgeGraph {
     }
     if (!this.dbPath) {
       for (const root of candidateRoots) {
-        const candDb = path.join(root, "docs", "investigation-garden", "kuzu_db");
+        const candDb = path.join(root, "kuzu_db");
         if (fs.existsSync(candDb)) {
           this.dbPath = candDb;
           break;
+        }
+        const docsDir = path.join(root, "docs");
+        if (fs.existsSync(docsDir)) {
+          try {
+            for (const ent of fs.readdirSync(docsDir, { withFileTypes: true })) {
+              if (ent.isDirectory()) {
+                const subDb = path.join(docsDir, ent.name, "kuzu_db");
+                if (fs.existsSync(subDb)) {
+                  this.dbPath = subDb;
+                  break;
+                }
+              }
+            }
+          } catch {
+            // Ignore unreadable docs directory
+          }
+          if (this.dbPath) break;
         }
       }
     }
@@ -215,7 +241,6 @@ export class KuzuKnowledgeGraph {
       process.env.KUZU_ARCHIVE_PATH ||
       process.env.LEAN_KNOWLEDGE_KZ ||
       process.env.PROVER_KNOWLEDGE_KZ ||
-      process.env.EASCI_KNOWLEDGE_KZ ||
       (explicitDbPath.endsWith(".kz") ? explicitDbPath : "");
 
     if (explicitKz && fs.existsSync(explicitKz)) {
@@ -235,18 +260,21 @@ export class KuzuKnowledgeGraph {
         }
       }
 
-      const candidates: string[] = [configArchive];
+      const candidates: string[] = [
+        configArchive,
+        path.resolve(__dirname, "../data/lean-knowledge.kz"),
+        path.resolve(__dirname, "../../data/lean-knowledge.kz"),
+      ];
       if (this.dbPath && !this.dbPath.endsWith(".kz")) {
         candidates.push(path.join(path.dirname(this.dbPath), "kuzu", "prover_knowledge.kz"));
-        candidates.push(path.join(path.dirname(this.dbPath), "kuzu", "easci-knowledge.kz"));
+        candidates.push(path.join(path.dirname(this.dbPath), "kuzu", "lean-knowledge.kz"));
       }
       for (const root of candidateRoots) {
         candidates.push(path.join(root, "kuzu", "prover_knowledge.kz"));
-        candidates.push(path.join(root, "docs", "easci", "lean", "skills", "kuzu", "prover_knowledge.kz"));
-        candidates.push(path.join(root, "docs", "investigation-garden", "kuzu", "prover_knowledge.kz"));
-        candidates.push(path.join(root, "docs", "investigation-garden", "kuzu", "easci-knowledge.kz"));
-        candidates.push(path.join(root, "docs", "easci", "lean", "skills", "kuzu", "easci-knowledge.kz"));
-        candidates.push(path.join(root, "kuzu", "easci-knowledge.kz"));
+        candidates.push(path.join(root, "kuzu", "lean-knowledge.kz"));
+        candidates.push(path.join(root, "data", "lean-knowledge.kz"));
+        candidates.push(path.join(root, "skills", "kuzu", "prover_knowledge.kz"));
+        candidates.push(path.join(root, "skills", "kuzu", "lean-knowledge.kz"));
       }
       this.kzPath = candidates.find((p) => p && fs.existsSync(p)) || "";
     }
@@ -494,7 +522,12 @@ export class KuzuKnowledgeGraph {
 
     try {
       const cfgDir = path.dirname(this.configPath);
-      const pyScript = path.resolve(cfgDir, "tools/gardener/kuzu_query.py");
+      const scriptCandidates = [
+        path.resolve(cfgDir, "graph/kuzu_query.py"),
+        path.resolve(__dirname, "../../../graph/kuzu_query.py"),
+        path.resolve(cfgDir, "tools/gardener/kuzu_query.py"),
+      ];
+      const pyScript = scriptCandidates.find((s) => fs.existsSync(s));
       const pyCandidates = [
         this.pythonBin || "",
         process.env.KUZU_PYTHON_BIN || "",
@@ -509,9 +542,13 @@ export class KuzuKnowledgeGraph {
           return false;
         }
       });
-      if (pyBin && fs.existsSync(pyScript)) {
+      if (pyBin && pyScript) {
         const inlineCode =
-          "import sys; from tools.gardener.kuzu_federation import FederatedKuzuEngine; " +
+          "import sys\n" +
+          "try:\n" +
+          "    from graph.kuzu_federation import FederatedKuzuEngine\n" +
+          "except ImportError:\n" +
+          "    from tools.gardener.kuzu_federation import FederatedKuzuEngine\n" +
           "e = FederatedKuzuEngine(); e.cache_symbol(sys.argv[1], sys.argv[2], sys.argv[3])";
         execFileSync(pyBin, ["-c", inlineCode, moduleName, symbolName, typeSig], {
           cwd: cfgDir,

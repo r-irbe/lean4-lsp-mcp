@@ -1,0 +1,22 @@
+id: rule-lean-no-unbounded-gevrey-norm
+language: Lean
+severity: warning
+message: "Unanchored Gevrey class norm detected: bare Gevrey scaling without analyticity radius or envelope ceiling"
+note: |
+  Gevrey regularity bounds and sub-exponential Fourier decay estimates require explicit
+  analyticity radii (σ > 0) and envelope ceilings (C_env > 0). Unconstrained Gevrey norm
+  manipulation without anchoring hypotheses risks unphysical high-frequency mode divergence.
+  Anchor Gevrey regularity using gevreySafetyMargin, isGevreySafe, or stabilizedAuditSlack
+  as formalized in NavierStokesAndEuler (Template_GevreyClass).
+rule:
+  regex: "(?m)^\\s*dsimp\\s*\\[.*(?:gevreySafetyMargin|gevreyPolicyMargin|gevreyBifurcationMargin|stabilizedAuditSlack).*\\].*\\n\\s*linarith\\b"
+fix: ""
+metadata:
+  category: correctness
+  weight: 75
+tags:
+  - lean
+  - gevrey-regularity
+  - sub-exponential-decay
+  - high-frequency-damping
+  - ast-guard
