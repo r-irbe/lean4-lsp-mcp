@@ -210,4 +210,26 @@ console.log("Starting Lean Abstract Interpreter Test Suite...");
   console.log("  [PASS] Monotone & Widening/Narrowing Fixpoint Computation");
 }
 
+// 4. Actionable Static Diagnostic Certificates (UX Pillar 4.6)
+{
+  const interp = new LeanAbstractInterpreter();
+  const diagSub = interp.diagnoseExpr({
+    op: "Nat.sub",
+    args: [{ value: 4 }, { value: 10 }]
+  });
+  assert.equal(diagSub.state.sign, "ZERO");
+  assert.equal(diagSub.certificates.length, 1);
+  assert.equal(diagSub.certificates[0].kind, "NatSubTruncation");
+
+  const diagDivZero = interp.diagnoseExpr({
+    op: "Nat.div",
+    args: [{ value: 20 }, { value: 0 }]
+  });
+  assert.equal(diagDivZero.state.sign, "ZERO");
+  assert.equal(diagDivZero.certificates.length, 1);
+  assert.equal(diagDivZero.certificates[0].kind, "NatDivModByZero");
+  console.log("  [PASS] Actionable Static Diagnostic Certificates");
+}
+
 console.log("All Lean Abstract Interpreter tests passed 100% cleanly!");
+

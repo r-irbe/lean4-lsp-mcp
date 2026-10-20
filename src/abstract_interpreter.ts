@@ -20,6 +20,13 @@ export interface AbstractLatticeState {
   purity: "PURE" | "IO" | "NON_TERMINATING" | "UNKNOWN";
 }
 
+export interface DiagnosticCertificate {
+  kind: "NatSubTruncation" | "NatDivModByZero" | "DeadBranch";
+  operator: string;
+  summary: string;
+  hint: string;
+}
+
 /**
  * Concrete Syntax Tree (CST) Node representation compatible with Tree-Sitter Lean.
  */
@@ -531,4 +538,54 @@ export class LeanAbstractInterpreter {
     const post = this.reduceState(transferFn(curr));
     return this.narrow(curr, post);
   }
+
+  /**
+   * Evaluates an expression and collects actionable static diagnostic certificates
+   * for Nat subtraction truncation (`[a, b] - [c, d]` where `b <= c` and `c > 0`)
+   * and Nat division/modulo where the divisor interval includes `0`.
+   */
+  public diagnoseExpr(expr: { op?: string; args?: any[]; value?: number }): {
+    state: AbstractLatticeState;
+    certificates: DiagnosticCertificate[];
+  } {
+    const certificates: DiagnosticCertificate[] = [];
+    const visit = (node: { op?: string; args?: any[]; value?: number }): void => {
+      if (!node || !node.op || !node.args) return;
+      for (const child of node.args) {
+        visit(child);
+      }
+      if (node.args.length === 2) {
+        const l = this.evalExpr(node.args[0]);
+        const r = this.evalExpr(node.args[1]);
+        if (l.interval && r.interval) {
+          const op = node.op;
+          if (op === "Nat.sub" || op === "-") {
+            if (l.interval.max <= r.interval.min && r.interval.min > 0) {
+              certificates.push({
+                kind: "NatSubTruncation",
+                operator: op,
+                summary: `Natural subtraction \`${op}\` on [${l.interval.min}, ${l.interval.max}] - [${r.interval.min}, ${r.interval.max}] saturates to [0, 0].`,
+                hint: "Add guard `b <= a` or switch to `Int` subtraction if negative values are intended."
+              });
+            }
+          } else if (op === "Nat.div" || op === "/" || op === "Nat.mod" || op === "%") {
+            if (r.interval.min <= 0 && 0 <= r.interval.max) {
+              certificates.push({
+                kind: "NatDivModByZero",
+                operator: op,
+                summary: `Divisor interval [${r.interval.min}, ${r.interval.max}] in \`${op}\` includes 0 (Lean total semantics: a / 0 = 0, a % 0 = a).`,
+                hint: "Prove `0 < divisor` or guard against zero divisor."
+              });
+            }
+          }
+        }
+      }
+    };
+    visit(expr);
+    return {
+      state: this.evalExpr(expr),
+      certificates
+    };
+  }
 }
+
