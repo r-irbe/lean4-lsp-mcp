@@ -231,5 +231,87 @@ console.log("Starting Lean Abstract Interpreter Test Suite...");
   console.log("  [PASS] Actionable Static Diagnostic Certificates");
 }
 
+// 5. Waves 2-5: Granger Interval-Congruence Reduction, Bitwise Ops, Threshold Widening & Zone Termination
+{
+  const interp = new LeanAbstractInterpreter();
+
+  // Mutual Granger reduction: [1, 299] intersect (0 mod 100) -> [100, 200]
+  const granger = interp.reduceState({
+    sign: "NON_NEGATIVE",
+    interval: { min: 1, max: 299 },
+    congruence: { stride: 100, offset: 0 },
+    isDeterministic: true,
+    purity: "PURE"
+  });
+  assert.equal(granger.sign, "POSITIVE");
+  assert.deepEqual(granger.interval, { min: 100, max: 200 });
+  assert.deepEqual(granger.congruence, { stride: 100, offset: 0 });
+
+  // Singleton narrowing: [95, 105] intersect (0 mod 100) -> point 100
+  const grangerPoint = interp.reduceState({
+    sign: "NON_NEGATIVE",
+    interval: { min: 95, max: 105 },
+    congruence: { stride: 100, offset: 0 },
+    isDeterministic: true,
+    purity: "PURE"
+  });
+  assert.deepEqual(grangerPoint.interval, { min: 100, max: 100 });
+  assert.deepEqual(grangerPoint.congruence, { stride: 0, offset: 100 });
+
+  // Empty intersection -> BOTTOM
+  const grangerBottom = interp.reduceState({
+    sign: "NON_NEGATIVE",
+    interval: { min: 101, max: 199 },
+    congruence: { stride: 100, offset: 0 },
+    isDeterministic: true,
+    purity: "PURE"
+  });
+  assert.equal(grangerBottom.sign, "BOTTOM");
+
+  // Bitwise and shift evaluation
+  const shlExpr = interp.evalExpr({
+    op: "Nat.shiftLeft",
+    args: [{ value: 5 }, { value: 2 }]
+  });
+  assert.deepEqual(shlExpr.interval, { min: 20, max: 20 });
+
+  const xorExpr = interp.evalExpr({
+    op: "Nat.xor",
+    args: [{ value: 3 }, { value: 5 }]
+  });
+  assert.deepEqual(xorExpr.interval, { min: 6, max: 6 });
+
+  // Threshold widening fixpoint stops at threshold 100
+  const init0 = {
+    sign: "ZERO",
+    interval: { min: 0, max: 0 },
+    isDeterministic: true,
+    purity: "PURE"
+  };
+  const fpThresh = interp.computeWideningFixpoint(
+    init0,
+    (curr) => {
+      const curMax = curr.interval ? curr.interval.max : 1000;
+      const nextMax = Math.min(curMax + 1, 100);
+      return {
+        sign: "NON_NEGATIVE",
+        interval: { min: 0, max: nextMax },
+        isDeterministic: true,
+        purity: "PURE"
+      };
+    },
+    10,
+    [0, 1, 50, 99, 100, 101]
+  );
+  assert.deepEqual(fpThresh.interval, { min: 0, max: 100 });
+
+  // Zone DBM termination check
+  assert.equal(interp.checkZoneSubDecreasing(-1, 1), "TRUE");
+  assert.equal(interp.checkZoneSubDecreasing(-1, 0), "FALSE");
+  assert.equal(interp.checkZoneSubDecreasing(0, 1), "TOP");
+  console.log("  [PASS] Granger Reduction, Bitwise Ops, Threshold Widening & Zone Termination");
+}
+
 console.log("All Lean Abstract Interpreter tests passed 100% cleanly!");
+
 

@@ -89,5 +89,27 @@ if (fs.existsSync(ileanSamplePath)) {
   console.log(`  [PASS] WASM Instant Symbol Resolution: located '${declName}' at (65, 15) in sub-millisecond`);
 }
 
+// Test WASM-backed LeanAbstractInterpreter methods (Waves 1-5)
+const wasmReduced = interp.reduceState({
+  sign: "NON_NEGATIVE",
+  interval: { min: 10, max: 22 },
+  congruence: { stride: 5, offset: 3 },
+  isDeterministic: true,
+  purity: "PURE"
+});
+assert.deepEqual(wasmReduced.interval, { min: 13, max: 18 });
+assert.deepEqual(wasmReduced.congruence, { stride: 5, offset: 3 });
+
+const wasmLand = interp.evalExpr({
+  op: "Nat.land",
+  args: [{ value: 15 }, { value: 6 }]
+});
+assert.deepEqual(wasmLand.interval, { min: 6, max: 6 });
+
+assert.equal(interp.checkZoneSubDecreasing(-1, 1), "TRUE");
+assert.equal(interp.checkZoneSubDecreasing(-1, 0), "FALSE");
+console.log("  [PASS] WASM-Accelerated Granger Reduction, Bitwise Interval & Zone Termination");
+
 console.log("All Real Lean WASM Engine Integration tests passed 100% cleanly!");
+
 

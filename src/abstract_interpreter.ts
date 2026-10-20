@@ -13,9 +13,15 @@ export interface IntervalBound {
   max: number;
 }
 
+export interface NatCongruence {
+  stride: number;
+  offset: number;
+}
+
 export interface AbstractLatticeState {
   sign: AbstractSign;
   interval?: IntervalBound;
+  congruence?: NatCongruence;
   isDeterministic: boolean;
   purity: "PURE" | "IO" | "NON_TERMINATING" | "UNKNOWN";
 }
@@ -41,8 +47,19 @@ function mulNatBound(a: number, b: number): number {
   return a * b;
 }
 
+function gcdNat(a: number, b: number): number {
+  let x = Math.abs(Math.trunc(a));
+  let y = Math.abs(Math.trunc(b));
+  while (y !== 0) {
+    const t = x % y;
+    x = y;
+    y = t;
+  }
+  return x;
+}
+
 /**
- * Lattice meet, join, partial order, and mutual sign-interval reduction operations.
+ * Lattice meet, join, partial order, and mutual sign-interval-congruence reduction operations.
  */
 export const AbstractLattice = {
   join(a: AbstractSign, b: AbstractSign): AbstractSign {
@@ -112,38 +129,98 @@ export const AbstractLattice = {
     }
   },
 
+  /**
+   * Mutual Granger reduction of interval `[min, max]` and congruence `offset (mod stride)`.
+   * Returns `null` if the intersection is empty.
+   */
+  reduceIntervalCongruence(
+    interval: IntervalBound,
+    congruence: NatCongruence
+  ): { interval: IntervalBound; congruence: NatCongruence } | null {
+    if (interval.min > interval.max || interval.max < 0) return null;
+    const lo = Math.max(0, Math.trunc(interval.min));
+    const hiIsInf = !Number.isFinite(interval.max);
+    const hi = hiIsInf ? Number.POSITIVE_INFINITY : Math.max(0, Math.trunc(interval.max));
+    const s = Math.max(0, Math.trunc(congruence.stride));
+    const o = s === 0 ? Math.max(0, Math.trunc(congruence.offset)) : ((Math.trunc(congruence.offset) % s) + s) % s;
+
+    if (s === 0) {
+      if (o < lo || (!hiIsInf && o > hi)) return null;
+      return {
+        interval: { min: o, max: o },
+        congruence: { stride: 0, offset: o }
+      };
+    }
+
+    const loRem = lo % s;
+    const deltaLo = o >= loRem ? o - loRem : s - (loRem - o);
+    const newLo = lo + deltaLo;
+    if (!hiIsInf && newLo > hi) return null;
+
+    let newHi = Number.POSITIVE_INFINITY;
+    if (!hiIsInf) {
+      const hiRem = hi % s;
+      const deltaHi = hiRem >= o ? hiRem - o : s - (o - hiRem);
+      if (hi < deltaHi) return null;
+      newHi = hi - deltaHi;
+      if (newHi < newLo) return null;
+    }
+
+    const tightenedCg: NatCongruence =
+      newLo === newHi && Number.isFinite(newHi)
+        ? { stride: 0, offset: newLo }
+        : { stride: s, offset: o };
+    return {
+      interval: { min: newLo, max: newHi },
+      congruence: tightenedCg
+    };
+  },
+
   reduceState(state: AbstractLatticeState): AbstractLatticeState {
     if (state.sign === "BOTTOM") {
-      return { ...state, sign: "BOTTOM", interval: undefined };
+      return { ...state, sign: "BOTTOM", interval: undefined, congruence: undefined };
     }
 
     if (state.interval) {
       if (state.interval.min > state.interval.max) {
-        return { ...state, sign: "BOTTOM", interval: undefined };
+        return { ...state, sign: "BOTTOM", interval: undefined, congruence: undefined };
       }
       const signInterval = this.intervalFromSign(state.sign);
       const min = Math.max(state.interval.min, signInterval.min);
       const max = Math.min(state.interval.max, signInterval.max);
       if (min > max) {
-        return { ...state, sign: "BOTTOM", interval: undefined };
+        return { ...state, sign: "BOTTOM", interval: undefined, congruence: undefined };
       }
-      const reducedInterval: IntervalBound = { min, max };
+      let reducedInterval: IntervalBound = { min, max };
+      let reducedCongruence = state.congruence;
+      if (reducedCongruence && reducedInterval.min >= 0) {
+        const granger = this.reduceIntervalCongruence(reducedInterval, reducedCongruence);
+        if (!granger) {
+          return { ...state, sign: "BOTTOM", interval: undefined, congruence: undefined };
+        }
+        reducedInterval = granger.interval;
+        reducedCongruence = granger.congruence;
+      } else if (reducedInterval.min === reducedInterval.max && Number.isFinite(reducedInterval.min) && reducedInterval.min >= 0) {
+        reducedCongruence = { stride: 0, offset: reducedInterval.min };
+      }
       const intervalSign = this.signFromInterval(reducedInterval);
       const reducedSign = this.meet(state.sign, intervalSign);
       if (reducedSign === "BOTTOM") {
-        return { ...state, sign: "BOTTOM", interval: undefined };
+        return { ...state, sign: "BOTTOM", interval: undefined, congruence: undefined };
       }
       return {
         ...state,
         sign: reducedSign,
-        interval: reducedInterval
+        interval: reducedInterval,
+        congruence: reducedCongruence
       };
     }
 
     if (state.sign === "ZERO") {
       return {
         ...state,
-        interval: { min: 0, max: 0 }
+        interval: { min: 0, max: 0 },
+        congruence: { stride: 0, offset: 0 }
       };
     }
 
@@ -173,6 +250,30 @@ export const AbstractLattice = {
     return { min, max };
   },
 
+  widenIntervalWithThresholds(
+    prev: IntervalBound,
+    next: IntervalBound,
+    thresholds: number[],
+    isNat = true
+  ): IntervalBound {
+    if (prev.min > prev.max) return { ...next };
+    if (next.min > next.max) return { ...prev };
+    const sorted = [...thresholds].sort((a, b) => a - b);
+    let min = prev.min;
+    if (next.min < prev.min) {
+      const lower = [...sorted].reverse().find((t) => t <= next.min);
+      min = lower !== undefined ? lower : (isNat ? 0 : Number.NEGATIVE_INFINITY);
+    }
+    if (isNat) min = Math.max(0, min);
+
+    let max = prev.max;
+    if (next.max > prev.max) {
+      const upper = sorted.find((t) => t >= next.max);
+      max = upper !== undefined ? upper : Number.POSITIVE_INFINITY;
+    }
+    return { min, max };
+  },
+
   narrowInterval(wide: IntervalBound, refined: IntervalBound, isNat = false): IntervalBound {
     if (wide.min > wide.max) return { ...wide };
     if (refined.min > refined.max) return { ...refined };
@@ -196,7 +297,7 @@ export class LeanAbstractInterpreter {
 
   /**
    * Initializes or attaches a WASM accelerated evaluation engine.
-   * @param wasmBytes - Binary WASM buffer compiled from Lean 4 C99 kernel.
+   * @param wasmBytes - Binary WASM buffer compiled from crates/lean-analyzer.
    */
   public async loadWasmEngine(wasmBytes: Uint8Array): Promise<boolean> {
     try {
@@ -212,11 +313,98 @@ export class LeanAbstractInterpreter {
     }
   }
 
+  private callWasmIntervalOp(
+    fnName: string,
+    l: IntervalBound,
+    r: IntervalBound
+  ): IntervalBound | null {
+    if (
+      this.wasmModule &&
+      typeof this.wasmModule[fnName] === "function" &&
+      this.wasmModule.memory &&
+      typeof this.wasmModule.lean_analyzer_get_scratch_ptr === "function" &&
+      Number.isFinite(l.min) &&
+      Number.isFinite(l.max) &&
+      Number.isFinite(r.min) &&
+      Number.isFinite(r.max)
+    ) {
+      const ptr = this.wasmModule.lean_analyzer_get_scratch_ptr();
+      const ok = this.wasmModule[fnName](
+        BigInt(Math.trunc(l.min)),
+        BigInt(Math.trunc(l.max)),
+        BigInt(Math.trunc(r.min)),
+        BigInt(Math.trunc(r.max)),
+        ptr
+      );
+      if (ok === 1) {
+        const view = new BigInt64Array(this.wasmModule.memory.buffer, ptr, 2);
+        const MAX_I64 = 9223372036854775807n;
+        return {
+          min: view[0] >= MAX_I64 ? Number.POSITIVE_INFINITY : Number(view[0]),
+          max: view[1] >= MAX_I64 ? Number.POSITIVE_INFINITY : Number(view[1])
+        };
+      }
+    }
+    return null;
+  }
+
   /**
-   * Mutual sign-interval domain reduction.
+   * Mutual sign-interval-congruence domain reduction (WASM-accelerated when loaded).
    */
   public reduceState(state: AbstractLatticeState): AbstractLatticeState {
+    if (
+      state.interval &&
+      state.congruence &&
+      this.wasmModule &&
+      typeof this.wasmModule.lean_analyzer_reduce_interval_congruence === "function" &&
+      this.wasmModule.memory &&
+      typeof this.wasmModule.lean_analyzer_get_scratch_ptr === "function" &&
+      Number.isFinite(state.interval.min) &&
+      Number.isFinite(state.interval.max) &&
+      state.interval.min >= 0
+    ) {
+      const ptr = this.wasmModule.lean_analyzer_get_scratch_ptr();
+      const ok = this.wasmModule.lean_analyzer_reduce_interval_congruence(
+        BigInt(Math.trunc(state.interval.min)),
+        BigInt(Math.trunc(state.interval.max)),
+        BigInt(Math.max(0, Math.trunc(state.congruence.stride))),
+        BigInt(Math.max(0, Math.trunc(state.congruence.offset))),
+        ptr
+      );
+      if (ok === 0) {
+        return { ...state, sign: "BOTTOM", interval: undefined, congruence: undefined };
+      }
+      const view = new BigInt64Array(this.wasmModule.memory.buffer, ptr, 4);
+      return AbstractLattice.reduceState({
+        ...state,
+        interval: { min: Number(view[0]), max: Number(view[1]) },
+        congruence: { stride: Number(view[2]), offset: Number(view[3]) }
+      });
+    }
     return AbstractLattice.reduceState(state);
+  }
+
+  /**
+   * Discharges Lean 4 termination obligation `n - (i + step) < n - i` under guard `i - n <= guardDiff`
+   * using the Zone DBM domain (WASM-accelerated when loaded).
+   */
+  public checkZoneSubDecreasing(guardDiff: number, step: number): "BOTTOM" | "FALSE" | "TRUE" | "TOP" {
+    if (
+      this.wasmModule &&
+      typeof this.wasmModule.lean_analyzer_zone_check_sub_decreasing === "function"
+    ) {
+      const code = this.wasmModule.lean_analyzer_zone_check_sub_decreasing(
+        BigInt(Math.trunc(guardDiff)),
+        BigInt(Math.trunc(step))
+      );
+      if (code === 0) return "BOTTOM";
+      if (code === 1) return "FALSE";
+      if (code === 2) return "TRUE";
+      return "TOP";
+    }
+    if (step <= 0) return "FALSE";
+    if (guardDiff <= -1) return "TRUE";
+    return "TOP";
   }
 
   private evalBinaryNatOp(
@@ -245,28 +433,34 @@ export class LeanAbstractInterpreter {
 
     let sign: AbstractSign = "NON_NEGATIVE";
     let interval: IntervalBound | undefined = undefined;
+    let congruence: NatCongruence | undefined = undefined;
 
-    if (op === "Nat.add" || op === "+") {
+    if (op === "Nat.add" || op === "+" || op === "HAdd.hAdd") {
       if (left.sign === "POSITIVE" || right.sign === "POSITIVE") {
         sign = "POSITIVE";
       } else if (left.sign === "ZERO" && right.sign === "ZERO") {
         sign = "ZERO";
       }
       if (l && r) {
-        interval = {
+        interval = this.callWasmIntervalOp("lean_analyzer_eval_nat_add", l, r) || {
           min: l.min + r.min,
           max: l.max + r.max
         };
       }
-    } else if (op === "Nat.sub" || op === "-") {
+      if (left.congruence && right.congruence) {
+        const g = gcdNat(left.congruence.stride, right.congruence.stride);
+        const off = left.congruence.offset + right.congruence.offset;
+        congruence = { stride: g, offset: g === 0 ? off : off % g };
+      }
+    } else if (op === "Nat.sub" || op === "-" || op === "HSub.hSub") {
       sign = "NON_NEGATIVE";
       if (l && r) {
-        interval = {
+        interval = this.callWasmIntervalOp("lean_analyzer_eval_nat_sub", l, r) || {
           min: Math.max(0, l.min - r.max),
           max: Math.max(0, l.max - r.min)
         };
       }
-    } else if (op === "Nat.mul" || op === "*") {
+    } else if (op === "Nat.mul" || op === "*" || op === "HMul.hMul") {
       if (left.sign === "ZERO" || right.sign === "ZERO") {
         sign = "ZERO";
       } else if (left.sign === "POSITIVE" && right.sign === "POSITIVE") {
@@ -275,60 +469,135 @@ export class LeanAbstractInterpreter {
         sign = "NON_NEGATIVE";
       }
       if (l && r) {
-        interval = {
+        interval = this.callWasmIntervalOp("lean_analyzer_eval_nat_mul", l, r) || {
           min: mulNatBound(l.min, r.min),
           max: mulNatBound(l.max, r.max)
         };
       }
-    } else if (op === "Nat.div" || op === "/") {
+      if (left.congruence && right.congruence) {
+        const s1 = left.congruence.stride;
+        const o1 = left.congruence.offset;
+        const s2 = right.congruence.stride;
+        const o2 = right.congruence.offset;
+        const g = gcdNat(s1 * s2, gcdNat(s1 * o2, s2 * o1));
+        const off = o1 * o2;
+        congruence = { stride: g, offset: g === 0 ? off : off % g };
+      }
+    } else if (op === "Nat.div" || op === "/" || op === "HDiv.hDiv") {
       sign = "NON_NEGATIVE";
       if (l && r) {
-        if (r.min === 0 && r.max === 0) {
-          // Lean 4 total division: n / 0 = 0
-          interval = { min: 0, max: 0 };
-        } else if (r.min === 0) {
-          // Divisor interval contains both 0 and >= 1
-          interval = { min: 0, max: l.max };
-        } else {
-          const minQuot = r.max === Number.POSITIVE_INFINITY ? 0 : Math.floor(l.min / r.max);
-          const maxQuot = Math.floor(l.max / r.min);
-          interval = { min: minQuot, max: maxQuot };
+        interval = this.callWasmIntervalOp("lean_analyzer_eval_nat_div", l, r) || undefined;
+        if (!interval) {
+          if (r.min === 0 && r.max === 0) {
+            interval = { min: 0, max: 0 };
+          } else if (r.min === 0) {
+            interval = { min: 0, max: l.max };
+          } else {
+            const minQuot = r.max === Number.POSITIVE_INFINITY ? 0 : Math.floor(l.min / r.max);
+            const maxQuot = Math.floor(l.max / r.min);
+            interval = { min: minQuot, max: maxQuot };
+          }
         }
       }
-    } else if (op === "Nat.mod" || op === "%") {
+    } else if (op === "Nat.mod" || op === "%" || op === "HMod.hMod") {
       sign = "NON_NEGATIVE";
       if (l && r) {
-        if (r.min === 0 && r.max === 0) {
-          // Lean 4 total modulo: n % 0 = n
-          interval = { min: l.min, max: l.max };
-        } else if (r.min === 0) {
-          const boundFromDivisor = r.max === Number.POSITIVE_INFINITY
-            ? Number.POSITIVE_INFINITY
-            : Math.max(0, r.max - 1);
-          interval = {
-            min: 0,
-            max: Math.max(l.max, boundFromDivisor)
-          };
-        } else if (
-          r.min === r.max &&
-          Number.isFinite(l.max) &&
-          Number.isFinite(r.min) &&
-          Math.floor(l.min / r.min) === Math.floor(l.max / r.min)
-        ) {
-          // Single quotient bucket: exact remainder interval
-          interval = {
-            min: l.min % r.min,
-            max: l.max % r.min
-          };
-        } else {
-          const maxRem = r.max === Number.POSITIVE_INFINITY
-            ? l.max
-            : Math.min(l.max, Math.max(0, r.max - 1));
-          interval = {
-            min: 0,
-            max: maxRem
-          };
+        interval = this.callWasmIntervalOp("lean_analyzer_eval_nat_mod", l, r) || undefined;
+        if (!interval) {
+          if (r.min === 0 && r.max === 0) {
+            interval = { min: l.min, max: l.max };
+          } else if (r.min === 0) {
+            const boundFromDivisor = r.max === Number.POSITIVE_INFINITY
+              ? Number.POSITIVE_INFINITY
+              : Math.max(0, r.max - 1);
+            interval = {
+              min: 0,
+              max: Math.max(l.max, boundFromDivisor)
+            };
+          } else if (
+            r.min === r.max &&
+            Number.isFinite(l.max) &&
+            Number.isFinite(r.min) &&
+            Math.floor(l.min / r.min) === Math.floor(l.max / r.min)
+          ) {
+            interval = {
+              min: l.min % r.min,
+              max: l.max % r.min
+            };
+          } else {
+            const maxRem = r.max === Number.POSITIVE_INFINITY
+              ? l.max
+              : Math.min(l.max, Math.max(0, r.max - 1));
+            interval = {
+              min: 0,
+              max: maxRem
+            };
+          }
         }
+      }
+    } else if (op === "Nat.pow" || op === "^" || op === "HPow.hPow") {
+      sign = "NON_NEGATIVE";
+      if (l && r) {
+        interval = this.callWasmIntervalOp("lean_analyzer_eval_nat_pow", l, r) || {
+          min: r.max === 0 ? 1 : Math.pow(l.min, r.min),
+          max: r.max === 0 ? 1 : Math.pow(l.max, r.max)
+        };
+      }
+    } else if (op === "Nat.land" || op === "&&&" || op === "AndOp.and" || op === "HAnd.hAnd") {
+      sign = "NON_NEGATIVE";
+      if (l && r) {
+        interval = this.callWasmIntervalOp("lean_analyzer_eval_nat_land", l, r) || {
+          min: l.min === l.max && r.min === r.max ? Number(BigInt(l.min) & BigInt(r.min)) : 0,
+          max: Math.min(l.max, r.max)
+        };
+      }
+    } else if (op === "Nat.lor" || op === "|||" || op === "OrOp.or" || op === "HOr.hOr") {
+      sign = "NON_NEGATIVE";
+      if (l && r) {
+        interval = this.callWasmIntervalOp("lean_analyzer_eval_nat_lor", l, r) || undefined;
+        if (!interval) {
+          if (l.min === l.max && r.min === r.max && Number.isFinite(l.min) && Number.isFinite(r.min)) {
+            const v = Number(BigInt(l.min) | BigInt(r.min));
+            interval = { min: v, max: v };
+          } else {
+            const maxIn = Math.max(l.max, r.max);
+            let mask = 1;
+            while (mask <= maxIn && Number.isFinite(maxIn)) mask *= 2;
+            interval = { min: Math.max(l.min, r.min), max: Number.isFinite(maxIn) ? mask - 1 : Number.POSITIVE_INFINITY };
+          }
+        }
+      }
+    } else if (op === "Nat.xor" || op === "^^^" || op === "XorOp.xor" || op === "HXor.hXor") {
+      sign = "NON_NEGATIVE";
+      if (l && r) {
+        interval = this.callWasmIntervalOp("lean_analyzer_eval_nat_xor", l, r) || undefined;
+        if (!interval) {
+          if (l.min === l.max && r.min === r.max && Number.isFinite(l.min) && Number.isFinite(r.min)) {
+            const v = Number(BigInt(l.min) ^ BigInt(r.min));
+            interval = { min: v, max: v };
+          } else {
+            const maxIn = Math.max(l.max, r.max);
+            let mask = 1;
+            while (mask <= maxIn && Number.isFinite(maxIn)) mask *= 2;
+            interval = { min: 0, max: Number.isFinite(maxIn) ? mask - 1 : Number.POSITIVE_INFINITY };
+          }
+        }
+      }
+    } else if (op === "Nat.shiftLeft" || op === "<<<" || op === "HShiftLeft.hShiftLeft") {
+      sign = "NON_NEGATIVE";
+      if (l && r) {
+        interval = this.callWasmIntervalOp("lean_analyzer_eval_nat_shl", l, r) || {
+          min: l.min * Math.pow(2, r.min),
+          max: l.max * Math.pow(2, r.max)
+        };
+      }
+    } else if (op === "Nat.shiftRight" || op === ">>>" || op === "HShiftRight.hShiftRight") {
+      sign = "NON_NEGATIVE";
+      if (l && r) {
+        interval = this.callWasmIntervalOp("lean_analyzer_eval_nat_shr", l, r) || {
+          min: Math.floor(l.min / Math.pow(2, r.max)),
+          max: Math.floor(l.max / Math.pow(2, r.min))
+        };
       }
     } else if (op === "Nat.min" || op === "min") {
       if (left.sign === "ZERO" || right.sign === "ZERO") {
@@ -365,6 +634,7 @@ export class LeanAbstractInterpreter {
     return this.reduceState({
       sign,
       interval,
+      congruence,
       isDeterministic: left.isDeterministic && right.isDeterministic,
       purity: "PURE"
     });
@@ -380,9 +650,20 @@ export class LeanAbstractInterpreter {
       return this.reduceState({
         sign,
         interval: { min: v, max: v },
+        congruence: v >= 0 ? { stride: 0, offset: v } : undefined,
         isDeterministic: true,
         purity: "PURE"
       });
+    }
+
+    if (expr.op && expr.args && expr.args.length === 1) {
+      const arg = this.evalExpr(expr.args[0]);
+      if (expr.op === "Nat.succ") {
+        return this.evalBinaryNatOp("Nat.add", arg, this.evalExpr({ value: 1 }))!;
+      }
+      if (expr.op === "Nat.pred") {
+        return this.evalBinaryNatOp("Nat.sub", arg, this.evalExpr({ value: 1 }))!;
+      }
     }
 
     if (expr.op && expr.args && expr.args.length === 2) {
@@ -413,6 +694,7 @@ export class LeanAbstractInterpreter {
         return this.reduceState({
           sign: val > 0 ? "POSITIVE" : (val === 0 ? "ZERO" : "NEGATIVE"),
           interval: { min: val, max: val },
+          congruence: val >= 0 ? { stride: 0, offset: val } : undefined,
           isDeterministic: true,
           purity: "PURE"
         });
@@ -442,7 +724,7 @@ export class LeanAbstractInterpreter {
   /**
    * Widens two abstract lattice states (using Nat-aware widening when both states are non-negative).
    */
-  public widen(prevRaw: AbstractLatticeState, nextRaw: AbstractLatticeState): AbstractLatticeState {
+  public widen(prevRaw: AbstractLatticeState, nextRaw: AbstractLatticeState, thresholds?: number[]): AbstractLatticeState {
     const prev = this.reduceState(prevRaw);
     const next = this.reduceState(nextRaw);
     if (prev.sign === "BOTTOM") return next;
@@ -454,7 +736,9 @@ export class LeanAbstractInterpreter {
     const joinedSign = AbstractLattice.join(prev.sign, next.sign);
     const interval =
       prev.interval && next.interval
-        ? AbstractLattice.widenInterval(prev.interval, next.interval, isNat)
+        ? (thresholds && thresholds.length > 0
+            ? AbstractLattice.widenIntervalWithThresholds(prev.interval, next.interval, thresholds, isNat)
+            : AbstractLattice.widenInterval(prev.interval, next.interval, isNat))
         : undefined;
 
     return this.reduceState({
@@ -519,12 +803,14 @@ export class LeanAbstractInterpreter {
   }
 
   /**
-   * Computes a sound post-fixpoint using Cousot-Cousot widening followed by narrowing.
+   * Computes a sound post-fixpoint using Cousot-Cousot widening (optionally stepped through `thresholds`)
+   * followed by narrowing.
    */
   public computeWideningFixpoint(
     init: AbstractLatticeState,
     transferFn: (curr: AbstractLatticeState) => AbstractLatticeState,
-    maxIterations = 20
+    maxIterations = 20,
+    thresholds?: number[]
   ): AbstractLatticeState {
     let curr = this.reduceState(init);
     for (let iter = 0; iter < maxIterations; iter++) {
@@ -533,7 +819,7 @@ export class LeanAbstractInterpreter {
         const post = this.reduceState(transferFn(curr));
         return this.narrow(curr, post);
       }
-      curr = this.widen(curr, next);
+      curr = this.widen(curr, next, thresholds);
     }
     const post = this.reduceState(transferFn(curr));
     return this.narrow(curr, post);
