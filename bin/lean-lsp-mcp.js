@@ -5,12 +5,44 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const distEntry = path.resolve(__dirname, "../dist/index.js");
-const srcEntry = path.resolve(__dirname, "../src/index.ts");
+const pkgRoot = path.resolve(__dirname, "..");
+const sdkPath = path.resolve(pkgRoot, "node_modules/@modelcontextprotocol/sdk");
+const pkgJsonPath = path.resolve(pkgRoot, "package.json");
+const lockPath = path.resolve(pkgRoot, "package-lock.json");
+
+// Auto-bootstrap runtime npm dependencies on first launch if node_modules is missing.
+// Direct all npm output to stderr so MCP stdio JSON-RPC on stdout is never polluted.
+if (!fs.existsSync(sdkPath) && fs.existsSync(pkgJsonPath)) {
+  const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
+  const subCmd = fs.existsSync(lockPath) ? "ci" : "install";
+  process.stderr.write(
+    `[lean-lsp-mcp] Bootstrapping runtime dependencies (npm ${subCmd} --omit=dev)...\n`
+  );
+  const res = spawnSync(
+    npmCmd,
+    [subCmd, "--omit=dev", "--no-audit", "--no-fund", "--loglevel=error"],
+    {
+      cwd: pkgRoot,
+      stdio: ["ignore", "pipe", "inherit"]
+    }
+  );
+  if (res.stdout && res.stdout.length > 0) {
+    process.stderr.write(res.stdout);
+  }
+  if (res.status !== 0 && !fs.existsSync(sdkPath)) {
+    process.stderr.write(
+      `[lean-lsp-mcp] ERROR: Failed to bootstrap node_modules (exit ${res.status ?? 1}). Run 'npm install' in ${pkgRoot}.\n`
+    );
+    process.exit(res.status ?? 1);
+  }
+}
+
+const distEntry = path.resolve(pkgRoot, "dist/index.js");
+const srcEntry = path.resolve(pkgRoot, "src/index.ts");
 
 if (fs.existsSync(distEntry)) {
   await import(pathToFileURL(distEntry).href);
