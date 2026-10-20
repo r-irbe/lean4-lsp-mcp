@@ -1,6 +1,6 @@
 {
   "name": "lean4-lsp-mcp",
-  "version": "0.3.0",
+  "version": "0.6.0",
   "description": "Model Context Protocol (MCP) server for Lean 4 theorem proving, zero-latency .ilean navigation, and C FFI cross-language inspection",
   "main": "dist/index.js",
   "type": "module",
@@ -15,7 +15,10 @@
     "build": "tsc",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
-    "test": "node --test tests/test_rules_fixtures.mjs && node --test tests/test_harvest.mjs && node --experimental-strip-types tests/test_lean_lsp_mcp.mjs && node --experimental-strip-types tests/test_file_worker_manager.mjs && node --experimental-strip-types tests/test_counterexample_verb.mjs && node --experimental-strip-types tests/test_project_root.mjs && node --experimental-strip-types tests/test_diagnostics_ready.mjs && node --experimental-strip-types tests/test_decl_references.mjs"
+    "test": "node --test tests/test_rules_fixtures.mjs && node --test tests/test_harvest.mjs && node --experimental-strip-types tests/test_lean_lsp_mcp.mjs && node --experimental-strip-types tests/test_file_worker_manager.mjs && node --experimental-strip-types tests/test_counterexample_verb.mjs && node --experimental-strip-types tests/test_project_root.mjs && node --experimental-strip-types tests/test_diagnostics_ready.mjs && node --experimental-strip-types tests/test_decl_references.mjs && node --experimental-strip-types tests/test_abstract_interpreter.mjs && node --experimental-strip-types tests/test_tranche1_modules.mjs && node tests/test_wasm_integration.mjs"
+  },
+  "engines": {
+    "node": ">=22.6.0"
   },
   "repository": {
     "type": "git",
@@ -37,14 +40,14 @@
     "tools": [
       {
         "name": "lean_goal",
-        "description": "Interactive proof state and goal inspection",
+        "description": "Interactive proof state, filtered goal, term goal, and AltProof route/tactic advisor",
         "access": "read",
         "scope": "workspace",
         "network": false
       },
       {
         "name": "lean_search",
-        "description": "Unified declaration, semantic, ontology, reservoir, and Kuzu knowledge graph search",
+        "description": "Unified declaration, semantic, ontology, reservoir, dataset, arXiv, and Kuzu knowledge graph search",
         "access": "read",
         "scope": "workspace_and_public_apis",
         "network": true,
@@ -58,14 +61,14 @@
       },
       {
         "name": "lean_blueprint",
-        "description": "Blueprint generation, status audit, and knowledge graph neighborhood",
+        "description": "Blueprint generation, status audit, zettels, skeletons, and knowledge graph neighborhood",
         "access": "read_write",
         "scope": "workspace",
         "network": false
       },
       {
         "name": "lean_metrics",
-        "description": "Module census, dependency hierarchy, and DAG graphs",
+        "description": "Module census, dependency hierarchy, DAG subgraphs, bigraphs, axiom audit, and AltProof analysis",
         "access": "read",
         "scope": "workspace",
         "network": false
@@ -83,6 +86,111 @@
         "access": "exec",
         "scope": "isolated_process",
         "network": false
+      },
+      {
+        "name": "lean_resync",
+        "description": "Force full document re-sync with LSP server",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_lookup_symbol",
+        "description": "Offline symbol lookup in compiled .ilean index",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_decl_references",
+        "description": "Declaration-level uses/usedBy reference graph from .ilean index",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_module_hierarchy",
+        "description": "Import DAG traversal for a module with cycle detection",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_run_code",
+        "description": "Execute Lean 4 code against the compiled environment (legacy alias of lean_exec)",
+        "access": "exec",
+        "scope": "isolated_process",
+        "network": false
+      },
+      {
+        "name": "lean_axiom_closure",
+        "description": "Transitive axiom closure check (#print axioms) for a declaration",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_diagnostics",
+        "description": "Live compiler, linter, and static analyzer diagnostics for a Lean file",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_book_index_lookup",
+        "description": "Author-curated book index lookup over the source-materials corpus",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_cross_itp_concordance",
+        "description": "Cross-ITP concordance across Lean 4, Coq, Isabelle, and HOL Light",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_proof_skeleton",
+        "description": "Generate proof skeleton with sorry-punched tactic placeholders",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_blueprint_scaffold",
+        "description": "Blueprint scaffold for a declaration with proof outline",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_dependency_subgraph",
+        "description": "Render dependency subgraph around a module from .ilean index",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_module_census",
+        "description": "Declaration census over a target path from compiled corpus",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_server_status",
+        "description": "Server attach mode, open files, and RSS memory introspection",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_counterexample_search",
+        "description": "Galois-pruned Plausible counterexample search in an isolated scratch directory",
+        "access": "exec",
+        "scope": "isolated_process",
+        "network": false
       }
     ]
   },
@@ -94,7 +202,6 @@
     "@types/node": "^20.11.0",
     "typescript": "^5.3.3"
   },
-  "test": "node --experimental-strip-types tests/test_lean_lsp_mcp.mjs && node --experimental-strip-types tests/test_file_worker_manager.mjs && node --experimental-strip-types tests/test_tranche1_modules.mjs && node tests/test_rules_fixtures.mjs && node --experimental-strip-types tests/test_counterexample_verb.mjs",
   "exports": {
     ".": "./dist/index.js",
     "./core": "./dist/bounded_cache.js",

@@ -1,4 +1,4 @@
-import EASCI
+import MyProject.Internal.Private.Submodule.Detail
 
 set_option maxHeartbeats 0
 

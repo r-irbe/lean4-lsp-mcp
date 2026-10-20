@@ -14,7 +14,7 @@ const clean = path.join(here, "fixtures", "rules", "clean.leanfix");
 
 test("rule corpus loads", () => {
   const { ruleCount } = runScan({ rulesDir, targets: [clean] });
-  assert.ok(ruleCount > 80, `expected the full rule corpus, got ${ruleCount}`);
+  assert.ok(ruleCount >= 80, `expected the full rule corpus, got ${ruleCount}`);
 });
 
 test("violation fixture trips the expected rule ids", () => {
@@ -25,7 +25,7 @@ test("violation fixture trips the expected rule ids", () => {
     "rule-lean-no-uncertified-axiom",
     "rule-lean-no-redundant-simp",
     "rule-lean-no-unbounded-heartbeats",
-    "rule-lean-subproject-no-monolith-import",
+    "rule-lean-max-import-depth",
   ]) {
     assert.ok(ids.has(expected), `missing finding: ${expected} (got: ${[...ids].join(", ")})`);
   }

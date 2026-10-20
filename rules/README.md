@@ -1,14 +1,13 @@
-# Project-Local AST-Grep Rules for tacit-mui
+# Declarative Lean 4 AST-Grep & Lint Rules
 
-This directory holds repository-specific AST-grep rules that govern the architecture and invariants of `tacit-mui`.
+This directory holds reusable declarative AST-grep / regex lint rules for Lean 4 formal verification projects. Use `lean-rules` (bundled with `lean4-lsp-mcp`) to scan `.lean` source files or directories against this rule catalog.
 
 ## Code vs prose (`scope`)
 
 `lean-rules` matches a rule's regex against **masked code**: comments (`--`,
-nested `/- … -/`) and string literals are blanked out first, with newlines
+nested `/- ... -/`) and string literals are blanked out first, with newlines
 preserved so line numbers are unchanged. A soundness rule therefore cannot fire
-on a comment that *says* "No `sorry`, no `admit`" — which it did on a
-judge-accepted artifact before this option existed — and cannot be blinded by a
+on a comment that *says* "No `sorry`, no `admit`" and cannot be blinded by a
 `sorry` hiding inside a docstring.
 
 A rule that genuinely targets prose opts in explicitly:
@@ -20,127 +19,82 @@ scope: any      # match raw file text (comments and strings included)
 Default is code-only. If you add a rule about comment markers or docstring
 wording, set `scope: any`; otherwise leave it out.
 
-## Dynamic Rule Ingestion
+## Rule Categories & Core Invariants
 
-`pi-lens` automatically discovers and loads rules from `.pi-lens/rules/` when scanning or linting this repository. Project-local rules take precedence over built-in catalog rules and are merged dynamically into the effective rule catalog and the synthesized `baseline.sgconfig.yml`.
-
-## Active Project Rules
-
-1. `rule-lean-multipackage-tier-dag-integrity`:
-   - Enforces the strict 4-tier DAG across `packages/`:
-     - Tier 0: `tacit-foundations`
-     - Tier 1: `stochastic-ccv`, `cusp-catastrophe`, `phase-portrait`
-     - Tier 2: `reinforcement-learning`
-     - Tier 3: `agentic-safety`, `provenance-chain`
-   - Enforces sideways isolation prohibiting peer imports within Tier 1 and Tier 3.
-
-2. `rule-lean-tier-inversion-guard`:
-   - Prohibits lower architectural tiers from importing higher architectural tiers.
-
-3. `rule-lean-subproject-no-monolith-import`:
-   - Prohibits decoupled subpackages under `packages/` from directly importing the monolithic `EASCI` package.
-
-4. `rule-lean-subproject-scaled-arithmetic`:
-   - Flags hardware floating point types in subpackages, mandating `Foundations.DiscreteValuation` (`ScaledInt`).
-
-5. `rule-lean-p2m-card-conformance`:
-   - Enforces the P2M card architecture: theorem interface cards in `Theorems/` or `Interface/` must delegate proofs via `p2m_exact_reverting` or `exact` rather than inlining complex multi-step tactic scripts.
-
-6. `rule-lean-tier-backward-dependency-guard`:
-   - Enforces strict multi-package backward-dependency isolation across the 4-tier DAG:
-     - Tier 0 (`tacit-foundations`) cannot import Tiers 1-3.
-     - Tier 1 (`stochastic-ccv`, `cusp-catastrophe`, `phase-portrait`) cannot import Tiers 2-3.
-     - Tier 2 (`reinforcement-learning`) cannot import Tier 3 (`agentic-safety`, `provenance-chain`).
-
-7. `rule-lean-tier-bidirectional-no-cross-contamination`:
-   - Enforces bidirectional horizontal isolation between Tier 1 peer packages (`stochastic-ccv`, `cusp-catastrophe`, `phase-portrait`, `tensor-network`) and Tier 3 peer packages (`agentic-safety`, `provenance-chain`), preventing lateral cross-contamination.
-
-8. `rule-lean-no-uncertified-axiom`:
+1. `rule-lean-no-uncertified-axiom`:
    - Enforces the 0-axiom sound verification invariant by flagging any ad-hoc `axiom` declaration.
 
-9. `rule-lean-no-raw-float`:
-   - Strict invariant prohibiting IEEE 754 raw floats (`Float`, `Float32`, `Float64`) in favor of `ScaledInt` (S=100) or exact `Real` proofs.
+2. `rule-lean-no-raw-float`:
+   - Flags IEEE 754 raw hardware floats (`Float`, `Float32`, `Float64`) in formal specifications where exact integer, rational, or real arithmetic is expected.
 
-10. `rule-lean-no-sorry-cheat`:
-   - Flags `sorry`, `cheat`, or `admit` tactics in Lean source files, enforcing the 0-sorry verification invariant across all packages.
+3. `rule-lean-no-sorry-cheat`:
+   - Flags `sorry`, `cheat`, or `admit` tactics in Lean source files, enforcing the 0-sorry verification invariant.
 
-11. `rule-lean-no-unbounded-heartbeats`:
+4. `rule-lean-no-unbounded-heartbeats`:
    - Flags `set_option maxHeartbeats 0` or limits exceeding 1,000,000 to prevent runaway CPU exhaustion and unbounded proof compilation stalls.
 
-12. `rule-lean-max-import-depth`:
+5. `rule-lean-max-import-depth`:
    - Flags deeply nested module imports (5 or more path segments) and direct imports into internal/private modules to protect modular encapsulation and build latency.
 
-13. `rule-lean-no-trailing-tactic-semicolon`:
+6. `rule-lean-p2m-card-conformance`:
+   - Enforces lightweight theorem interface cards in `Theorems/` or `Interface/` that delegate proofs directly rather than inlining multi-step tactic scripts.
+
+7. `rule-lean-no-trailing-tactic-semicolon`:
    - Flags redundant trailing semicolons in tactic scripts to prevent unconstrained elaborator sub-goals and fragile proof branching.
 
-14. `rule-lean-no-redundant-have`:
+8. `rule-lean-no-redundant-have`:
    - Flags consecutive anonymous `have :` hypotheses that shadow local definitions and pollute proof state contexts.
 
-15. `rule-lean-no-redundant-open`:
+9. `rule-lean-no-redundant-open`:
    - Flags consecutive duplicate `open` namespace declarations that introduce redundant scope pollution and non-deterministic symbol resolution.
 
-16. `rule-lean-no-redundant-simp-all`:
-   - Flags consecutive or unconstrained `simp_all` tactics to prevent runaway elaborator loops and proof context pollution.
+10. `rule-lean-no-redundant-simp-all`:
+    - Flags consecutive or unconstrained `simp_all` tactics to prevent runaway elaborator loops and proof context pollution.
 
-17. `rule-lean-no-redundant-ring`:
-   - Flags consecutive duplicate `ring` tactic calls that introduce redundant polynomial normalization cycles and clutter proof scripts.
+11. `rule-lean-no-redundant-ring`:
+    - Flags consecutive duplicate `ring` tactic calls that introduce redundant polynomial normalization cycles and clutter proof scripts.
 
-18. `rule-lean-no-redundant-linarith`:
-   - Flags consecutive duplicate `linarith` tactic calls that introduce redundant Fourier-Motzkin linear arithmetic normalizer cycles and clutter proof scripts.
+12. `rule-lean-no-redundant-linarith`:
+    - Flags consecutive duplicate `linarith` tactic calls that introduce redundant Fourier-Motzkin linear arithmetic normalizer cycles and clutter proof scripts.
 
-19. `rule-lean-no-redundant-positivity`:
-   - Flags consecutive duplicate `positivity` tactic calls that introduce redundant numerical non-negativity extension passes and clutter proof scripts.
+13. `rule-lean-no-redundant-positivity`:
+    - Flags consecutive duplicate `positivity` tactic calls that introduce redundant numerical non-negativity extension passes and clutter proof scripts.
 
-20. `rule-lean-no-redundant-omega`:
-   - Flags consecutive duplicate `omega` tactic calls that introduce redundant Presburger arithmetic normalizer cycles and clutter proof scripts.
+14. `rule-lean-no-redundant-omega`:
+    - Flags consecutive duplicate `omega` tactic calls that introduce redundant Presburger arithmetic normalizer cycles and clutter proof scripts.
 
-21. `rule-lean-no-redundant-norm-num`:
-   - Flags consecutive duplicate `norm_num` tactic calls that introduce redundant numerical normalization cycles and clutter proof scripts.
+15. `rule-lean-no-redundant-norm-num`:
+    - Flags consecutive duplicate `norm_num` tactic calls that introduce redundant numerical normalization cycles and clutter proof scripts.
 
-22. `rule-lean-no-redundant-simp`:
-   - Flags consecutive duplicate `simp` tactic calls that introduce redundant simplifier cycles and bloat elaboration traces.
+16. `rule-lean-no-redundant-simp`:
+    - Flags consecutive duplicate `simp` tactic calls that introduce redundant simplifier cycles and bloat elaboration traces.
 
-23. `rule-lean-no-redundant-ring-nf`:
-   - Flags consecutive duplicate `ring_nf` tactic calls that introduce redundant ring normal form reduction cycles and bloat proof traces.
+17. `rule-lean-no-redundant-ring-nf`:
+    - Flags consecutive duplicate `ring_nf` tactic calls that introduce redundant ring normal form reduction cycles and bloat proof traces.
 
-24. `rule-lean-no-redundant-ext`:
-   - Flags consecutive duplicate `ext` tactic calls that introduce redundant extensionality reductions and clutter proof scripts.
+18. `rule-lean-no-redundant-ext`:
+    - Flags consecutive duplicate `ext` tactic calls that introduce redundant extensionality reductions and clutter proof scripts.
 
-25. `rule-lean-no-unanchored-unfolding`:
-   - Flags unanchored `dsimp` followed immediately by bare `simp` on complex function types, enforcing explicit `change` or `show` horizons per Navier-Stokes agentic synthesis practices.
+19. `rule-lean-no-unanchored-unfolding`:
+    - Flags unanchored `dsimp` followed immediately by bare `simp` on complex function types, encouraging explicit `change` or `show` target horizons.
 
-26. `rule-lean-no-redundant-tauto`:
-   - Flags consecutive duplicate `tauto` tactic calls that introduce redundant propositional tautology searches and clutter proof scripts.
+20. `rule-lean-no-redundant-tauto`:
+    - Flags consecutive duplicate `tauto` tactic calls that introduce redundant propositional tautology searches and clutter proof scripts.
 
-27. `rule-lean-no-unbounded-piola-drift`:
-   - Flags unanchored Piola coordinate deformations and coordinate scaling lacking volume-preservation or Jacobian determinant boundedness.
+21. `rule-lean-no-redundant-decide`:
+    - Flags consecutive duplicate `decide` tactic calls that introduce redundant computational reflection evaluations and clutter proof scripts.
 
-28. `rule-lean-no-redundant-decide`:
-   - Flags consecutive duplicate `decide` tactic calls that introduce redundant computational reflection evaluations and clutter proof scripts.
+22. `rule-lean-no-redundant-simp-only`:
+    - Flags consecutive duplicate `simp only` tactic calls that introduce redundant simplifier cycles and bloat elaboration traces.
 
-29. `rule-lean-no-unbounded-swirl-amplification`:
-   - Flags unanchored axisymmetric swirl amplification lacking critical bifurcation bounds or circulation safety margins.
+23. `rule-lean-no-redundant-dsimp`:
+    - Flags consecutive duplicate `dsimp` tactic calls that introduce redundant definitional simplifier cycles and bloat elaboration traces.
 
-30. `rule-lean-no-unbounded-logarithmic-gradient`:
-   - Flags unanchored logarithmic gradient estimates lacking Sobolev embedding constants or baseline enstrophy bounds.
+24. `rule-lean-blueprint-annotation-hygiene`:
+    - Flags top-level landmark theorems missing descriptive mathematical docstrings or blueprint metadata for graph rendering.
 
-31. `rule-lean-no-redundant-simp-only`:
-   - Flags consecutive duplicate `simp only` tactic calls that introduce redundant simplifier cycles and bloat elaboration traces.
-
-32. `rule-lean-no-redundant-dsimp`:
-   - Flags consecutive duplicate `dsimp` tactic calls that introduce redundant definitional simplifier cycles and bloat elaboration traces.
-
-33. `rule-lean-no-unbounded-reynolds-stress`:
-   - Flags unanchored Reynolds stress or turbulent cascade production lacking dissipation rates or energy flux conservation bounds.
-
-34. `rule-lean-no-unbounded-gevrey-norm`:
-   - Flags unanchored Gevrey class norm bounds lacking analyticity radius or envelope ceiling parameters.
-
-35. `rule-lean-blueprint-annotation-hygiene`:
-   - Flags top-level landmark theorems missing descriptive mathematical docstrings or blueprint metadata for graph rendering.
-
-36. `rule-lean-pedagogical-docstring-quality`:
-   - Flags vacuous or tautological docstrings on declarations, enforcing mathematical intuition and explanatory quality.
+25. `rule-lean-pedagogical-docstring-quality`:
+    - Flags vacuous or tautological docstrings on declarations, enforcing mathematical intuition and explanatory quality.
 
 37. `rule-lean-no-redundant-simp-all-dup`:
    - Flags consecutive duplicate `simp_all` calls that introduce redundant context simplification cycles and bloat elaboration traces.

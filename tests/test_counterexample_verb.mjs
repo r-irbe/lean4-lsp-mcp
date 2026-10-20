@@ -14,11 +14,12 @@ import { McpServer } from "../src/index.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = path.resolve(__dirname, "..");
-// ../.. = skills/tools, ../.. = skills, ../.. = the EASCI Lean project.
+// ../.. = skills/tools, ../.. = skills, ../.. = parent Lean project.
 const corpusRoot =
     process.env.LEAN_PROJECT_ROOT || path.resolve(pkgRoot, "..", "..", "..");
 
 function canRun() {
+    if (process.env.LEAN_LSP_LIVE_TESTS !== "1") return false;
     try {
         const marker = path.join(
             corpusRoot,
@@ -37,7 +38,7 @@ function canRun() {
 
 if (!canRun()) {
     console.log(
-        "SKIP test_counterexample_verb: lake or Plausible not available at",
+        "SKIP test_counterexample_verb: set LEAN_LSP_LIVE_TESTS=1 and ensure lake + Plausible are available at",
         corpusRoot
     );
     process.exit(0);

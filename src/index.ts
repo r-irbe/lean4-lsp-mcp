@@ -288,7 +288,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     inputSchema: {
       type: "object",
       properties: {
-        moduleName: { type: "string", description: "Module name (e.g. EASCI.Tactics)" },
+        moduleName: { type: "string", description: "Module name (e.g. MyProject.Tactics)" },
         direction: { type: "string", enum: ["imports", "importedBy", "both"], description: "Traversal direction (default: both)" },
         transitive: { type: "boolean", description: "Transitive closure instead of 1-hop (default: false)" },
         maxDepth: { type: "integer", description: "Max traversal depth (default: 20)" },
@@ -319,7 +319,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       type: "object",
       properties: {
         symbol: { type: "string", description: "Declaration name to check (bare or fully qualified)" },
-        module: { type: "string", description: "Module to import first (the declaring module or a root re-export module), e.g. EASCI" },
+        module: { type: "string", description: "Module to import first (the declaring module or a root re-export module), e.g. MyProject" },
       },
       required: ["symbol"],
     },    annotations: {
@@ -445,7 +445,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         budgetMs: { type: "integer", description: "Wall-clock budget for the scratch run in milliseconds (default: 60000, max: 120000)" },
         strategy: { type: "string", description: "Harness-search strategy: \"slice\" (default; the single v1 shape, byte-identical behavior) or \"dense\" (probe a small candidate set - size schedules and, when the binders are simple and independent, a reversed order - then spend the budget on the best-scoring shape)" },
         probeBudgetMs: { type: "integer", description: "Dense strategy only: per-probe wall-clock cap in milliseconds (default: min(15000, budgetMs); clamped to 1000..30000 and never above budgetMs)" },
-        imports: { type: "array", items: { type: "string" }, description: "Extra Lean modules to import in the scratch harness (validated module names), e.g. [\"EASCI.Testing.Samplers\"] to expose project SampleableExt instances" },
+        imports: { type: "array", items: { type: "string" }, description: "Extra Lean modules to import in the scratch harness (validated module names), e.g. [\"MyProject.Testing.Samplers\"] to expose project SampleableExt instances" },
       },
       required: ["filePath", "theoremName"],
     },    annotations: {
@@ -1000,12 +1000,11 @@ export class Lean4IleanIndex {
     this.declToRefs.clear();
     this.refToDecls.clear();
 
-    // Resolve workspace root if projectRoot is inside a subpackage or docs/easci/lean
+    // Resolve workspace root if projectRoot is inside a subpackage
     let wsRoot = this.projectRoot;
     let scanCurr = path.resolve(this.projectRoot);
     while (scanCurr !== path.dirname(scanCurr)) {
       if (
-        (fs.existsSync(path.join(scanCurr, "packages")) && fs.existsSync(path.join(scanCurr, "docs", "easci", "lean"))) ||
         fs.existsSync(path.join(scanCurr, "CLAUDE.md")) ||
         fs.existsSync(path.join(scanCurr, "AGENTS.md")) ||
         (fs.existsSync(path.join(scanCurr, "packages")) && !fs.existsSync(path.join(scanCurr, "..", "packages")))
@@ -1016,22 +1015,37 @@ export class Lean4IleanIndex {
       scanCurr = path.dirname(scanCurr);
     }
 
-    const easciLean = path.join(wsRoot, "docs", "easci", "lean");
     const candidateRoots = [
       path.join(this.projectRoot, ".lake", "build", "lib", "lean"),
       path.join(this.projectRoot, ".lake", "build", "ir"),
       path.join(wsRoot, ".lake", "build", "lib", "lean"),
       path.join(wsRoot, ".lake", "build", "ir"),
-      path.join(easciLean, ".lake", "build", "lib", "lean"),
-      path.join(easciLean, ".lake", "build", "ir"),
     ];
 
     // Discover .lake/packages for Mathlib and external libraries
     const packageDirs = [
       path.join(this.projectRoot, ".lake", "packages"),
       path.join(wsRoot, ".lake", "packages"),
-      path.join(easciLean, ".lake", "packages"),
     ];
+
+    // Discover nested Lean projects under docs/*/lean if present
+    const docsDir = path.join(wsRoot, "docs");
+    if (fs.existsSync(docsDir)) {
+      try {
+        for (const ent of fs.readdirSync(docsDir, { withFileTypes: true })) {
+          if (ent.isDirectory()) {
+            const nestedLean = path.join(docsDir, ent.name, "lean");
+            if (fs.existsSync(nestedLean)) {
+              candidateRoots.push(path.join(nestedLean, ".lake", "build", "lib", "lean"));
+              candidateRoots.push(path.join(nestedLean, ".lake", "build", "ir"));
+              packageDirs.push(path.join(nestedLean, ".lake", "packages"));
+            }
+          }
+        }
+      } catch {
+        // Ignore unreadable docs directory
+      }
+    }
 
     // Discover modular Lean packages under packages/*/
     const packagesDir = path.join(wsRoot, "packages");
@@ -1054,18 +1068,20 @@ export class Lean4IleanIndex {
       }
     }
 
-    for (const pDir of packageDirs) {
-      if (fs.existsSync(pDir)) {
-        try {
-          const pkgs = fs.readdirSync(pDir, { withFileTypes: true });
-          for (const pkg of pkgs) {
-            if (pkg.isDirectory()) {
-              const pBuild = path.join(pDir, pkg.name, ".lake", "build", "lib", "lean");
-              if (fs.existsSync(pBuild)) candidateRoots.push(pBuild);
+    if (process.env.LEAN_INDEX_PACKAGES === "1") {
+      for (const pDir of packageDirs) {
+        if (fs.existsSync(pDir)) {
+          try {
+            const pkgs = fs.readdirSync(pDir, { withFileTypes: true });
+            for (const pkg of pkgs) {
+              if (pkg.isDirectory()) {
+                const pBuild = path.join(pDir, pkg.name, ".lake", "build", "lib", "lean");
+                if (fs.existsSync(pBuild)) candidateRoots.push(pBuild);
+              }
             }
+          } catch {
+            // Ignore unreadable package folders
           }
-        } catch {
-          // Ignore unreadable package folders
         }
       }
     }
@@ -1084,11 +1100,21 @@ export class Lean4IleanIndex {
   }
 
   public hasNewerBuilds(): boolean {
-    const easciLean = path.join(this.projectRoot, "docs", "easci", "lean");
     const checkRoots = [
       path.join(this.projectRoot, ".lake", "build", "lib", "lean"),
-      path.join(easciLean, ".lake", "build", "lib", "lean"),
     ];
+    const docsDir = path.join(this.projectRoot, "docs");
+    if (fs.existsSync(docsDir)) {
+      try {
+        for (const ent of fs.readdirSync(docsDir, { withFileTypes: true })) {
+          if (ent.isDirectory()) {
+            checkRoots.push(path.join(docsDir, ent.name, "lean", ".lake", "build", "lib", "lean"));
+          }
+        }
+      } catch {
+        // Ignore unreadable docs directory
+      }
+    }
     const packagesDir = path.join(this.projectRoot, "packages");
     if (fs.existsSync(packagesDir)) {
       try {
@@ -1144,27 +1170,42 @@ export class Lean4IleanIndex {
       if (moduleName) {
         const relLean = moduleName.replace(/\./g, "/") + ".lean";
         const candidate = path.join(this.projectRoot, relLean);
-        const candidateEasci = path.join(this.projectRoot, "docs", "easci", "lean", relLean);
         if (fs.existsSync(candidate)) {
           sourceFile = path.relative(this.projectRoot, candidate);
-        } else if (fs.existsSync(candidateEasci)) {
-          sourceFile = path.relative(this.projectRoot, candidateEasci);
         } else {
-          const packagesDir = path.join(this.projectRoot, "packages");
-          if (fs.existsSync(packagesDir)) {
+          const docsDir = path.join(this.projectRoot, "docs");
+          if (fs.existsSync(docsDir)) {
             try {
-              const pkgs = fs.readdirSync(packagesDir, { withFileTypes: true });
-              for (const pkg of pkgs) {
-                if (pkg.isDirectory()) {
-                  const candidatePkg = path.join(packagesDir, pkg.name, relLean);
-                  if (fs.existsSync(candidatePkg)) {
-                    sourceFile = path.relative(this.projectRoot, candidatePkg);
+              for (const ent of fs.readdirSync(docsDir, { withFileTypes: true })) {
+                if (ent.isDirectory()) {
+                  const candNested = path.join(docsDir, ent.name, "lean", relLean);
+                  if (fs.existsSync(candNested)) {
+                    sourceFile = path.relative(this.projectRoot, candNested);
                     break;
                   }
                 }
               }
             } catch {
-              // Ignore unreadable packages directory
+              // Ignore unreadable docs directory
+            }
+          }
+          if (!sourceFile) {
+            const packagesDir = path.join(this.projectRoot, "packages");
+            if (fs.existsSync(packagesDir)) {
+              try {
+                const pkgs = fs.readdirSync(packagesDir, { withFileTypes: true });
+                for (const pkg of pkgs) {
+                  if (pkg.isDirectory()) {
+                    const candidatePkg = path.join(packagesDir, pkg.name, relLean);
+                    if (fs.existsSync(candidatePkg)) {
+                      sourceFile = path.relative(this.projectRoot, candidatePkg);
+                      break;
+                    }
+                  }
+                }
+              } catch {
+                // Ignore unreadable packages directory
+              }
             }
           }
         }
@@ -1947,13 +1988,8 @@ export class LakeBuildGuard {
 /**
  * MultiPackageWorkspaceCoordinator
  *
- * Implements Lane FFF (ACT-FLT-64).
- * Auto-discovers and indexes all parallel Lean 4 packages within the workspace:
- * - Root package: docs/easci/lean
- * - Mini-projects: packages/tacit-foundations, packages/stochastic-ccv,
- *   packages/cusp-catastrophe, packages/phase-portrait,
- *   packages/reinforcement-learning, packages/agentic-safety,
- *   packages/provenance-chain.
+ * Auto-discovers and indexes all parallel Lean 4 packages within the workspace
+ * (root Lake project, nested Lake projects, and packages/ sub-projects).
  * Resolves document URIs to their owning package root.
  */
 export class MultiPackageWorkspaceCoordinator {
@@ -1971,7 +2007,6 @@ export class MultiPackageWorkspaceCoordinator {
     let scanCurr = path.resolve(this.projectRoot);
     while (scanCurr !== path.dirname(scanCurr)) {
       if (
-        (fs.existsSync(path.join(scanCurr, "packages")) && fs.existsSync(path.join(scanCurr, "docs", "easci", "lean"))) ||
         fs.existsSync(path.join(scanCurr, "CLAUDE.md")) ||
         fs.existsSync(path.join(scanCurr, "AGENTS.md")) ||
         (fs.existsSync(path.join(scanCurr, "packages")) && !fs.existsSync(path.join(scanCurr, "..", "packages")))
@@ -1988,9 +2023,23 @@ export class MultiPackageWorkspaceCoordinator {
     ) {
       this.knownPackages.set(path.basename(this.projectRoot) || "root", this.projectRoot);
     }
-    const easciLean = path.join(wsRoot, "docs", "easci", "lean");
-    if (fs.existsSync(path.join(easciLean, "lakefile.lean"))) {
-      this.knownPackages.set("docs/easci/lean", easciLean);
+    const docsDir = path.join(wsRoot, "docs");
+    if (fs.existsSync(docsDir)) {
+      try {
+        for (const ent of fs.readdirSync(docsDir, { withFileTypes: true })) {
+          if (ent.isDirectory()) {
+            const nestedLean = path.join(docsDir, ent.name, "lean");
+            if (
+              fs.existsSync(path.join(nestedLean, "lakefile.lean")) ||
+              fs.existsSync(path.join(nestedLean, "lakefile.toml"))
+            ) {
+              this.knownPackages.set(`docs/${ent.name}/lean`, nestedLean);
+            }
+          }
+        }
+      } catch {
+        // Ignore read errors
+      }
     }
     const packagesDir = path.join(wsRoot, "packages");
     if (fs.existsSync(packagesDir)) {
@@ -2445,10 +2494,11 @@ export class FileWorkerManager {
     let brokerScript: string | null = null;
     if (!useDirect) {
       const candidates = [
-        path.join(this.projectRoot, "docs", "easci", "lean", "skills", "tools", "lean-serve-broker", "lean_serve_broker.py"),
+        process.env.LEAN_SERVE_BROKER_SCRIPT || "",
+        path.join(this.projectRoot, "skills", "tools", "lean-serve-broker", "lean_serve_broker.py"),
         path.join(this.projectRoot, "tools", "lean-serve-broker", "lean_serve_broker.py"),
         path.resolve(__dirname, "../../lean-serve-broker/lean_serve_broker.py"),
-      ];
+      ].filter(Boolean);
       for (const cand of candidates) {
         if (fs.existsSync(cand)) {
           brokerScript = cand;
@@ -4064,7 +4114,6 @@ export class McpServer {
           path.resolve(__dirname, "../data/itp-ontology/master-authority-index.json"),
           path.resolve(__dirname, "../../data/itp-ontology/master-authority-index.json"),
           path.resolve(process.cwd(), "data/itp-ontology/master-authority-index.json"),
-          path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes/master-authority-index.json"),
         ];
 
         let indexPath: string | undefined;
@@ -4141,7 +4190,6 @@ export class McpServer {
           path.resolve(__dirname, "../data/itp-ontology/book-indexes"),
           path.resolve(__dirname, "../../data/itp-ontology/book-indexes"),
           path.resolve(process.cwd(), "data/itp-ontology/book-indexes"),
-          path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes"),
         ];
         const indexesDir = candidateIndexDirs.find(p => fs.existsSync(p));
         if (!indexesDir) {
@@ -4195,7 +4243,7 @@ export class McpServer {
         const candidateConcordanceTablePaths = [
           path.resolve(__dirname, "../data/itp-ontology/cross-itp-concordance.v1.json"),
           path.resolve(__dirname, "../../data/itp-ontology/cross-itp-concordance.v1.json"),
-          path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes/cross-itp-concordance.v1.json"),
+          path.resolve(process.cwd(), "data/itp-ontology/cross-itp-concordance.v1.json"),
         ];
         const concordanceTablePath = candidateConcordanceTablePaths.find(p => fs.existsSync(p));
         if (concordanceTablePath) {
@@ -4258,7 +4306,6 @@ export class McpServer {
           path.resolve(__dirname, "../data/itp-ontology/master-authority-index.json"),
           path.resolve(__dirname, "../../data/itp-ontology/master-authority-index.json"),
           path.resolve(process.cwd(), "data/itp-ontology/master-authority-index.json"),
-          path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes/master-authority-index.json"),
         ];
         const concordancePath = candidateConcordancePaths.find(p => fs.existsSync(p));
         if (concordancePath) {
@@ -4297,7 +4344,6 @@ export class McpServer {
             path.resolve(__dirname, "../data/itp-ontology/book-indexes"),
             path.resolve(__dirname, "../../data/itp-ontology/book-indexes"),
             path.resolve(process.cwd(), "data/itp-ontology/book-indexes"),
-            path.resolve(process.cwd(), "docs/investigation-garden/source-materials/indexes"),
           ];
           const indexesDir = candidateIndexDirs.find(p => fs.existsSync(p));
           if (indexesDir) {
@@ -5023,7 +5069,7 @@ export class McpServer {
           `> **Formal Declaration:** \`${symbol}\`  `,
           `> **Source File:** [\`${filePath || "unknown"}\`](file:///${absPath || filePath})  `,
           `> **Lean Blueprint Anchor:** \\\\lean{${symbol}}, \\\\label{thm:${safeSlug}}  `,
-          `> **Garden Concept Zettel:** [\`zet-lean-${safeSlug}\`](file:///docs/investigation-garden/zettels/concepts/zet-lean-${safeSlug}.md)  `,
+          `> **Concept Zettel:** [\`zet-lean-${safeSlug}\`](file:///zettelkasten/concepts/zet-lean-${safeSlug}.md)  `,
           "",
           "---",
           "",
@@ -5078,7 +5124,7 @@ export class McpServer {
           "",
           "---",
           "",
-          "## 4. Lean Blueprint & Knowledge Garden Integration",
+          "## 4. Lean Blueprint & Zettelkasten Integration",
           "",
           "```latex",
           `\\begin{theorem}[${title}]`,
@@ -5089,8 +5135,8 @@ export class McpServer {
           `\\end{theorem}`,
           "```",
           "",
-          `- **Knowledge Garden Note:** \`zet-lean-${safeSlug}\` (Layer 4 Concept Zettel)`,
-          `- **MOC Registration:** \`MOC-lean-and-easci\`, \`MOC-itp-master-ontology\``,
+          `- **Zettelkasten Note:** \`zet-lean-${safeSlug}\` (Concept Zettel)`,
+          `- **MOC Registration:** \`MOC-lean-formalization\`, \`MOC-itp-master-ontology\``,
         ].join("\n");
 
         if (args.outputPath) {
@@ -5110,8 +5156,8 @@ export class McpServer {
           const candidates = [
             path.join(formDir, "blueprint/src"),
             path.join(formDir, "blueprint"),
-            path.join(this.projectRoot, "docs/easci/lean/fermats-last-theorem/blueprint/src"),
-            path.join(this.projectRoot, "docs/easci/lean/NavierStokesAndEuler/blueprint/src"),
+            path.join(this.projectRoot, "blueprint/src"),
+            path.join(this.projectRoot, "blueprint"),
           ];
           for (const c of candidates) {
             if (fs.existsSync(c)) { bpDir = c; break; }
@@ -5315,10 +5361,10 @@ export class McpServer {
           'hol_light_tactic: "MESON_TAC []"',
           `statutory_urn: "urn:itp:lean4:${modName || symbol}:${symbol}"`,
           "sources:",
-          `  - "${filePath || "docs/easci/lean"}"`,
-          '  - "docs/investigation-garden/source-materials/indexes/master-authority-index.json"',
+          `  - "${filePath || "MyProject"}"`,
+          '  - "data/itp-ontology/master-authority-index.json"',
           "indexed-by:",
-          "  - MOC-lean-and-easci",
+          "  - MOC-lean-formalization",
           "related:",
           "---",
           "",

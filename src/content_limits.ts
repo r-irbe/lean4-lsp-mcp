@@ -10,7 +10,7 @@
  *
  * Lean-appropriate defaults: the byte bound matches pi-lens (2 MiB);
  * the line bound is looser than pi-lens's 5,000 because generated Lean
- * modules legitimately exceed it (EASCI's generated namespaces).
+ * modules legitimately exceed it (large generated namespaces).
  * Override with LSP_CONTENT_LIMIT_BYTES / LSP_CONTENT_LIMIT_LINES.
  *
  * Strict 7-bit ASCII only (INV-001).

@@ -41,10 +41,23 @@ const met = exports.lean_analyzer_meet_signs(3, 2);
 assert.equal(met, 2);
 console.log("  [PASS] WASM Bitset Lattice Meet Execution (1 cycle)");
 
-// Test fast ilean parsing via WASM
-const ileanSamplePath = path.resolve(__dirname, "../../../docs/easci/lean/.lake/build/lib/lean/FinalCheck.ilean");
-if (fs.existsSync(ileanSamplePath)) {
-  const ileanContent = fs.readFileSync(ileanSamplePath);
+// Test fast ilean parsing via WASM using synthetic in-memory v5 .ilean payload
+{
+  const sampleIleanJson = JSON.stringify({
+    decls: {
+      "MyProject.FinalCheck.master_verified": [58, 0, 102, 44, 65, 8, 65, 29]
+    },
+    directImports: [["Init", false, false, false]],
+    module: "MyProject.FinalCheck",
+    references: {
+      foo: {
+        definition: [65, 8, 65, 29],
+        usages: [[70, 4, 70, 19]]
+      }
+    },
+    version: 5
+  });
+  const ileanContent = Buffer.from(sampleIleanJson, "utf-8");
   const memory = exports.memory;
   const scratchPtr = exports.lean_analyzer_get_scratch_ptr();
   const scratchCapacity = exports.lean_analyzer_get_scratch_len();
@@ -85,7 +98,7 @@ if (fs.existsSync(ileanSamplePath)) {
   assert.ok(nameLen > 0, "Failed to locate declaration at line 65");
   const nameBytes = new Uint8Array(memory.buffer, nameBufOffset, nameLen);
   const declName = new TextDecoder().decode(nameBytes);
-  assert.equal(declName, "EASCI.FinalCheck.easci_master_verified");
+  assert.equal(declName, "MyProject.FinalCheck.master_verified");
   console.log(`  [PASS] WASM Instant Symbol Resolution: located '${declName}' at (65, 15) in sub-millisecond`);
 }
 

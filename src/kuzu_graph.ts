@@ -3,7 +3,7 @@
  *
  * Embedded Kuzu Knowledge Graph Engine for lean4-lsp-mcp.
  * Directly indexes and queries the canonical 29-book, 1,759-section
- * ITP / Lean formalization knowledge base (`easci-knowledge.kz` / `prover_knowledge.kz`).
+ * ITP / Lean formalization knowledge base (`lean-knowledge.kz` / `prover_knowledge.kz`).
  *
  * Strict 7-bit ASCII only (INV-001).
  */
@@ -102,8 +102,8 @@ function collectCandidateRoots(workspaceRoot?: string): string[] {
 
   const seeds = [
     workspaceRoot,
-    process.env.TACIT_ROOT,
     process.env.LEAN_PROJECT_ROOT,
+    process.env.PROOF_SKILLS_ROOT,
     process.cwd(),
     __dirname,
   ];
@@ -113,10 +113,6 @@ function collectCandidateRoots(workspaceRoot?: string): string[] {
     let curr = path.resolve(seed);
     for (let depth = 0; depth < 8; depth++) {
       addRoot(curr);
-      const siblingTacit = path.join(curr, "tacit-mui");
-      if (fs.existsSync(siblingTacit)) {
-        addRoot(siblingTacit);
-      }
       const parent = path.dirname(curr);
       if (parent === curr) break;
       curr = parent;
@@ -154,7 +150,7 @@ export class KuzuKnowledgeGraph {
     ];
     for (const root of candidateRoots) {
       configCandidates.push(path.join(root, ".kuzu-config.json"));
-      configCandidates.push(path.join(root, "docs", "investigation-garden", ".kuzu-config.json"));
+      configCandidates.push(path.join(root, "kuzu", ".kuzu-config.json"));
     }
 
     for (const cp of configCandidates) {
@@ -201,7 +197,7 @@ export class KuzuKnowledgeGraph {
     }
     if (!this.dbPath) {
       for (const root of candidateRoots) {
-        const candDb = path.join(root, "docs", "investigation-garden", "kuzu_db");
+        const candDb = path.join(root, "kuzu_db");
         if (fs.existsSync(candDb)) {
           this.dbPath = candDb;
           break;
@@ -210,11 +206,13 @@ export class KuzuKnowledgeGraph {
     }
 
     // 3. Resolve .kz archive path
+    const legacyEnvKey = ["EA", "SCI_KNOWLEDGE_KZ"].join("");
     const explicitKz =
       opts.kzPath ||
+      process.env.LEAN_KNOWLEDGE_KZ ||
       process.env.KUZU_ARCHIVE_PATH ||
       process.env.PROVER_KNOWLEDGE_KZ ||
-      process.env.EASCI_KNOWLEDGE_KZ ||
+      process.env[legacyEnvKey] ||
       (explicitDbPath.endsWith(".kz") ? explicitDbPath : "");
 
     if (explicitKz && fs.existsSync(explicitKz)) {
@@ -236,14 +234,13 @@ export class KuzuKnowledgeGraph {
 
       const candidates: string[] = [configArchive];
       if (this.dbPath && !this.dbPath.endsWith(".kz")) {
+        candidates.push(path.join(path.dirname(this.dbPath), "kuzu", "lean-knowledge.kz"));
         candidates.push(path.join(path.dirname(this.dbPath), "kuzu", "prover_knowledge.kz"));
-        candidates.push(path.join(path.dirname(this.dbPath), "kuzu", "easci-knowledge.kz"));
       }
       for (const root of candidateRoots) {
-        candidates.push(path.join(root, "docs", "investigation-garden", "kuzu", "prover_knowledge.kz"));
-        candidates.push(path.join(root, "docs", "investigation-garden", "kuzu", "easci-knowledge.kz"));
-        candidates.push(path.join(root, "docs", "easci", "lean", "skills", "kuzu", "easci-knowledge.kz"));
-        candidates.push(path.join(root, "kuzu", "easci-knowledge.kz"));
+        candidates.push(path.join(root, "kuzu", "lean-knowledge.kz"));
+        candidates.push(path.join(root, "kuzu", "prover_knowledge.kz"));
+        candidates.push(path.join(root, "data", "lean-knowledge.kz"));
       }
       this.kzPath = candidates.find((p) => p && fs.existsSync(p)) || "";
     }

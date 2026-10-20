@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // lean-harvest - Lean 4 corpus-wide linter findings harvester.
 //
-// Ports docs/easci/lean/scripts/lean_lint_harvest.sh to Node.js / ESM.
+// Ports lean_lint_harvest.sh to Node.js / ESM.
 // Runs `lake env lean -D<flag>=true` per file across a parallel worker pool,
 // tabulates findings per linter, and emits TSV or JSON reports.
 //
@@ -19,7 +19,7 @@
 //   -D option; the message holds the raw diagnostic line). One diagnostic
 //   line can yield both a linter row and a COVERAGE row.
 // Row semantics match the reference shell implementation
-// (docs/easci/lean/scripts/lean_lint_harvest.sh); tests/test_harvest.mjs
+// (lean_lint_harvest.sh); tests/test_harvest.mjs
 // locks the format.
 
 import fs from "node:fs";
@@ -226,12 +226,19 @@ async function main() {
   // Resolve target files
   let targetFiles = opts.files;
   if (targetFiles.length === 0) {
-    const defaultSearch = path.join(opts.pkgDir, "EASCI");
-    if (fs.existsSync(defaultSearch)) {
-      targetFiles = findLeanFiles(defaultSearch);
-    } else {
-      targetFiles = findLeanFiles(opts.pkgDir);
+    let searchDir = opts.pkgDir;
+    try {
+      const entries = fs.readdirSync(opts.pkgDir, { withFileTypes: true });
+      const upperCamelDirs = entries.filter(
+        (e) => e.isDirectory() && /^[A-Z][A-Za-z0-9_]*$/.test(e.name)
+      );
+      if (upperCamelDirs.length === 1) {
+        searchDir = path.join(opts.pkgDir, upperCamelDirs[0].name);
+      }
+    } catch {
+      // Fall back to opts.pkgDir
     }
+    targetFiles = findLeanFiles(searchDir);
   }
 
   // Normalize paths relative to pkgDir if inside

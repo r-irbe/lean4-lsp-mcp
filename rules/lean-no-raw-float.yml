@@ -1,12 +1,12 @@
 id: rule-lean-no-raw-float
 language: Lean
 severity: error
-message: "Raw hardware Float detected: use ScaledInt (S=100) or exact Real abstractions"
+message: "Raw hardware Float detected: prefer exact Int/Rat/Real or fixed-point integer abstractions"
 note: |
-  Subpackages across `packages/` mandate discrete integer-scaled arithmetic
-  (standard scale factor S=100) to ensure exact reproducible dynamics across platforms.
+  Formal verification modules commonly mandate exact integer, rational, or real arithmetic
+  to ensure platform-independent reproducibility and decidable proof obligations.
   Direct usage of IEEE 754 hardware floats (`Float`, `Float32`, `Float64`)
-  introduces non-associative roundoff and violates formal proof decidability.
+  introduces non-associative roundoff and complicates formal reasoning.
 rule:
   regex: "\\b(?:Float|Float32|Float64)\\b"
 fix: ""

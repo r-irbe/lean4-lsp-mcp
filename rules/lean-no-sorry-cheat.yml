@@ -3,7 +3,7 @@ language: Lean
 severity: error
 message: "Unproven goal detected: 'sorry' or 'cheat' tactics violate the 0-sorry hard constraint"
 note: |
-  EASCI and its decoupled subpackages strictly enforce a 0-sorry verification invariant.
+  Formalized Lean 4 modules strictly enforce a 0-sorry verification invariant.
   All theorems, lemmas, and safety claims must be fully machine-checked without unproven axioms
   or admitted goals.
 rule:

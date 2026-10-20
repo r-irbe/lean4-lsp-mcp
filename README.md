@@ -82,7 +82,8 @@ See [`instructions.md`](./instructions.md) for full copy-paste examples and para
 | `lean_goal` | `filePath`, `line` (1-indexed) | `col` (1-indexed), `target` (`"tactic" \| "term" \| "filtered" \| "altproof"`), `hideTypeclasses`, `hideInaccessible`, `onlyTarget`, `goal`, `proof` |
 | `lean_diagnostics` | `filePath` | `maxWaitMs` (default `4000`) |
 | `lean_counterexample_search` | `filePath`, `theoremName` | `strategy` (`"slice" \| "dense"`), `samples` (default `100`), `budgetMs` (default `60000`), `imports` |
-| `lean_exec` (alias `lean_run_code`) | `code` | `timeoutMs` (default `15000`) |
+| `lean_exec` | `code` | `timeoutMs` (default `15000`) |
+| `lean_run_code` | `code` | `timeoutMs` (default `15000`; alias of `lean_exec`) |
 | `lean_resync` | `filePath` | *(none)* |
 | `lean_server_status` | *(none)* | *(none)* |
 | `lean_lookup_symbol` | `symbol` | *(none)* |

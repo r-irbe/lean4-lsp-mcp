@@ -5,7 +5,7 @@ message: "Unanchored definitional unfolding detected: consecutive dsimp and bare
 note: |
   Unanchored dsimp followed immediately by bare simp on complex function types risks uncontrolled
   transparency unfolding loops and typeclass search stalls. Prefer explicit definitional target
-  anchoring using change or show as demonstrated in NavierStokesAndEuler (Template_DefinitionalChangeShow).
+  anchoring using `change` or `show` before invoking `simp`.
 rule:
   regex: "(?m)^\\s*dsimp\\s*\\n\\s*simp\\b"
 fix: ""

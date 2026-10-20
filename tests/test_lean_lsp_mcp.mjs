@@ -524,7 +524,7 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
             return `\`\`\`lean\nh : 0 <= w i\n|- Finset.sum s (fun i => w i * f i) <= Finset.sum s (fun i => w i * g i)\n\`\`\` (at ${line}:${col})`;
         };
         const liveSessionJson = await server.executeTool("lean_altproof", {
-            filePath: "EASCI/Tests/TacticAltProof.lean",
+            filePath: "MyProject/Tests/TacticAltProof.lean",
             line: 40,
             col: 4,
             proof: "  finset_mono",

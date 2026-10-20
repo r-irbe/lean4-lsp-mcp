@@ -36,7 +36,7 @@ All `lean-lsp` tools are registered under `ServerName: "lean-lsp"`. Call them vi
   "ServerName": "lean-lsp",
   "ToolName": "lean_goal",
   "Arguments": {
-    "filePath": "docs/easci/lean/EASCI/QualityGates.lean",
+    "filePath": "MyProject/QualityGates.lean",
     "line": 42,
     "col": 5,
     "target": "filtered"
@@ -62,9 +62,9 @@ Queries tactic goals, filtered goals, expected term types, or the AltProof advis
 - **Cursor Rule**: Place `line` inside the `by` block (on a tactic line or `sorry`), **never** on line 1 or the `theorem` header (headers return `no goals`).
 - **Examples**:
   ```json
-  {"filePath": "docs/easci/lean/EASCI/Tactics.lean", "line": 120, "col": 3, "target": "filtered"}
-  {"filePath": "docs/easci/lean/EASCI/Tactics.lean", "line": 120, "col": 12, "target": "term"}
-  {"filePath": "docs/easci/lean/EASCI/Tactics.lean", "line": 120, "target": "altproof", "goal": "a + b <= 100"}
+  {"filePath": "MyProject/Tactics.lean", "line": 120, "col": 3, "target": "filtered"}
+  {"filePath": "MyProject/Tactics.lean", "line": 120, "col": 12, "target": "term"}
+  {"filePath": "MyProject/Tactics.lean", "line": 120, "target": "altproof", "goal": "a + b <= 100"}
   ```
 
 #### `lean_diagnostics`
@@ -73,7 +73,7 @@ Returns live compiler elaboration errors, warnings, unsolved goals, AND static a
 - **Optional**: `maxWaitMs` (integer, default `4000`).
 - **Example**:
   ```json
-  {"filePath": "docs/easci/lean/EASCI/QualityGates.lean", "maxWaitMs": 4000}
+  {"filePath": "MyProject/QualityGates.lean", "maxWaitMs": 4000}
   ```
 
 #### `lean_counterexample_search`
@@ -84,10 +84,10 @@ Synthesizes and executes a Plausible property test in an isolated scratch direct
   - `budgetMs` (integer, default `60000`, max `120000`)
   - `strategy` (`"slice" | "dense"`, default `"slice"`; use `"dense"` to probe multiple size schedules and binder orders)
   - `probeBudgetMs` (integer, default `15000`)
-  - `imports` (array of strings, e.g. `["EASCI.Testing.Samplers"]`)
+  - `imports` (array of strings, e.g. `["MyProject.Testing.Samplers"]`)
 - **Example**:
   ```json
-  {"filePath": "docs/easci/lean/EASCI/QualityGates.lean", "theoremName": "gate_monotone", "strategy": "dense", "samples": 200}
+  {"filePath": "MyProject/QualityGates.lean", "theoremName": "gate_monotone", "strategy": "dense", "samples": 200}
   ```
 
 #### `lean_exec` (and legacy alias `lean_run_code`)
@@ -96,12 +96,11 @@ Runs standalone Lean 4 code via `lake env lean --stdin` without creating tempora
 - **Optional**: `timeoutMs` (integer, default `15000`).
 - **Example**:
   ```json
-  {"code": "import Mathlib.Data.Nat.Basic
-#check Nat.sub_add_cancel"}
+  {"code": "import Mathlib.Data.Nat.Basic\n#check Nat.sub_add_cancel"}
   ```
 
 #### `lean_resync` & `lean_server_status`
-- `lean_resync`: `{"filePath": "docs/easci/lean/EASCI/QualityGates.lean"}`: forces disk re-read and `textDocument/didChange` bump when goals look stale after external edits.
+- `lean_resync`: `{"filePath": "MyProject/QualityGates.lean"}`: forces disk re-read and `textDocument/didChange` bump when goals look stale after external edits.
 - `lean_server_status`: `{}`: reports active `lake serve` broker attachment, project root, open files, and worker RSS memory.
 
 ---
@@ -113,7 +112,7 @@ Finds exact file path, 1-based line/column range, and declaring module for any c
 - **Required**: `symbol` (string).
 - **Example**:
   ```json
-  {"symbol": "EASCI.QualityGates.GateConfig"}
+  {"symbol": "MyProject.QualityGates.GateConfig"}
   ```
 
 #### `lean_decl_references`
@@ -122,16 +121,16 @@ Queries the `.ilean` declaration reference graph: which constants `symbol` uses 
 - **Optional**: `direction` (`"uses" | "usedBy" | "both"`, default `"both"`), `limit` (integer, default `50`).
 - **Example**:
   ```json
-  {"symbol": "EASCI.QualityGates.gatePass", "direction": "usedBy", "limit": 25}
+  {"symbol": "MyProject.QualityGates.gatePass", "direction": "usedBy", "limit": 25}
   ```
 
 #### `lean_module_hierarchy`
 Traverses the module import DAG (`imports` / `importedBy`) with cycle detection. Always run `direction: "importedBy"` before changing a public signature!
-- **Required**: `moduleName` (string, dot-separated, e.g. `"EASCI.Tactics"`).
+- **Required**: `moduleName` (string, dot-separated, e.g. `"MyProject.Tactics"`).
 - **Optional**: `direction` (`"imports" | "importedBy" | "both"`, default `"both"`), `transitive` (boolean, default `false`), `maxDepth` (integer, default `20`).
 - **Example**:
   ```json
-  {"moduleName": "EASCI.QualityGates", "direction": "importedBy", "transitive": true}
+  {"moduleName": "MyProject.QualityGates", "direction": "importedBy", "transitive": true}
   ```
 
 #### `lean_dependency_subgraph`
@@ -140,7 +139,7 @@ Renders the import subgraph around a module in Mermaid, DOT, or JSON.
 - **Optional**: `maxDepth` (integer, default `5`), `format` (`"mermaid" | "dot" | "json"`, default `"mermaid"`).
 - **Example**:
   ```json
-  {"moduleName": "EASCI.StochasticCCV.StageMatrix5", "maxDepth": 3, "format": "mermaid"}
+  {"moduleName": "MyProject.Dynamics.StageMatrix", "maxDepth": 3, "format": "mermaid"}
   ```
 
 ---
@@ -166,7 +165,7 @@ Unified multi-source search dispatcher.
   ```
 
 #### `lean_book_index_lookup`
-Direct lookup in the 65+ author-curated textbook & monograph back-of-the-book indexes (`docs/investigation-garden/source-materials/indexes/*.index.json`).
+Direct lookup in the 65+ author-curated textbook & monograph back-of-the-book indexes (`data/itp-ontology/book-indexes/*.index.json`).
 - **Required**: `term` (string). **NOTE**: the parameter name is `term`, NOT `query`!
 - **Optional**: `book` (string, e.g. `"cousot"`, `"pierce"`, `"chlipala"`), `prover` (string, e.g. `"lean4"`, `"coq"`, `"isabelle"`, `"hol_light"`).
 - **Example**:
@@ -197,9 +196,9 @@ Consolidated project/module metrics, architecture projections, and AltProof anal
   - `direction` (`"imports" | "importedBy" | "both"`), `transitive` (boolean), `maxDepth` (integer)
 - **Examples**:
   ```json
-  {"target": "docs/easci/lean/EASCI/Foundations/CS", "action": "census", "format": "summary"}
-  {"target": "docs/easci/lean/EASCI/Foundations/CS", "action": "axiom_audit"}
-  {"target": "docs/easci/lean/EASCI/QualityGates.lean", "action": "altproof", "goal": "g1 <= g2"}
+  {"target": "MyProject/Foundations/CS", "action": "census", "format": "summary"}
+  {"target": "MyProject/Foundations/CS", "action": "axiom_audit"}
+  {"target": "MyProject/QualityGates.lean", "action": "altproof", "goal": "g1 <= g2"}
   ```
 
 #### `lean_module_census`
@@ -207,16 +206,16 @@ Direct declaration census over a directory or `.lean` file.
 - **Required**: `targetPath` (string).
 - **Example**:
   ```json
-  {"targetPath": "docs/easci/lean/EASCI/Epistemics"}
+  {"targetPath": "MyProject/Epistemics"}
   ```
 
 #### `lean_axiom_closure`
 Runs `#print axioms <symbol>` via `lake env lean --stdin` to verify zero `sorryAx` or non-standard axioms in the transitive closure.
 - **Required**: `symbol` (string).
-- **Optional**: `module` (string, declaring module to import first, e.g. `"EASCI.QualityGates"`).
+- **Optional**: `module` (string, declaring module to import first, e.g. `"MyProject.QualityGates"`).
 - **Example**:
   ```json
-  {"symbol": "EASCI.Foundations.CS.AbstractInterpretation.OctagonBound.sum_diff_double_bound", "module": "EASCI.Foundations.CS.AbstractInterpretation"}
+  {"symbol": "MyProject.Foundations.CS.AbstractInterpretation.OctagonBound.sum_diff_double_bound", "module": "MyProject.Foundations.CS.AbstractInterpretation"}
   ```
 
 #### `lean_blueprint` (plus specialized `lean_blueprint_scaffold` and `lean_proof_skeleton`)
@@ -229,9 +228,9 @@ Audits Lean Blueprint alignment or generates LaTeX blueprint macros, proof skele
   - `formalizationDir` (string), `blueprintDir` (string), `outputPath` (string), `format` (`"markdown" | "json" | "summary"`)
 - **Examples**:
   ```json
-  {"action": "status", "formalizationDir": "docs/easci/lean/EASCI", "blueprintDir": "docs/easci/lean/blueprint/src", "format": "summary"}
-  {"action": "scaffold", "symbol": "EASCI.QualityGates.gate_monotone"}
-  {"action": "skeleton", "filePath": "docs/easci/lean/EASCI/QualityGates.lean", "symbol": "gate_monotone"}
+  {"action": "status", "formalizationDir": "MyProject", "blueprintDir": "blueprint/src", "format": "summary"}
+  {"action": "scaffold", "symbol": "MyProject.QualityGates.gate_monotone"}
+  {"action": "skeleton", "filePath": "MyProject/QualityGates.lean", "symbol": "gate_monotone"}
   ```
 
 #### `lean_ffi`
