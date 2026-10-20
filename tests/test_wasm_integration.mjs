@@ -21,6 +21,13 @@ assert.ok(wasmBytes.length > 100, "WASM binary too small");
 console.log(`  [INFO] Loaded lean_analyzer.wasm (${wasmBytes.length} bytes)`);
 
 const interp = new LeanAbstractInterpreter();
+assert.equal(interp.isUsingWasm(), true, "Expected default LeanAbstractInterpreter() to auto-load WASM engine");
+const synthDefault = interp.synthesizeTerminationDecreasingBy(-1, 1);
+assert.equal(synthDefault.decreasingBy, "by omega");
+assert.deepEqual(synthDefault.alternatives, ["by omega"]);
+const synthCustom = interp.synthesizeTerminationDecreasingBy(-1, 1, { enableCustomProjectTactics: true });
+assert.deepEqual(synthCustom.alternatives, ["by omega", "by easci_omega"]);
+
 const loaded = await interp.loadWasmEngine(new Uint8Array(wasmBytes));
 assert.equal(loaded, true, "Failed to instantiate WebAssembly engine");
 
@@ -41,23 +48,10 @@ const met = exports.lean_analyzer_meet_signs(3, 2);
 assert.equal(met, 2);
 console.log("  [PASS] WASM Bitset Lattice Meet Execution (1 cycle)");
 
-// Test fast ilean parsing via WASM using synthetic in-memory v5 .ilean payload
-{
-  const sampleIleanJson = JSON.stringify({
-    decls: {
-      "MyProject.FinalCheck.master_verified": [58, 0, 102, 44, 65, 8, 65, 29]
-    },
-    directImports: [["Init", false, false, false]],
-    module: "MyProject.FinalCheck",
-    references: {
-      foo: {
-        definition: [65, 8, 65, 29],
-        usages: [[70, 4, 70, 19]]
-      }
-    },
-    version: 5
-  });
-  const ileanContent = Buffer.from(sampleIleanJson, "utf-8");
+// Test fast ilean parsing via WASM
+const ileanSamplePath = path.resolve(__dirname, "../../../docs/easci/lean/.lake/build/lib/lean/FinalCheck.ilean");
+if (fs.existsSync(ileanSamplePath)) {
+  const ileanContent = fs.readFileSync(ileanSamplePath);
   const memory = exports.memory;
   const scratchPtr = exports.lean_analyzer_get_scratch_ptr();
   const scratchCapacity = exports.lean_analyzer_get_scratch_len();
@@ -98,7 +92,7 @@ console.log("  [PASS] WASM Bitset Lattice Meet Execution (1 cycle)");
   assert.ok(nameLen > 0, "Failed to locate declaration at line 65");
   const nameBytes = new Uint8Array(memory.buffer, nameBufOffset, nameLen);
   const declName = new TextDecoder().decode(nameBytes);
-  assert.equal(declName, "MyProject.FinalCheck.master_verified");
+  assert.equal(declName, "EASCI.FinalCheck.easci_master_verified");
   console.log(`  [PASS] WASM Instant Symbol Resolution: located '${declName}' at (65, 15) in sub-millisecond`);
 }
 

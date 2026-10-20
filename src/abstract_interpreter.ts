@@ -3,6 +3,42 @@
 // Provides offline dataflow analysis, expression lattice abstraction, and zero-process AST evaluation.
 // Strict 7-bit ASCII only (INV-001).
 
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+let defaultWasmInstance: WebAssembly.Instance | null | undefined = undefined;
+
+export function getDefaultWasmInstance(): WebAssembly.Instance | null {
+  if (defaultWasmInstance !== undefined) {
+    return defaultWasmInstance;
+  }
+  defaultWasmInstance = null;
+  try {
+    const wasm = (globalThis as any).WebAssembly;
+    if (typeof wasm !== "undefined") {
+      const candidates = [
+        path.resolve(__dirname, "../data/lean_analyzer.wasm"),
+        path.resolve(__dirname, "../../data/lean_analyzer.wasm"),
+      ];
+      for (const wasmPath of candidates) {
+        if (fs.existsSync(wasmPath)) {
+          const bytes = fs.readFileSync(wasmPath);
+          const mod = new wasm.Module(bytes);
+          defaultWasmInstance = new wasm.Instance(mod, {});
+          break;
+        }
+      }
+    }
+  } catch {
+    defaultWasmInstance = null;
+  }
+  return defaultWasmInstance;
+}
+
 /**
  * Abstract values for Lean 4 arithmetic and term evaluations.
  */
@@ -307,8 +343,23 @@ export class LeanAbstractInterpreter {
   private declarations: Map<string, AbstractLatticeState> = new Map();
   private wasmModule: any = null;
 
-  constructor(wasmModuleInstance?: any) {
-    this.wasmModule = wasmModuleInstance || null;
+  constructor(wasmInstance?: WebAssembly.Instance | null | any) {
+    const resolved = wasmInstance === undefined ? getDefaultWasmInstance() : wasmInstance;
+    if (resolved && typeof resolved === "object" && "exports" in resolved) {
+      this.wasmModule = (resolved as WebAssembly.Instance).exports;
+    } else {
+      this.wasmModule = resolved || null;
+    }
+  }
+
+  /**
+   * Returns true when the Rust/WASM evaluation engine (`lean_analyzer.wasm`) is active.
+   */
+  isUsingWasm(): boolean {
+    return Boolean(
+      this.wasmModule &&
+      typeof this.wasmModule.lean_analyzer_version === "function"
+    );
   }
 
   /**
@@ -435,6 +486,50 @@ export class LeanAbstractInterpreter {
     if (step <= 0) return "FALSE";
     if (guardDiff <= -1) return "TRUE";
     return "TOP";
+  }
+
+  /**
+   * Synthesizes a Lean 4 `termination_by` / `decreasing_by` clause when Zone DBM
+   * proves `n - (i + step) < n - i` under guard `i - n <= guardDiff`.
+   * Emits `by omega` by default and includes `by easci_omega` as an alternative
+   * when custom project tactics are enabled or detected.
+   */
+  synthesizeTerminationDecreasingBy(
+    guardDiff: number,
+    step: number,
+    options?: {
+      measureExpr?: string;
+      enableCustomProjectTactics?: boolean;
+      sourceContext?: string;
+    }
+  ): {
+    verdict: "BOTTOM" | "FALSE" | "TRUE" | "TOP";
+    decreasingBy: string | null;
+    alternatives: string[];
+    terminationSnippet: string | null;
+  } {
+    const verdict = this.checkZoneSubDecreasing(guardDiff, step);
+    if (verdict !== "TRUE") {
+      return {
+        verdict,
+        decreasingBy: null,
+        alternatives: [],
+        terminationSnippet: null
+      };
+    }
+    const customDetected = Boolean(
+      options?.enableCustomProjectTactics ||
+      (options?.sourceContext && /\b(?:easci_omega|EASCI|Scale100)\b/.test(options.sourceContext))
+    );
+    const decreasingBy = "by omega";
+    const alternatives = customDetected ? ["by omega", "by easci_omega"] : ["by omega"];
+    const measure = options?.measureExpr || "n - i";
+    return {
+      verdict,
+      decreasingBy,
+      alternatives,
+      terminationSnippet: `termination_by ${measure}\ndecreasing_by omega`
+    };
   }
 
   /**
