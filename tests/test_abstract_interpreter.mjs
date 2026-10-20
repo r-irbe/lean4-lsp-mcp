@@ -364,6 +364,74 @@ console.log("Starting Lean Abstract Interpreter Test Suite...");
   console.log("  [PASS] AST Constant-Harvesting for Counterexample Search");
 }
 
+// 7. Wave 6: Octagon Relational Domain & Integer Strong Closure (MINE2017 s4.4 / PELLEAU2015 s2)
+{
+  const interp = new LeanAbstractInterpreter();
+
+  // Simplex conservation: x0 in [30, 100], x1 in [0, 100], x0 + x1 == 100 -> x1 in [0, 70]
+  const octSimplex = interp.reduceOctagonTwoVars(
+    { min: 30, max: 100 },
+    { min: 0, max: 100 },
+    100,
+    100
+  );
+  assert.ok(octSimplex !== null);
+  assert.deepEqual(octSimplex[0], { min: 30, max: 100 });
+  assert.deepEqual(octSimplex[1], { min: 0, max: 70 });
+
+  // Integer unary even-tightening: x0 + x1 <= 5 and x0 - x1 <= 2 -> 2*x0 <= 7 -> x0 <= 3
+  const octEven = interp.reduceOctagonTwoVars(
+    { min: 0, max: 100 },
+    { min: 0, max: 100 },
+    0,
+    5,
+    2
+  );
+  assert.ok(octEven !== null);
+  assert.equal(octEven[0].max, 3);
+
+  // Unsatisfiable octagon system -> null (Bottom)
+  const octUnsat = interp.reduceOctagonTwoVars(
+    { min: 60, max: 100 },
+    { min: 60, max: 100 },
+    0,
+    100
+  );
+  assert.equal(octUnsat, null);
+  console.log("  [PASS] Wave 6 Octagon Relational Domain & Integer Strong Closure");
+}
+
+// 8. Wave 8: Galois-Guided Counterexample Search Pruning (PELLEAU2015 s2.2 p1 / SIMONVRA s8.2 p1)
+{
+  const interp = new LeanAbstractInterpreter();
+  const { pruneHeaderNatDomain } = await import("../dist/index.js");
+
+  // Simplex + lower-bound header: x >= 30, x + y <= 100 => x in [30, 100], y in [0, 70]
+  const hdrSimplex =
+    "(x y : Nat) (hx : 30 <= x) (hsum : x + y <= 100) : y <= 60";
+  const domSimplex = interp.analyzeHeaderHypothesisDomains(hdrSimplex);
+  assert.equal(domSimplex.isVacuous, false);
+  assert.deepEqual(domSimplex.domains.x.interval, { min: 30, max: 100 });
+  assert.deepEqual(domSimplex.domains.y.interval, { min: 0, max: 70 });
+  assert.equal(domSimplex.recommendedMaxSize, 101);
+
+  // Interval + congruence Granger tightening: 1 <= n, n < 250, n % 100 = 0 => n in [100, 200]
+  const hdrCong =
+    "(n : Nat) (h1 : 1 <= n) (h2 : n < 250) (h3 : n % 100 = 0) : n = 100";
+  const domCong = interp.analyzeHeaderHypothesisDomains(hdrCong);
+  assert.equal(domCong.isVacuous, false);
+  assert.deepEqual(domCong.domains.n.interval, { min: 100, max: 200 });
+  assert.equal(domCong.recommendedMaxSize, 201);
+
+  // Vacuous hypothesis detection: x >= 60, y >= 60, x + y <= 100 -> isVacuous = true
+  const hdrVacuous =
+    "(x y : Nat) (hx : 60 <= x) (hy : 60 <= y) (hsum : x + y <= 100) : False";
+  const prunedVac = pruneHeaderNatDomain(hdrVacuous);
+  assert.equal(prunedVac.isVacuous, true);
+  assert.equal(prunedVac.recommendedMaxSize, null);
+  console.log("  [PASS] Wave 8 Galois-Guided Counterexample Search Domain Pruning");
+}
+
 console.log("All Lean Abstract Interpreter tests passed 100% cleanly!");
 
 

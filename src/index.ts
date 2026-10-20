@@ -3208,6 +3208,23 @@ export function harvestHeaderNatMaxSize(header: string): number | null {
   return Math.min(5000, maxLit + 2);
 }
 
+/**
+ * Wave 8 Galois-Guided Counterexample Search Pruning (`PELLEAU2015 s2.2 p1`, `SIMONVRA s8.2 p1`):
+ * Analyzes natural-number hypothesis intervals, congruences, and octagonal sums in `header`
+ * via `LeanAbstractInterpreter.analyzeHeaderHypothesisDomains`.
+ */
+export function pruneHeaderNatDomain(header: string): {
+  isVacuous: boolean;
+  recommendedMaxSize: number | null;
+} {
+  const interp = new LeanAbstractInterpreter();
+  const res = interp.analyzeHeaderHypothesisDomains(header);
+  return {
+    isVacuous: res.isVacuous,
+    recommendedMaxSize: res.recommendedMaxSize,
+  };
+}
+
 function buildCesCandidates(header: string, importList: string[]): CesCandidate[] {
   void importList;
   const cands: CesCandidate[] = [
@@ -3215,8 +3232,18 @@ function buildCesCandidates(header: string, importList: string[]): CesCandidate[
     { name: "sized-small", header, maxSize: 8 },
     { name: "sized-wide", header, maxSize: 500 },
   ];
+  const galois = pruneHeaderNatDomain(header);
+  if (
+    !galois.isVacuous &&
+    galois.recommendedMaxSize !== null &&
+    galois.recommendedMaxSize !== CES_DEFAULT_MAX_SIZE &&
+    galois.recommendedMaxSize !== 8 &&
+    galois.recommendedMaxSize !== 500
+  ) {
+    cands.push({ name: "galois-pruned", header, maxSize: galois.recommendedMaxSize });
+  }
   const astMaxSize = harvestHeaderNatMaxSize(header);
-  if (astMaxSize !== null) {
+  if (astMaxSize !== null && astMaxSize !== galois.recommendedMaxSize) {
     cands.push({ name: "ast-threshold", header, maxSize: astMaxSize });
   }
   const reo = splitHeaderForReorder(header);

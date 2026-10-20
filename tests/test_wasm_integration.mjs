@@ -110,6 +110,27 @@ assert.equal(interp.checkZoneSubDecreasing(-1, 1), "TRUE");
 assert.equal(interp.checkZoneSubDecreasing(-1, 0), "FALSE");
 console.log("  [PASS] WASM-Accelerated Granger Reduction, Bitwise Interval & Zone Termination");
 
+const wasmOct = interp.reduceOctagonTwoVars(
+  { min: 30, max: 100 },
+  { min: 0, max: 100 },
+  100,
+  100
+);
+assert.ok(wasmOct !== null);
+assert.deepEqual(wasmOct[0], { min: 30, max: 100 });
+assert.deepEqual(wasmOct[1], { min: 0, max: 70 });
+
+const wasmOctEven = interp.reduceOctagonTwoVars(
+  { min: 0, max: 100 },
+  { min: 0, max: 100 },
+  0,
+  5,
+  2
+);
+assert.ok(wasmOctEven !== null);
+assert.equal(wasmOctEven[0].max, 3);
+console.log("  [PASS] WASM-Accelerated Wave 6 Octagon Relational Domain & Integer Strong Closure");
+
 console.log("All Real Lean WASM Engine Integration tests passed 100% cleanly!");
 
 

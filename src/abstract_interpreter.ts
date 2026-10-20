@@ -1140,6 +1140,173 @@ export class LeanAbstractInterpreter {
   }
 
   /**
+   * Wave 8 Galois-Guided Counterexample Search Pruning (`PELLEAU2015 s2.2 p1`, `SIMONVRA s8.2 p1`):
+   * Extracts natural-number variable domains `[min, max]`, congruence strides `n % s = o`,
+   * and two-variable octagonal sum constraints `x + y <= c` / `x + y = c` from a Lean theorem header,
+   * applies mutual Granger + Octagon domain reduction, and returns a tightened `recommendedMaxSize`
+   * (or `isVacuous: true` when the hypotheses have empty intersection `Bottom`).
+   */
+  analyzeHeaderHypothesisDomains(header: string): {
+    domains: Record<string, { interval: IntervalBound; congruence?: NatCongruence }>;
+    isVacuous: boolean;
+    recommendedMaxSize: number | null;
+  } {
+    const vars = new Map<string, { interval: IntervalBound; congruence?: NatCongruence }>();
+
+    // 1. Collect explicit `(x y : Nat)` or `(x : Nat)` binders (plus implicit mentions in hypotheses)
+    const binderRe = /\(\s*([A-Za-z_][A-Za-z0-9_'\s]*)\s*:\s*(?:Nat|\u2115)\s*\)/g;
+    for (const m of header.matchAll(binderRe)) {
+      const names = m[1].trim().split(/\s+/);
+      for (const name of names) {
+        if (name) {
+          vars.set(name, { interval: { min: 0, max: Number.POSITIVE_INFINITY } });
+        }
+      }
+    }
+
+    const ensureVar = (name: string) => {
+      if (!vars.has(name)) {
+        vars.set(name, { interval: { min: 0, max: Number.POSITIVE_INFINITY } });
+      }
+      return vars.get(name)!;
+    };
+
+    // Strip the final goal conclusion after the last `:` or `->` / `\u2192` when possible so we only
+    // harvest antecedent/hypothesis constraints (or binder hypotheses `(h : ...)`).
+    const hypChunks: string[] = [];
+    const parenGroupRe = /\([^()]+\)/g;
+    for (const m of header.matchAll(parenGroupRe)) {
+      hypChunks.push(m[0]);
+    }
+    const arrowParts = header.split(/->|\u2192/);
+    if (arrowParts.length > 1) {
+      for (let i = 0; i < arrowParts.length - 1; i++) {
+        hypChunks.push(arrowParts[i]);
+      }
+    }
+    const hypText = hypChunks.join(" ; ");
+
+    // 2. Unary upper bounds: `x <= C`, `x < C`
+    const upperRe = /\b([A-Za-z_][A-Za-z0-9_']*)\s*(<=|\u2264|<)\s*(\d+)\b/g;
+    for (const m of hypText.matchAll(upperRe)) {
+      const v = m[1];
+      const op = m[2];
+      const c = Number.parseInt(m[3], 10);
+      if (Number.isFinite(c)) {
+        const entry = ensureVar(v);
+        const cap = op === "<" ? c - 1 : c;
+        entry.interval.max = Math.min(entry.interval.max, cap);
+      }
+    }
+
+    // 3. Unary lower bounds: `C <= x`, `C < x`, `x >= C`, `x > C`
+    const lowerLeftRe = /\b(\d+)\s*(<=|\u2264|<)\s*([A-Za-z_][A-Za-z0-9_']*)\b/g;
+    for (const m of hypText.matchAll(lowerLeftRe)) {
+      const c = Number.parseInt(m[1], 10);
+      const op = m[2];
+      const v = m[3];
+      if (Number.isFinite(c)) {
+        const entry = ensureVar(v);
+        const floor = op === "<" ? c + 1 : c;
+        entry.interval.min = Math.max(entry.interval.min, floor);
+      }
+    }
+    const lowerRightRe = /\b([A-Za-z_][A-Za-z0-9_']*)\s*(>=|\u2265|>)\s*(\d+)\b/g;
+    for (const m of hypText.matchAll(lowerRightRe)) {
+      const v = m[1];
+      const op = m[2];
+      const c = Number.parseInt(m[3], 10);
+      if (Number.isFinite(c)) {
+        const entry = ensureVar(v);
+        const floor = op === ">" ? c + 1 : c;
+        entry.interval.min = Math.max(entry.interval.min, floor);
+      }
+    }
+
+    // 4. Congruence hypotheses: `x % S = O` or `x % S == O`
+    const congRe = /\b([A-Za-z_][A-Za-z0-9_']*)\s*%\s*(\d+)\s*={1,2}\s*(\d+)\b/g;
+    for (const m of hypText.matchAll(congRe)) {
+      const v = m[1];
+      const s = Number.parseInt(m[2], 10);
+      const o = Number.parseInt(m[3], 10);
+      if (Number.isFinite(s) && Number.isFinite(o) && s > 0) {
+        if (o >= s) {
+          return { domains: {}, isVacuous: true, recommendedMaxSize: null };
+        }
+        const entry = ensureVar(v);
+        entry.congruence = { stride: s, offset: o };
+      }
+    }
+
+    // 5. Apply Granger interval-congruence reduction per variable
+    for (const [v, entry] of vars.entries()) {
+      if (entry.interval.min > entry.interval.max || entry.interval.max < 0) {
+        return { domains: {}, isVacuous: true, recommendedMaxSize: null };
+      }
+      if (entry.congruence) {
+        const reduced = AbstractLattice.reduceIntervalCongruence(entry.interval, entry.congruence);
+        if (!reduced) {
+          return { domains: {}, isVacuous: true, recommendedMaxSize: null };
+        }
+        entry.interval = reduced.interval;
+        entry.congruence = reduced.congruence;
+        vars.set(v, entry);
+      }
+    }
+
+    // 6. Octagonal two-variable sum constraints: `x + y <= C`, `x + y < C`, `x + y = C`
+    const sumRe =
+      /\b([A-Za-z_][A-Za-z0-9_']*)\s*\+\s*([A-Za-z_][A-Za-z0-9_']*)\s*(<=|\u2264|<|={1,2})\s*(\d+)\b/g;
+    for (const m of hypText.matchAll(sumRe)) {
+      const v0 = m[1];
+      const v1 = m[2];
+      const op = m[3];
+      const c = Number.parseInt(m[4], 10);
+      if (v0 !== v1 && Number.isFinite(c)) {
+        const e0 = ensureVar(v0);
+        const e1 = ensureVar(v1);
+        const sumLo = op === "=" || op === "==" ? c : 0;
+        const sumHi = op === "<" ? c - 1 : c;
+        if (sumHi < 0) {
+          return { domains: {}, isVacuous: true, recommendedMaxSize: null };
+        }
+        const oct = this.reduceOctagonTwoVars(e0.interval, e1.interval, sumLo, sumHi);
+        if (!oct) {
+          return { domains: {}, isVacuous: true, recommendedMaxSize: null };
+        }
+        e0.interval = oct[0];
+        e1.interval = oct[1];
+      }
+    }
+
+    const domains: Record<string, { interval: IntervalBound; congruence?: NatCongruence }> = {};
+    let maxFiniteUpper = 0;
+    let hasTightenedBound = false;
+    for (const [k, v] of vars.entries()) {
+      if (v.interval.min > v.interval.max) {
+        return { domains: {}, isVacuous: true, recommendedMaxSize: null };
+      }
+      domains[k] = v;
+      if (Number.isFinite(v.interval.max)) {
+        hasTightenedBound = true;
+        if (v.interval.max > maxFiniteUpper) {
+          maxFiniteUpper = v.interval.max;
+        }
+      }
+    }
+
+    const recommendedMaxSize = hasTightenedBound
+      ? Math.max(1, Math.min(5000, maxFiniteUpper + 1))
+      : null;
+
+    return {
+      domains,
+      isVacuous: false,
+      recommendedMaxSize
+    };
+  }
+
+  /**
    * Evaluates a Lean 4 goal and optional proof script using the hybrid
    * `lean-analyzer` + AltProof route/tactic/legibility/cost pipeline
    * (`SPEC-ALT-PROOF-DES`, `ALT_PROOF_SAIR_BRIDGE`).
