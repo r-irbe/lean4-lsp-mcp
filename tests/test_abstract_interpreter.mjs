@@ -163,6 +163,38 @@ console.log("Starting Lean Abstract Interpreter Test Suite...");
   assert.equal(cstMod.sign, "POSITIVE");
   assert.deepEqual(cstMod.interval, { min: 4, max: 4 });
 
+  // Curried application ((Nat.add 3) 4) and binary_expression (19 % 5) + identifier lookup
+  interp.setDeclState("k", {
+    sign: "POSITIVE",
+    interval: { min: 19, max: 19 },
+    isDeterministic: true,
+    purity: "PURE"
+  });
+  const cstCurried = interp.evalCstNode({
+    type: "apply_expression",
+    children: [
+      {
+        type: "apply_expression",
+        children: [
+          { type: "identifier", text: "Nat.add" },
+          { type: "nat_lit", text: "3" }
+        ]
+      },
+      { type: "nat_lit", text: "4" }
+    ]
+  });
+  assert.deepEqual(cstCurried.interval, { min: 7, max: 7 });
+
+  const cstInfix = interp.evalCstNode({
+    type: "binary_expression",
+    children: [
+      { type: "identifier", text: "k" },
+      { type: "operator", text: "%" },
+      { type: "nat_lit", text: "5" }
+    ]
+  });
+  assert.deepEqual(cstInfix.interval, { min: 4, max: 4 });
+
   console.log("  [PASS] Full Nat Expression & CST Abstract Evaluation");
 }
 
@@ -228,6 +260,17 @@ console.log("Starting Lean Abstract Interpreter Test Suite...");
   assert.equal(diagDivZero.state.sign, "ZERO");
   assert.equal(diagDivZero.certificates.length, 1);
   assert.equal(diagDivZero.certificates[0].kind, "NatDivModByZero");
+
+  const srcCerts = interp.scanSourceForNatCertificates(
+    "-- comment Nat.sub 3 9\n" +
+    "def x : Nat := Nat.sub 4 10\n" +
+    "def y : Nat := 25 / 0\n"
+  );
+  assert.equal(srcCerts.length, 2);
+  assert.equal(srcCerts[0].kind, "NatSubTruncation");
+  assert.equal(srcCerts[0].line, 2);
+  assert.equal(srcCerts[1].kind, "NatDivModByZero");
+  assert.equal(srcCerts[1].line, 3);
   console.log("  [PASS] Actionable Static Diagnostic Certificates");
 }
 

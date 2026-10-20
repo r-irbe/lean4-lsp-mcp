@@ -6,7 +6,14 @@
 /**
  * Abstract values for Lean 4 arithmetic and term evaluations.
  */
-export type AbstractSign = "NEGATIVE" | "ZERO" | "POSITIVE" | "NON_NEGATIVE" | "NON_POSITIVE" | "TOP" | "BOTTOM";
+export type AbstractSign =
+  | "NEGATIVE"
+  | "ZERO"
+  | "POSITIVE"
+  | "NON_NEGATIVE"
+  | "NON_POSITIVE"
+  | "TOP"
+  | "BOTTOM";
 
 export interface IntervalBound {
   min: number;
@@ -70,10 +77,8 @@ export const AbstractLattice = {
 
     if ((a === "ZERO" && b === "POSITIVE") || (a === "POSITIVE" && b === "ZERO")) return "NON_NEGATIVE";
     if ((a === "ZERO" && b === "NEGATIVE") || (a === "NEGATIVE" && b === "ZERO")) return "NON_POSITIVE";
-
     if (a === "NON_NEGATIVE" && (b === "ZERO" || b === "POSITIVE")) return "NON_NEGATIVE";
     if (b === "NON_NEGATIVE" && (a === "ZERO" || a === "POSITIVE")) return "NON_NEGATIVE";
-
     if (a === "NON_POSITIVE" && (b === "ZERO" || b === "NEGATIVE")) return "NON_POSITIVE";
     if (b === "NON_POSITIVE" && (a === "ZERO" || a === "NEGATIVE")) return "NON_POSITIVE";
 
@@ -88,7 +93,6 @@ export const AbstractLattice = {
 
     if (a === "NON_NEGATIVE" && (b === "POSITIVE" || b === "ZERO")) return b;
     if (b === "NON_NEGATIVE" && (a === "POSITIVE" || a === "ZERO")) return a;
-
     if (a === "NON_POSITIVE" && (b === "NEGATIVE" || b === "ZERO")) return b;
     if (b === "NON_POSITIVE" && (a === "NEGATIVE" || a === "ZERO")) return a;
 
@@ -142,7 +146,10 @@ export const AbstractLattice = {
     const hiIsInf = !Number.isFinite(interval.max);
     const hi = hiIsInf ? Number.POSITIVE_INFINITY : Math.max(0, Math.trunc(interval.max));
     const s = Math.max(0, Math.trunc(congruence.stride));
-    const o = s === 0 ? Math.max(0, Math.trunc(congruence.offset)) : ((Math.trunc(congruence.offset) % s) + s) % s;
+    const o =
+      s === 0
+        ? Math.max(0, Math.trunc(congruence.offset))
+        : ((Math.trunc(congruence.offset) % s) + s) % s;
 
     if (s === 0) {
       if (o < lo || (!hiIsInf && o > hi)) return null;
@@ -166,10 +173,11 @@ export const AbstractLattice = {
       if (newHi < newLo) return null;
     }
 
-    const tightenedCg: NatCongruence =
+    const tightenedCg =
       newLo === newHi && Number.isFinite(newHi)
         ? { stride: 0, offset: newLo }
         : { stride: s, offset: o };
+
     return {
       interval: { min: newLo, max: newHi },
       congruence: tightenedCg
@@ -185,14 +193,17 @@ export const AbstractLattice = {
       if (state.interval.min > state.interval.max) {
         return { ...state, sign: "BOTTOM", interval: undefined, congruence: undefined };
       }
+
       const signInterval = this.intervalFromSign(state.sign);
       const min = Math.max(state.interval.min, signInterval.min);
       const max = Math.min(state.interval.max, signInterval.max);
+
       if (min > max) {
         return { ...state, sign: "BOTTOM", interval: undefined, congruence: undefined };
       }
+
       let reducedInterval: IntervalBound = { min, max };
-      let reducedCongruence = state.congruence;
+      let reducedCongruence: NatCongruence | undefined = state.congruence;
       if (reducedCongruence && reducedInterval.min >= 0) {
         const granger = this.reduceIntervalCongruence(reducedInterval, reducedCongruence);
         if (!granger) {
@@ -200,14 +211,20 @@ export const AbstractLattice = {
         }
         reducedInterval = granger.interval;
         reducedCongruence = granger.congruence;
-      } else if (reducedInterval.min === reducedInterval.max && Number.isFinite(reducedInterval.min) && reducedInterval.min >= 0) {
+      } else if (
+        reducedInterval.min === reducedInterval.max &&
+        Number.isFinite(reducedInterval.min) &&
+        reducedInterval.min >= 0
+      ) {
         reducedCongruence = { stride: 0, offset: reducedInterval.min };
       }
+
       const intervalSign = this.signFromInterval(reducedInterval);
       const reducedSign = this.meet(state.sign, intervalSign);
       if (reducedSign === "BOTTOM") {
         return { ...state, sign: "BOTTOM", interval: undefined, congruence: undefined };
       }
+
       return {
         ...state,
         sign: reducedSign,
@@ -265,7 +282,6 @@ export const AbstractLattice = {
       min = lower !== undefined ? lower : (isNat ? 0 : Number.NEGATIVE_INFINITY);
     }
     if (isNat) min = Math.max(0, min);
-
     let max = prev.max;
     if (next.max > prev.max) {
       const upper = sorted.find((t) => t >= next.max);
@@ -296,10 +312,24 @@ export class LeanAbstractInterpreter {
   }
 
   /**
+   * Registers or updates an abstract lattice state for a named declaration/variable.
+   */
+  setDeclState(name: string, state: AbstractLatticeState): void {
+    this.declarations.set(name, this.reduceState(state));
+  }
+
+  /**
+   * Retrieves the abstract lattice state for a named declaration/variable.
+   */
+  getDeclState(name: string): AbstractLatticeState | undefined {
+    return this.declarations.get(name);
+  }
+
+  /**
    * Initializes or attaches a WASM accelerated evaluation engine.
    * @param wasmBytes - Binary WASM buffer compiled from crates/lean-analyzer.
    */
-  public async loadWasmEngine(wasmBytes: Uint8Array): Promise<boolean> {
+  async loadWasmEngine(wasmBytes: Uint8Array): Promise<boolean> {
     try {
       const wasm = (globalThis as any).WebAssembly;
       if (typeof wasm !== "undefined") {
@@ -351,7 +381,7 @@ export class LeanAbstractInterpreter {
   /**
    * Mutual sign-interval-congruence domain reduction (WASM-accelerated when loaded).
    */
-  public reduceState(state: AbstractLatticeState): AbstractLatticeState {
+  reduceState(state: AbstractLatticeState): AbstractLatticeState {
     if (
       state.interval &&
       state.congruence &&
@@ -388,7 +418,7 @@ export class LeanAbstractInterpreter {
    * Discharges Lean 4 termination obligation `n - (i + step) < n - i` under guard `i - n <= guardDiff`
    * using the Zone DBM domain (WASM-accelerated when loaded).
    */
-  public checkZoneSubDecreasing(guardDiff: number, step: number): "BOTTOM" | "FALSE" | "TRUE" | "TOP" {
+  checkZoneSubDecreasing(guardDiff: number, step: number): "BOTTOM" | "FALSE" | "TRUE" | "TOP" {
     if (
       this.wasmModule &&
       typeof this.wasmModule.lean_analyzer_zone_check_sub_decreasing === "function"
@@ -507,9 +537,10 @@ export class LeanAbstractInterpreter {
           if (r.min === 0 && r.max === 0) {
             interval = { min: l.min, max: l.max };
           } else if (r.min === 0) {
-            const boundFromDivisor = r.max === Number.POSITIVE_INFINITY
-              ? Number.POSITIVE_INFINITY
-              : Math.max(0, r.max - 1);
+            const boundFromDivisor =
+              r.max === Number.POSITIVE_INFINITY
+                ? Number.POSITIVE_INFINITY
+                : Math.max(0, r.max - 1);
             interval = {
               min: 0,
               max: Math.max(l.max, boundFromDivisor)
@@ -525,9 +556,10 @@ export class LeanAbstractInterpreter {
               max: l.max % r.min
             };
           } else {
-            const maxRem = r.max === Number.POSITIVE_INFINITY
-              ? l.max
-              : Math.min(l.max, Math.max(0, r.max - 1));
+            const maxRem =
+              r.max === Number.POSITIVE_INFINITY
+                ? l.max
+                : Math.min(l.max, Math.max(0, r.max - 1));
             interval = {
               min: 0,
               max: maxRem
@@ -563,7 +595,10 @@ export class LeanAbstractInterpreter {
             const maxIn = Math.max(l.max, r.max);
             let mask = 1;
             while (mask <= maxIn && Number.isFinite(maxIn)) mask *= 2;
-            interval = { min: Math.max(l.min, r.min), max: Number.isFinite(maxIn) ? mask - 1 : Number.POSITIVE_INFINITY };
+            interval = {
+              min: Math.max(l.min, r.min),
+              max: Number.isFinite(maxIn) ? mask - 1 : Number.POSITIVE_INFINITY
+            };
           }
         }
       }
@@ -579,7 +614,10 @@ export class LeanAbstractInterpreter {
             const maxIn = Math.max(l.max, r.max);
             let mask = 1;
             while (mask <= maxIn && Number.isFinite(maxIn)) mask *= 2;
-            interval = { min: 0, max: Number.isFinite(maxIn) ? mask - 1 : Number.POSITIVE_INFINITY };
+            interval = {
+              min: 0,
+              max: Number.isFinite(maxIn) ? mask - 1 : Number.POSITIVE_INFINITY
+            };
           }
         }
       }
@@ -643,7 +681,7 @@ export class LeanAbstractInterpreter {
   /**
    * Analyzes an integer or Nat expression AST node into its abstract lattice bounds.
    */
-  public evalExpr(expr: { op?: string, args?: any[], value?: number }): AbstractLatticeState {
+  evalExpr(expr: { op?: string; args?: any[]; value?: number }): AbstractLatticeState {
     if (expr.value !== undefined) {
       const v = expr.value;
       const sign: AbstractSign = v > 0 ? "POSITIVE" : (v === 0 ? "ZERO" : "NEGATIVE");
@@ -686,7 +724,7 @@ export class LeanAbstractInterpreter {
   /**
    * Directly evaluates a Tree-Sitter Concrete Syntax Tree (CST) node without invoking Lean subprocess.
    */
-  public evalCstNode(node: TreeSitterCstNode): AbstractLatticeState {
+  evalCstNode(node: TreeSitterCstNode): AbstractLatticeState {
     // Number literal node
     if (node.type === "number" || node.type === "nat_lit") {
       const val = parseInt(node.text || "0", 10);
@@ -701,13 +739,71 @@ export class LeanAbstractInterpreter {
       }
     }
 
-    // Application node: (f arg1 arg2)
-    if (node.type === "apply_expression" && node.children && node.children.length >= 3) {
-      const fnNode = node.children[0];
-      const fnName = fnNode.text || "";
-      const left = this.evalCstNode(node.children[1]);
+    // Identifier lookup in declaration state table
+    if ((node.type === "identifier" || node.type === "ident") && node.text) {
+      const decl = this.declarations.get(node.text);
+      if (decl) {
+        return this.reduceState(decl);
+      }
+    }
+
+    // Parenthesized expression: ( e )
+    if (
+      (node.type === "paren_expression" || node.type === "parenthesized_expression") &&
+      node.children &&
+      node.children.length > 0
+    ) {
+      const inner = node.children.find((c) => c.type !== "(" && c.type !== ")");
+      if (inner) {
+        return this.evalCstNode(inner);
+      }
+    }
+
+    // Application node: flat (f arg1 arg2), unary (Nat.succ arg1), or curried ((f arg1) arg2)
+    if (node.type === "apply_expression" && node.children) {
+      if (node.children.length >= 3) {
+        const fnNode = node.children[0];
+        const fnName = fnNode.text || "";
+        const left = this.evalCstNode(node.children[1]);
+        const right = this.evalCstNode(node.children[2]);
+        const res = this.evalBinaryNatOp(fnName, left, right);
+        if (res !== null) {
+          return res;
+        }
+      } else if (node.children.length === 2) {
+        const fnNode = node.children[0];
+        if (fnNode.type === "apply_expression" && fnNode.children && fnNode.children.length === 2) {
+          const opName = fnNode.children[0].text || "";
+          const left = this.evalCstNode(fnNode.children[1]);
+          const right = this.evalCstNode(node.children[1]);
+          const res = this.evalBinaryNatOp(opName, left, right);
+          if (res !== null) {
+            return res;
+          }
+        }
+        const unaryName = fnNode.text || "";
+        if (unaryName === "Nat.succ") {
+          const arg = this.evalCstNode(node.children[1]);
+          const res = this.evalBinaryNatOp("Nat.add", arg, this.evalExpr({ value: 1 }));
+          if (res !== null) return res;
+        } else if (unaryName === "Nat.pred") {
+          const arg = this.evalCstNode(node.children[1]);
+          const res = this.evalBinaryNatOp("Nat.sub", arg, this.evalExpr({ value: 1 }));
+          if (res !== null) return res;
+        }
+      }
+    }
+
+    // Binary infix expression: (left op right)
+    if (
+      (node.type === "binary_expression" || node.type === "infix_expression") &&
+      node.children &&
+      node.children.length >= 3
+    ) {
+      const left = this.evalCstNode(node.children[0]);
+      const opName = node.children[1].text || node.children[1].type || "";
       const right = this.evalCstNode(node.children[2]);
-      const res = this.evalBinaryNatOp(fnName, left, right);
+      const res = this.evalBinaryNatOp(opName, left, right);
       if (res !== null) {
         return res;
       }
@@ -724,7 +820,11 @@ export class LeanAbstractInterpreter {
   /**
    * Widens two abstract lattice states (using Nat-aware widening when both states are non-negative).
    */
-  public widen(prevRaw: AbstractLatticeState, nextRaw: AbstractLatticeState, thresholds?: number[]): AbstractLatticeState {
+  widen(
+    prevRaw: AbstractLatticeState,
+    nextRaw: AbstractLatticeState,
+    thresholds?: number[]
+  ): AbstractLatticeState {
     const prev = this.reduceState(prevRaw);
     const next = this.reduceState(nextRaw);
     if (prev.sign === "BOTTOM") return next;
@@ -736,9 +836,9 @@ export class LeanAbstractInterpreter {
     const joinedSign = AbstractLattice.join(prev.sign, next.sign);
     const interval =
       prev.interval && next.interval
-        ? (thresholds && thresholds.length > 0
-            ? AbstractLattice.widenIntervalWithThresholds(prev.interval, next.interval, thresholds, isNat)
-            : AbstractLattice.widenInterval(prev.interval, next.interval, isNat))
+        ? thresholds && thresholds.length > 0
+          ? AbstractLattice.widenIntervalWithThresholds(prev.interval, next.interval, thresholds, isNat)
+          : AbstractLattice.widenInterval(prev.interval, next.interval, isNat)
         : undefined;
 
     return this.reduceState({
@@ -752,7 +852,7 @@ export class LeanAbstractInterpreter {
   /**
    * Narrows a widened post-fixpoint abstract lattice state using a subsequent transfer evaluation.
    */
-  public narrow(wideRaw: AbstractLatticeState, refinedRaw: AbstractLatticeState): AbstractLatticeState {
+  narrow(wideRaw: AbstractLatticeState, refinedRaw: AbstractLatticeState): AbstractLatticeState {
     const wide = this.reduceState(wideRaw);
     const refined = this.reduceState(refinedRaw);
     if (wide.sign === "BOTTOM") return wide;
@@ -778,10 +878,10 @@ export class LeanAbstractInterpreter {
   /**
    * Computes a fixpoint over recursive step equations using monotone join.
    */
-  public computeFixpoint(
+  computeFixpoint(
     init: AbstractLatticeState,
     transferFn: (curr: AbstractLatticeState) => AbstractLatticeState,
-    maxIterations = 20
+    maxIterations: number = 20
   ): AbstractLatticeState {
     let curr = this.reduceState(init);
     for (let iter = 0; iter < maxIterations; iter++) {
@@ -806,10 +906,10 @@ export class LeanAbstractInterpreter {
    * Computes a sound post-fixpoint using Cousot-Cousot widening (optionally stepped through `thresholds`)
    * followed by narrowing.
    */
-  public computeWideningFixpoint(
+  computeWideningFixpoint(
     init: AbstractLatticeState,
     transferFn: (curr: AbstractLatticeState) => AbstractLatticeState,
-    maxIterations = 20,
+    maxIterations: number = 20,
     thresholds?: number[]
   ): AbstractLatticeState {
     let curr = this.reduceState(init);
@@ -830,12 +930,13 @@ export class LeanAbstractInterpreter {
    * for Nat subtraction truncation (`[a, b] - [c, d]` where `b <= c` and `c > 0`)
    * and Nat division/modulo where the divisor interval includes `0`.
    */
-  public diagnoseExpr(expr: { op?: string; args?: any[]; value?: number }): {
+  diagnoseExpr(expr: { op?: string; args?: any[]; value?: number }): {
     state: AbstractLatticeState;
     certificates: DiagnosticCertificate[];
   } {
     const certificates: DiagnosticCertificate[] = [];
-    const visit = (node: { op?: string; args?: any[]; value?: number }): void => {
+
+    const visit = (node: { op?: string; args?: any[]; value?: number }) => {
       if (!node || !node.op || !node.args) return;
       for (const child of node.args) {
         visit(child);
@@ -867,11 +968,97 @@ export class LeanAbstractInterpreter {
         }
       }
     };
+
     visit(expr);
     return {
       state: this.evalExpr(expr),
       certificates
     };
+  }
+
+  /**
+   * Scans Lean 4 source text for literal natural-number arithmetic hazards
+   * (Nat subtraction truncation `a - b` where `a <= b` and `b > 0`, and
+   * division/modulo by literal zero `a / 0` or `a % 0`), returning line-indexed
+   * `DiagnosticCertificate` entries without spawning `lake serve`.
+   */
+  scanSourceForNatCertificates(sourceText: string): Array<
+    DiagnosticCertificate & { line: number; col: number }
+  > {
+    const out: Array<DiagnosticCertificate & { line: number; col: number }> = [];
+    const lines = sourceText.split(/\r?\n/);
+    let inBlockComment = 0;
+
+    for (let idx = 0; idx < lines.length; idx++) {
+      const rawLine = lines[idx];
+      let clean = "";
+      let i = 0;
+      while (i < rawLine.length) {
+        if (inBlockComment > 0) {
+          if (rawLine[i] === "/" && rawLine[i + 1] === "-") {
+            inBlockComment++;
+            clean += "  ";
+            i += 2;
+          } else if (rawLine[i] === "-" && rawLine[i + 1] === "/") {
+            inBlockComment--;
+            clean += "  ";
+            i += 2;
+          } else {
+            clean += " ";
+            i++;
+          }
+        } else {
+          if (rawLine[i] === "-" && rawLine[i + 1] === "-") {
+            clean += " ".repeat(rawLine.length - i);
+            break;
+          } else if (rawLine[i] === "/" && rawLine[i + 1] === "-") {
+            inBlockComment++;
+            clean += "  ";
+            i += 2;
+          } else {
+            clean += rawLine[i];
+            i++;
+          }
+        }
+      }
+
+      // 1. Explicit Nat.sub / Nat.div / Nat.mod on literal naturals
+      const prefixRe = /\b(Nat\.sub|Nat\.div|Nat\.mod)\s+(\d+)\s+(\d+)\b/g;
+      for (const m of clean.matchAll(prefixRe)) {
+        const op = m[1];
+        const a = Number.parseInt(m[2], 10);
+        const b = Number.parseInt(m[3], 10);
+        if (Number.isFinite(a) && Number.isFinite(b)) {
+          const diag = this.diagnoseExpr({ op, args: [{ value: a }, { value: b }] });
+          for (const cert of diag.certificates) {
+            out.push({
+              ...cert,
+              line: idx + 1,
+              col: (m.index ?? 0) + 1
+            });
+          }
+        }
+      }
+
+      // 2. Infix division / modulo by literal zero: `a / 0` or `a % 0`
+      const divZeroRe = /\b(\d+)\s*(\/|%)\s*(0)\b/g;
+      for (const m of clean.matchAll(divZeroRe)) {
+        const a = Number.parseInt(m[1], 10);
+        const op = m[2];
+        if (Number.isFinite(a)) {
+          const diag = this.diagnoseExpr({ op, args: [{ value: a }, { value: 0 }] });
+          for (const cert of diag.certificates) {
+            out.push({
+              ...cert,
+              line: idx + 1,
+              col: (m.index ?? 0) + 1
+            });
+          }
+        }
+      }
+    }
+
+    return out;
   }
 }
 

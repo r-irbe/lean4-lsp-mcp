@@ -23,6 +23,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+import { LeanAbstractInterpreter } from "./abstract_interpreter.ts";
 export * from "./abstract_interpreter.ts";
 
 export interface IleanSymbolEntry {
@@ -2926,6 +2927,20 @@ export class FileWorkerManager {
           const r = d.range?.start ?? { line: 0, character: 0 };
           return `L${(r.line ?? 0) + 1}:${(r.character ?? 0) + 1} ${sevName(d.severity ?? 2)}: ${String(d.message ?? "").split("\n")[0].slice(0, 220)}`;
         });
+      let staticCertBlock = "";
+      try {
+        const srcText = fs.readFileSync(absPath, "utf-8");
+        const interp = new LeanAbstractInterpreter();
+        const certs = interp.scanSourceForNatCertificates(srcText);
+        if (certs.length > 0) {
+          const certLines = certs.slice(0, 10).map(
+            (c) => `L${c.line}:${c.col} [abstract-interpreter/${c.kind}] ${c.summary} Hint: ${c.hint}`
+          );
+          staticCertBlock = `\nStatic Abstract Interpretation Certificates (${certs.length}):\n` + certLines.join("\n");
+        }
+      } catch {
+        // best-effort static certificate scan
+      }
       if (!analysisComplete()) {
         const partial = entry && entry.diags.length > 0
           ? `${entry.diags.length} diagnostic(s) seen before the deadline:\n${formatDiagnosticLines(entry.diags, 10).join("\n")}`
@@ -2933,11 +2948,12 @@ export class FileWorkerManager {
         return (
           `analysis_incomplete: ${filePath} did not report a completed analysis within ${Math.max(250, maxWaitMs)}ms ` +
           `(server pending regions: ${session.progress?.get(uri)?.pending ?? "unknown"}; ${partial}). ` +
-          `This is NOT a clean result - re-run with a larger maxWaitMs, or check lean_server_status for a stuck session.`
+          `This is NOT a clean result - re-run with a larger maxWaitMs, or check lean_server_status for a stuck session.` +
+          staticCertBlock
         );
       }
       if (entry === undefined || entry.diags.length === 0) {
-        return `No diagnostics reported for ${filePath} (analysis completed, 0 findings).`;
+        return `No diagnostics reported for ${filePath} (analysis completed, 0 findings).` + staticCertBlock;
       }
       const lines = formatDiagnosticLines(entry.diags, 40);
       const counts: Record<string, number> = {};
@@ -2946,7 +2962,7 @@ export class FileWorkerManager {
         counts[k] = (counts[k] ?? 0) + 1;
       }
       const summary = Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(", ");
-      return `${filePath}: ${entry.diags.length} diagnostic(s) (${summary})\n` + lines.join("\n");
+      return `${filePath}: ${entry.diags.length} diagnostic(s) (${summary})\n` + lines.join("\n") + staticCertBlock;
     } catch (err: any) {
       return `Lake LSP error: ${err.message || String(err)}`;
     }
