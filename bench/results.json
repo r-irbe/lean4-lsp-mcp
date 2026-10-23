@@ -1,0 +1,177 @@
+{
+ "totalWallMs": 113754,
+ "results": [
+  {
+   "phase": "main",
+   "stmt": "s1_add_comm",
+   "run": 1,
+   "dt": 5606,
+   "state": "survived",
+   "firstLine": "survived: no counterexample in up to 100 samples (5.6s). Evidence, not a proof."
+  },
+  {
+   "phase": "main",
+   "stmt": "s1_add_comm",
+   "run": 2,
+   "dt": 5679,
+   "state": "survived",
+   "firstLine": "survived: no counterexample in up to 100 samples (5.7s). Evidence, not a proof."
+  },
+  {
+   "phase": "main",
+   "stmt": "s1_add_comm",
+   "run": 3,
+   "dt": 5977,
+   "state": "survived",
+   "firstLine": "survived: no counterexample in up to 100 samples (6.0s). Evidence, not a proof."
+  },
+  {
+   "phase": "main",
+   "stmt": "s2_lt_three",
+   "run": 1,
+   "dt": 5976,
+   "state": "counterexample",
+   "firstLine": "counterexample for 's2_lt_three' (samples cap 100, 6.0s):"
+  },
+  {
+   "phase": "main",
+   "stmt": "s2_lt_three",
+   "run": 2,
+   "dt": 5909,
+   "state": "counterexample",
+   "firstLine": "counterexample for 's2_lt_three' (samples cap 100, 5.9s):"
+  },
+  {
+   "phase": "main",
+   "stmt": "s2_lt_three",
+   "run": 3,
+   "dt": 5619,
+   "state": "counterexample",
+   "firstLine": "counterexample for 's2_lt_three' (samples cap 100, 5.6s):"
+  },
+  {
+   "phase": "main",
+   "stmt": "s3_two_mul",
+   "run": 1,
+   "dt": 6012,
+   "state": "counterexample",
+   "firstLine": "counterexample for 's3_two_mul' (samples cap 100, 6.0s):"
+  },
+  {
+   "phase": "main",
+   "stmt": "s3_two_mul",
+   "run": 2,
+   "dt": 6009,
+   "state": "counterexample",
+   "firstLine": "counterexample for 's3_two_mul' (samples cap 100, 6.0s):"
+  },
+  {
+   "phase": "main",
+   "stmt": "s3_two_mul",
+   "run": 3,
+   "dt": 6089,
+   "state": "counterexample",
+   "firstLine": "counterexample for 's3_two_mul' (samples cap 100, 6.1s):"
+  },
+  {
+   "phase": "main",
+   "stmt": "s4_pow_bound",
+   "run": 1,
+   "dt": 5932,
+   "state": "survived",
+   "firstLine": "survived: no counterexample in up to 100 samples (5.9s). Evidence, not a proof."
+  },
+  {
+   "phase": "main",
+   "stmt": "s4_pow_bound",
+   "run": 2,
+   "dt": 5686,
+   "state": "survived",
+   "firstLine": "survived: no counterexample in up to 100 samples (5.7s). Evidence, not a proof."
+  },
+  {
+   "phase": "main",
+   "stmt": "s4_pow_bound",
+   "run": 3,
+   "dt": 6255,
+   "state": "survived",
+   "firstLine": "survived: no counterexample in up to 100 samples (6.3s). Evidence, not a proof."
+  },
+  {
+   "phase": "main",
+   "stmt": "s5_reverse_reverse",
+   "run": 1,
+   "dt": 6004,
+   "state": "survived",
+   "firstLine": "survived: no counterexample in up to 100 samples (6.0s). Evidence, not a proof."
+  },
+  {
+   "phase": "main",
+   "stmt": "s5_reverse_reverse",
+   "run": 2,
+   "dt": 5839,
+   "state": "survived",
+   "firstLine": "survived: no counterexample in up to 100 samples (5.8s). Evidence, not a proof."
+  },
+  {
+   "phase": "main",
+   "stmt": "s5_reverse_reverse",
+   "run": 3,
+   "dt": 5728,
+   "state": "survived",
+   "firstLine": "survived: no counterexample in up to 100 samples (5.7s). Evidence, not a proof."
+  },
+  {
+   "phase": "main",
+   "stmt": "s6_abstract",
+   "run": 1,
+   "dt": 5543,
+   "state": "unsupported",
+   "firstLine": "unsupported: no testable instance for the statement (missing SampleableExt/Decidable instances, or they do not combine)"
+  },
+  {
+   "phase": "main",
+   "stmt": "s6_abstract",
+   "run": 2,
+   "dt": 5910,
+   "state": "unsupported",
+   "firstLine": "unsupported: no testable instance for the statement (missing SampleableExt/Decidable instances, or they do not combine)"
+  },
+  {
+   "phase": "main",
+   "stmt": "s6_abstract",
+   "run": 3,
+   "dt": 5783,
+   "state": "unsupported",
+   "firstLine": "unsupported: no testable instance for the statement (missing SampleableExt/Decidable instances, or they do not combine)"
+  },
+  {
+   "phase": "budget",
+   "stmt": "s5_reverse_reverse",
+   "run": 1,
+   "dt": 1580,
+   "state": "budget_expired",
+   "firstLine": "budget_expired after 1500ms (killed; 1.6s elapsed, samples cap 10000)"
+  },
+  {
+   "phase": "duplicate",
+   "stmt": "s3_two_mul",
+   "run": 1,
+   "dt": 5572,
+   "state": "counterexample",
+   "firstLine": "counterexample for 's3_two_mul' (samples cap 100, 5.6s):"
+  },
+  {
+   "phase": "duplicate",
+   "stmt": "s3_two_mul",
+   "run": 2,
+   "dt": 5572,
+   "state": "counterexample",
+   "firstLine": "counterexample for 's3_two_mul' (samples cap 100, 5.6s):"
+  }
+ ],
+ "stderrTail": [
+  "[lean-lsp-mcp] Initialized for project /home/radu/code/tacit-mui/docs/easci/lean (source cwd, marker lakefile.lean)",
+  ""
+ ]
+}
