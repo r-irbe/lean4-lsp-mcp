@@ -25,6 +25,8 @@ const __dirname = path.dirname(__filename);
 
 import { LeanAbstractInterpreter } from "./abstract_interpreter.ts";
 export * from "./abstract_interpreter.ts";
+import { auditLeanProofFidelity, type ProofFidelityDiagnostic } from "./proof_fidelity_audit.ts";
+export * from "./proof_fidelity_audit.ts";
 
 export interface IleanSymbolEntry {
   filePath: string;
@@ -191,7 +193,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       properties: {
         action: {
           type: "string",
-          enum: ["census", "hierarchy", "subgraph", "bigraph", "axiom_audit", "altproof"],
+          enum: ["census", "hierarchy", "subgraph", "bigraph", "axiom_audit", "altproof", "proof_fidelity"],
           description: "Metric action to perform (default: census)",
         },
         target: { type: "string", description: "Target file path, directory path, module name, or goal string" },
@@ -4579,9 +4581,15 @@ export class McpServer {
         let classes = 0;
         let axioms = 0;
         let sorries = 0;
+        const fidelityFindings: Array<ProofFidelityDiagnostic & { file: string }> = [];
 
         for (const file of filesToScan) {
           const content = fs.readFileSync(file, "utf-8");
+          const relFile = path.relative(this.projectRoot, file).replace(/\\/g, "/");
+          const fidReport = auditLeanProofFidelity(content);
+          for (const d of fidReport.diagnostics) {
+            fidelityFindings.push({ ...d, file: relFile });
+          }
           const lines = content.split(/\r?\n/);
           totalLines += lines.length;
           let inBlockComment = false;
@@ -4640,11 +4648,13 @@ export class McpServer {
             classes,
             axioms,
             sorries,
+            proofFidelityWarnings: fidelityFindings.length,
+            proofFidelityDiagnostics: fidelityFindings,
           }, null, 2);
         } else if (format === "summary") {
-          return `Modules: ${filesToScan.length} | Lines: ${totalLines} (code: ${codeLines}) | Theorems: ${theorems + lemmas} | Defs: ${defs + structures} | Sorries: ${sorries} | Axioms: ${axioms}`;
+          return `Modules: ${filesToScan.length} | Lines: ${totalLines} (code: ${codeLines}) | Theorems: ${theorems + lemmas} | Defs: ${defs + structures} | Sorries: ${sorries} | Axioms: ${axioms} | FidelityWarnings: ${fidelityFindings.length}`;
         } else {
-          return [
+          const outLines = [
             `# Lean Module Census: ${targetPath}`,
             `- **Scanned Modules**: ${filesToScan.length}`,
             `- **Total Lines**: ${totalLines.toLocaleString()} (${codeLines.toLocaleString()} code, ${commentLines.toLocaleString()} comments, ${blankLines.toLocaleString()} blank)`,
@@ -4652,7 +4662,15 @@ export class McpServer {
             `- **Definitions & Structures**: ${(defs + structures).toLocaleString()} (${defs} defs, ${structures} structures, ${classes} classes)`,
             `- **Custom Axioms**: ${axioms}`,
             `- **Sorries**: ${sorries}`,
-          ].join("\n");
+            `- **Proof Fidelity Warnings**: ${fidelityFindings.length}`,
+          ];
+          if (fidelityFindings.length > 0) {
+            outLines.push("", "## Proof Fidelity Warnings");
+            for (const f of fidelityFindings.slice(0, 25)) {
+              outLines.push(`- **[${f.kind}]** \`${f.theoremName}\` (\`${f.file}:${f.line}\`): ${f.summary} *Hint: ${f.remediationHint}*`);
+            }
+          }
+          return outLines.join("\n");
         }
       }
 
@@ -4822,6 +4840,70 @@ export class McpServer {
             }
           }, null, 2);
         }
+      }
+
+      case "lean_proof_fidelity_audit": {
+        const targetPath = String(args.targetPath || args.target || "").trim() || ".";
+        const absTarget = path.isAbsolute(targetPath) ? targetPath : path.resolve(this.projectRoot, targetPath);
+        if (!fs.existsSync(absTarget)) {
+          return `Target path not found: ${targetPath}`;
+        }
+        const filesToScan: string[] = [];
+        const stat = fs.statSync(absTarget);
+        if (stat.isDirectory()) {
+          const walk = (dir: string) => {
+            for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+              const full = path.join(dir, ent.name);
+              if (ent.isDirectory() && ent.name !== ".lake" && ent.name !== ".git") {
+                walk(full);
+              } else if (ent.isFile() && ent.name.endsWith(".lean")) {
+                filesToScan.push(full);
+              }
+            }
+          };
+          walk(absTarget);
+        } else if (stat.isFile() && absTarget.endsWith(".lean")) {
+          filesToScan.push(absTarget);
+        }
+        const allDiags: Array<ProofFidelityDiagnostic & { file: string }> = [];
+        let totalTheorems = 0;
+        let totalBoolDefs = 0;
+        for (const file of filesToScan) {
+          const relPath = path.relative(this.projectRoot, file).replace(/\\/g, "/");
+          const content = fs.readFileSync(file, "utf-8");
+          const rep = auditLeanProofFidelity(content);
+          totalTheorems += rep.theoremsScanned;
+          totalBoolDefs += rep.boolDefsScanned;
+          for (const d of rep.diagnostics) {
+            allDiags.push({ ...d, file: relPath });
+          }
+        }
+        const format = String(args.format || "markdown").toLowerCase();
+        if (format === "json") {
+          return JSON.stringify({
+            target: targetPath,
+            modulesScanned: filesToScan.length,
+            theoremsScanned: totalTheorems,
+            boolDefsScanned: totalBoolDefs,
+            clean: allDiags.length === 0,
+            diagnostics: allDiags,
+          }, null, 2);
+        }
+        const out = [
+          `# Lean Proof Fidelity Audit: ${targetPath}`,
+          `- **Status**: ${allDiags.length === 0 ? "PASS (Zero Specification/Vacuity Defects)" : `WARN (${allDiags.length} Defect(s) Detected)`}`,
+          `- **Scanned Modules**: ${filesToScan.length}`,
+          `- **Scanned Theorems**: ${totalTheorems}`,
+          `- **Scanned Bool Checkers**: ${totalBoolDefs}`,
+          `- **Total Findings**: ${allDiags.length}`,
+        ];
+        if (allDiags.length > 0) {
+          out.push("", "## Findings");
+          for (const d of allDiags) {
+            out.push(`- **[${d.kind}]** \`${d.theoremName}\` (\`${d.file}:${d.line}\`): ${d.summary} *Hint: ${d.remediationHint}*`);
+          }
+        }
+        return out.join("\n");
       }
 
       case "lean_axiom_audit": {
@@ -5479,6 +5561,11 @@ export class McpServer {
           return await this.evaluateAltProof({
             ...args,
             goal: args.goal || (typeof target === "string" && target !== "." ? target : ""),
+          });
+        } else if (action === "proof_fidelity" || action === "fidelity_audit") {
+          return await this.executeTool("lean_proof_fidelity_audit", {
+            targetPath: target,
+            format: args.format,
           });
         } else {
           return await this.executeTool("lean_module_census", {
