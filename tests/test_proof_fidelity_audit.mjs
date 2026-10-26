@@ -79,4 +79,19 @@ describe("auditLeanProofFidelity - 7 Defect Detectors & Clean Theorem Baseline",
     assert.equal(report.clean, true, `Expected 0 diagnostics, got: ${JSON.stringify(report.diagnostics)}`);
     assert.equal(report.diagnostics.length, 0);
   });
+
+  it("handles hypothesis-embedded Nat subtraction, additive guards, and implicit underscore binders", () => {
+    const edgeSource = [
+      "theorem sub_in_hyp (a b : Nat) (h : a - b = 3) : a >= 3 := by omega",
+      "theorem sub_add_guard (a b : Nat) (h : b + 1 <= a) : a - b >= 1 := by omega",
+      "theorem implicit_under {a : Nat} {_h : a > 0} (b : Nat) : b + 0 = b := by omega",
+    ].join("\n");
+    const report = auditLeanProofFidelity(edgeSource);
+    const subDiags = report.diagnostics.filter((d) => d.kind === "NAT_SUB_UNGUARDED");
+    assert.equal(subDiags.length, 1);
+    assert.equal(subDiags[0].theoremName, "sub_in_hyp");
+    const underDiags = report.diagnostics.filter((d) => d.kind === "UNUSED_UNDERSCORE_HYP");
+    assert.equal(underDiags.length, 1);
+    assert.equal(underDiags[0].theoremName, "implicit_under");
+  });
 });

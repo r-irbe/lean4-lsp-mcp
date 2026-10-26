@@ -658,45 +658,48 @@ export function auditLeanProofFidelity(sourceText: string): ProofFidelityAuditRe
 
     // 4. NAT_SUB_UNGUARDED
     if (conclusion && natVars.size > 0) {
-      const hypTexts: string[] = [];
+      const propClauses: string[] = [];
       for (const b of binders) {
-        if (!isValueType(b.typeText)) hypTexts.push(b.typeText);
+        if (!isValueType(b.typeText)) propClauses.push(b.typeText);
       }
-      let targetConc = conclusion;
-      for (const arrow of ["\u2192", "->"]) {
-        if (targetConc.includes(arrow)) {
-          const parts = targetConc.split(arrow);
-          hypTexts.push(...parts.slice(0, -1));
-          targetConc = parts[parts.length - 1].trim();
-        }
+      const arrowParts = conclusion.split(/\u2192|->/);
+      for (const part of arrowParts) {
+        if (part.trim()) propClauses.push(part.trim());
       }
-      const allHyps = hypTexts.join(" ; ");
-      const subRe = /\b([A-Za-z_][A-Za-z0-9_']*)\s*-\s*([A-Za-z_][A-Za-z0-9_']*|\d+)\b/g;
-      let sm: RegExpExecArray | null;
-      while ((sm = subRe.exec(targetConc)) !== null) {
-        const lhs = sm[1];
-        const rhs = sm[2];
-        if (!natVars.has(lhs) || rhs === "0") continue;
-        const guardRes = [
-          new RegExp(`\\b${rhs}\\s*(?:<=|\\u2264|<)\\s*${lhs}\\b`),
-          new RegExp(`\\b${lhs}\\s*(?:>=|\\u2265|>)\\s*${rhs}\\b`),
-          new RegExp(`\\b${lhs}\\s*(?:>=|\\u2265|>|<=|\\u2264|<)\\s*[^;]*\\b${rhs}\\b`),
-          new RegExp(`\\b${rhs}\\s*(?:<=|\\u2264|<|>=|\\u2265|>)\\s*[^;]*\\b${lhs}\\b`),
-        ];
-        if (/^\d+$/.test(rhs)) {
-          guardRes.push(new RegExp(`\\b${lhs}\\s*(?:>=|\\u2265|>)\\s*\\d+`));
-          guardRes.push(new RegExp(`\\d+\\s*(?:<=|\\u2264|<)\\s*${lhs}\\b`));
-        }
-        if (!guardRes.some((r) => r.test(allHyps))) {
-          pushDiag({
-            kind: "NAT_SUB_UNGUARDED",
-            severity: "warning",
-            line: thm.line,
-            theoremName: thm.name,
-            summary: `Unguarded Nat subtraction \`${lhs} - ${rhs}\` in \`${targetConc}\` without \`${rhs} <= ${lhs}\` hypothesis.`,
-            remediationHint: `Add hypothesis \`(h : ${rhs} <= ${lhs})\` or rewrite in additive form \`${lhs} = ... + ${rhs}\` to prevent truncating subtraction at 0.`,
-          });
-          break;
+      let reportedSub = false;
+      for (let cIdx = 0; cIdx < propClauses.length && !reportedSub; cIdx++) {
+        const clause = propClauses[cIdx];
+        const otherHyps = propClauses
+          .filter((_, idx) => idx !== cIdx)
+          .join(" ; ");
+        const subRe = /\b([A-Za-z_][A-Za-z0-9_']*)\s*-\s*([A-Za-z_][A-Za-z0-9_']*|\d+)\b/g;
+        let sm: RegExpExecArray | null;
+        while ((sm = subRe.exec(clause)) !== null) {
+          const lhs = sm[1];
+          const rhs = sm[2];
+          if (!natVars.has(lhs) || rhs === "0" || lhs === rhs) continue;
+          const guardRes = [
+            new RegExp(`\\b${rhs}\\b[^;]*(?:<=|\\u2264|<)\\s*[^;]*\\b${lhs}\\b`),
+            new RegExp(`\\b${lhs}\\b[^;]*(?:>=|\\u2265|>)\\s*[^;]*\\b${rhs}\\b`),
+          ];
+          if (/^\d+$/.test(rhs)) {
+            guardRes.push(new RegExp(`\\b${lhs}\\b[^;]*(?:>=|\\u2265|>)\\s*\\d+`));
+            guardRes.push(new RegExp(`\\d+\\s*(?:<=|\\u2264|<)\\s*[^;]*\\b${lhs}\\b`));
+            guardRes.push(new RegExp(`\\b${lhs}\\s*(?:!=|\\u2260)\\s*0`));
+            guardRes.push(new RegExp(`0\\s*<\\s*\\b${lhs}\\b`));
+          }
+          if (!guardRes.some((r) => r.test(otherHyps))) {
+            pushDiag({
+              kind: "NAT_SUB_UNGUARDED",
+              severity: "warning",
+              line: thm.line,
+              theoremName: thm.name,
+              summary: `Unguarded Nat subtraction \`${lhs} - ${rhs}\` in \`${clause}\` without \`${rhs} <= ${lhs}\` hypothesis.`,
+              remediationHint: `Add hypothesis \`(h : ${rhs} <= ${lhs})\` or rewrite in additive form \`${lhs} = ... + ${rhs}\` to prevent truncating subtraction at 0.`,
+            });
+            reportedSub = true;
+            break;
+          }
         }
       }
     }
@@ -707,11 +710,11 @@ export function auditLeanProofFidelity(sourceText: string): ProofFidelityAuditRe
       thm.body.includes("unfold");
     for (let bIdx = 0; bIdx < binders.length; bIdx++) {
       const b = binders[bIdx];
-      if (b.bracket !== "(") continue;
       const isVal = isValueType(b.typeText);
       for (const name of b.names) {
         if (name === "_") continue;
         const isUnderscore = name.startsWith("_");
+        if (b.bracket !== "(" && !isUnderscore) continue;
         if (name.length === 1 && !isVal && !isUnderscore) continue;
         const wordRe = new RegExp(`(?<![A-Za-z0-9_'])${name}(?![A-Za-z0-9_'])`);
         if (wordRe.test(rawConclusion)) continue;
@@ -807,8 +810,11 @@ export function auditLeanProofFidelity(sourceText: string): ProofFidelityAuditRe
       }
       for (const arrow of ["\u2192", "->"]) {
         if (concNorm.includes(arrow)) {
-          const rhs = concNorm.split(arrow).pop() || "";
-          if (fnPat.test(rhs)) {
+          const parts = concNorm.split(arrow).map((p) => p.trim());
+          const lhsParts = parts.slice(0, -1).join(" -> ");
+          const rhs = parts[parts.length - 1] || "";
+          const inBinders = extractBinders(thm.signature).some((b) => fnPat.test(b.typeText));
+          if (fnPat.test(rhs) && !fnPat.test(lhsParts) && !inBinders) {
             hasIffOrComplete = true;
             break;
           }
