@@ -1,0 +1,21 @@
+id: rule-lean-no-redundant-idempotent-tactic
+language: Lean
+severity: warning
+message: "Redundant idempotent tactic detected: consecutive identical tactic invocations"
+note: |
+  Lean 4 tactic scripts that execute back-to-back identical idempotent tactics
+  (such as simp, ring, omega, norm_num, decide, bv_decide, aesop, trivial, rfl,
+  abel, linarith, positivity, funext, congr, ext, tauto, exact, assumption,
+  contradiction, dsimp, push_neg, norm_cast, ring_nf) without intermediate state
+  transformation create dead simplifier/solver cycles and bloat elaboration traces.
+  Combine arguments or remove the duplicate invocation.
+rule:
+  regex: "(?m)^([ \\t]*)(simp|ring_nf|ring|omega|norm_num|norm_cast|bv_decide|decide|aesop|trivial|rfl|abel|linarith|positivity|funext|congr|ext|tauto|exact|assumption|contradiction|dsimp|push_neg)\\b([^\\n]*)\\n\\1\\2\\3\\s*$"
+fix: ""
+metadata:
+  category: performance
+  weight: 75
+tags:
+  - lean
+  - elaborator-hygiene
+  - ast-guard

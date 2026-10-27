@@ -14,7 +14,7 @@ const clean = path.join(here, "fixtures", "rules", "clean.leanfix");
 
 test("rule corpus loads", () => {
   const { ruleCount } = runScan({ rulesDir, targets: [clean] });
-  assert.ok(ruleCount >= 80, `expected the full rule corpus, got ${ruleCount}`);
+  assert.equal(ruleCount, 16, `expected the consolidated 16-rule corpus, got ${ruleCount}`);
 });
 
 test("violation fixture trips the expected rule ids", () => {
@@ -23,7 +23,7 @@ test("violation fixture trips the expected rule ids", () => {
   for (const expected of [
     "rule-lean-no-sorry-cheat",
     "rule-lean-no-uncertified-axiom",
-    "rule-lean-no-redundant-simp",
+    "rule-lean-no-redundant-idempotent-tactic",
     "rule-lean-no-unbounded-heartbeats",
     "rule-lean-max-import-depth",
   ]) {

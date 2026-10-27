@@ -1,0 +1,36 @@
+{
+  "name": "lean-analyzer",
+  "version": "0.1.0",
+  "description": "High-speed WebAssembly abstract interpreter and .ilean AST parser for Lean 4",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./js/lean_analyzer_bridge.js",
+  "exports": {
+    ".": "./js/lean_analyzer_bridge.js",
+    "./wasm": "./wasm/lean_analyzer.wasm"
+  },
+  "files": [
+    "js",
+    "wasm",
+    "data",
+    "README.md",
+    "USER_GUIDE.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build:wasm": "bash scripts/build_and_sync_wasm.sh",
+    "test": "cargo test"
+  },
+  "keywords": [
+    "lean4",
+    "wasm",
+    "abstract-interpretation",
+    "ast",
+    "lsp",
+    "formal-verification"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/r-irbe/lean-analyzer.git"
+  }
+}
