@@ -73,11 +73,76 @@ export interface AbstractLatticeState {
   purity: "PURE" | "IO" | "NON_TERMINATING" | "UNKNOWN";
 }
 
+export type DiagnosticKind =
+  | "NatSubTruncation"
+  | "NatDivModByZero"
+  | "DeadBranch"
+  | "ZoneTerminationCert"
+  | "HypothesisEcho"
+  | "ReflexiveTautology"
+  | "NatNonnegTriviality"
+  | "UnusedUnderscoreBinder"
+  | "MisalignedDocstring"
+  | "OneWayBoolChecker"
+  | "OverConcreteFixedArity"
+  | "SairLaw01LetZetaTax"
+  | "SairLaw01bDagSharing"
+  | "SairLaw01cSiblingWhnfCse"
+  | "SairLaw02ClosedSubtreeHoist"
+  | "SairLaw02bInnerBinderOrder"
+  | "SairLaw03ConstantLeftOp"
+  | "SairLaw03bConstantLeftPow2Mask"
+  | "SairLaw04PointFreeEtaWrapper"
+  | "SairLaw05SharedAbbrevMotive"
+  | "KernelBrecOnTax"
+  | "SairLaw07CsimpDualPath"
+  | "SairLaw08BoolRecOverIte"
+  | "SairLaw09UnboxedProductSpine"
+  | "SairLaw10CpsPairElim"
+  | "SairLaw11InductivePreHoist"
+  | "SairLaw12DirectNatRecSign"
+  | "SairLaw12bUnboxedQuotientSignDiff"
+  | "SairLaw13MultiLimbSquare"
+  | "SairLaw13bSingleLimbSquare"
+  | "KernelPowerOfTwoDivMod"
+  | "SairLaw14bGmpHornerAsymmetry"
+  | "SairLaw14cBitwiseSubpipeline"
+  | "SairLaw15SwarWordPacking"
+  | "SairLaw16FixedTripUnroll"
+  | "SairLaw16bGmpLimbAlignment"
+  | "SairLaw17CbvStateCanonical"
+  | "SairLaw18FrontierZddMask"
+  | "SairLaw18bSingleBitPopcount"
+  | "SairLaw19CombinedLookaheadGuard"
+  | "SairLaw19bZeroMaskPrune"
+  | "SairLaw20AnfZhegalkinRotation"
+  | "SairLaw21HeuristicListPerm"
+  | "SairLaw22ZeroPropRuntimeCone"
+  | "SairLaw22bHotColdSeparation"
+  | "SairLaw22cNamedRecursorBinders"
+  | "SairLaw23ZeroTypeclassHotCone"
+  | "SairLaw24OptimalCpsArity"
+  | "SairLaw25ModuleHeaderHumanization"
+  | "SairLaw25bAbbrevLiteralExtraction"
+  | "AltProofRouteCandidate";
+
+export interface CodeReplacement {
+  title: string;
+  range: [number, number, number, number];
+  newText: string;
+  isPreferred: boolean;
+}
+
 export interface DiagnosticCertificate {
-  kind: "NatSubTruncation" | "NatDivModByZero" | "DeadBranch";
+  kind: DiagnosticKind;
+  code?: string;
+  severity?: number;
+  range?: [number, number, number, number];
   operator: string;
   summary: string;
   hint: string;
+  altproofRoute?: string;
+  quickfix?: CodeReplacement;
 }
 
 /**

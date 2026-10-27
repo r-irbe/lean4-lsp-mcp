@@ -2509,7 +2509,26 @@ export class FileWorkerManager {
       }
     }
 
-    const child = brokerScript
+    const lakeLocked =
+      fs.existsSync(path.join(leanRoot, ".lake", "build", ".lake.lock")) ||
+      fs.existsSync(path.join(leanRoot, "lake.lock")) ||
+      fs.existsSync("/dev/shm/lean_global_workspace.lock");
+    const analyzerBinCandidates = [
+      process.env.LEAN_ANALYZER_BIN || "",
+      path.resolve(__dirname, "../bin/lean-analyzer"),
+      path.join(os.homedir(), ".local", "bin", "lean-analyzer"),
+      "/home/radu/code/lean-analyzer/target/release/lean-analyzer",
+    ].filter(Boolean);
+    const analyzerBin = analyzerBinCandidates.find((p) => fs.existsSync(p)) || null;
+    const useAnalyzerLsp =
+      process.env.LEAN_ANALYZER_LSP === "1" || (lakeLocked && analyzerBin !== null);
+
+    const child = useAnalyzerLsp && analyzerBin
+      ? spawn(analyzerBin, ["lsp", "--mode=auto"], {
+          cwd: leanRoot,
+          stdio: ["pipe", "pipe", "ignore"],
+        })
+      : brokerScript
       ? spawn("python3", [brokerScript, "attach", "--root", leanRoot], {
           cwd: leanRoot,
           stdio: ["pipe", "pipe", "ignore"],
