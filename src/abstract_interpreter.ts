@@ -1677,6 +1677,7 @@ export interface AltProofGoalFeatures {
   hasWellFounded: boolean;
   hasWellFormed: boolean;
   hasChannelOrPrior: boolean;
+  hasBitVec?: boolean;
 }
 
 export interface AltProofTacticRecommendation {
@@ -1782,6 +1783,70 @@ export const ALTPROOF_ROUTE_TABLE: AltProofRoute[] = [
     rewriteHint: "refactor to kernel-friendly primitives (structural Nat.rec, unrolled trial division, import-minimal path)",
     costHint: "high kernel yield: reduces defeq heartbeats and avoids WellFounded.fix traps",
     provenance: "SAIR Lean Kernel Challenge lanes (primecount L1 structural trial division S5)"
+  },
+  {
+    id: "constructive-decidable-reduction",
+    family: "kernel-friendly-term-design",
+    matchShape: "Classical.choice leakage in first-order Nat/Int/Bool/BitVec theorems caused by split on &&/And or classical by_cases",
+    rewriteHint: "replace split/by_cases with Bool.and_eq_true, decide_eq_true_eq, omega, or bv_decide to keep axiom closure Classical.choice-free",
+    costHint: "high kernel & trust yield: eliminates Classical.choice from decidable first-order theorems",
+    provenance: "lean_rules constructive-gate audit & AltProof bidirectional cross-pollination"
+  },
+  {
+    id: "closed-def-whnf-caching",
+    family: "kernel-friendly-term-design",
+    matchShape: "giant decimal nat_lit constants (>64 bits) or repeated closed shift-add/mask expressions inside Nat.rec/List.rec step lambdas",
+    rewriteHint: "evaluate closed constant expressions to raw nat_lit at elaboration time via an elab 'eval_nat%' macro (import Lean has 0 exported Lean.* refs), or hoist into a closed top-level def C : Nat := <formula> with a := rfl spec bridge (cached in m_st->m_whnf after 1 evaluation per kernel invocation)",
+    costHint: "eval_nat% gives 0 runtime instruction overhead (vs +160K/invocation for closed def C) and eliminates multi-hundred-digit magic literals",
+    provenance: "SAIR Lean Kernel Challenge C++ type_checker.cpp whnf/m_whnf audit (partition DerivedConstants eval_nat% vs partCplusSpec, sha256 shaPaddingSuffix)"
+  },
+  {
+    id: "gmp-swar-word-packing",
+    family: "algorithm-class-substitution",
+    matchShape: "inner loops over fixed-width integer/boolean arrays or linear recurrences with bounded slot bit-width, or manually unrolled block trees",
+    rewriteHint: "pack k lanes into a single b-bit GMP Nat word (Kronecker substitution / bitboard ANF) and use elaboration-time pre-unfolding (elab 'preunfold%' / 'unroll_top%') over binary-doubling combinators (t0..t6) to eliminate multi-thousand-line source inlining with 0 runtime unfold overhead",
+    costHint: "15-30x kernel instruction reduction on convolution/bitboard loops; preunfold% matches manual inlining (12.72M vs 18.49M for runtime combinators) at 4.2x smaller source",
+    provenance: "SAIR Lean Kernel Challenge (partition Kronecker SWAR convolution, ca-rule110 4-gate ANF + preunfold% t0..t6 block tree, fib unroll_top%, sha256 512-bit schedule window)"
+  },
+  {
+    id: "bv_decide",
+    family: "bitvector-decision",
+    matchShape: "BitVec or fixed-width UInt8/UInt16/UInt32/UInt64 bitwise identity/inequality (&&&, |||, ^^^, <<<, >>>)",
+    rewriteHint: "discharge directly via by bv_decide (QF_BV bit-blasting decision procedure)",
+    costHint: "single-step kernel-certified bitvector closure",
+    provenance: "Lean 4 Std.Tactic.BVDecide + lean-analyzer QF_BV pre-screen"
+  },
+  {
+    id: "sum_congr_ring",
+    family: "big-operators",
+    matchShape: "Finset.sum linear combination or pointwise algebraic ring identity under summation",
+    rewriteHint: "normalize Finset.sum linearity and close pointwise via Finset.sum_congr rfl (fun _ _ => by ring)",
+    costHint: "collapses 4-12 line Finset.sum rewrite chains to 1 line",
+    provenance: "AltProof.sum_congr_ring"
+  },
+  {
+    id: "finset_nonneg",
+    family: "big-operators",
+    matchShape: "0 <= Finset.sum s (fun i => f i) non-negativity obligation",
+    rewriteHint: "apply Finset.sum_nonneg, instantiate pointwise hypotheses, and close via positivity/linarith/omega",
+    costHint: "collapses Finset.sum_nonneg + intro + specialize boilerplate to 1 line",
+    provenance: "AltProof.finset_nonneg"
+  },
+  {
+    id: "finset_mono",
+    family: "big-operators",
+    matchShape: "Finset.sum s f <= Finset.sum s g pointwise monotonicity inequality",
+    rewriteHint: "apply Finset.sum_le_sum, instantiate pointwise hypotheses, and close via linarith/gcongr/omega",
+    costHint: "collapses Finset.sum_le_sum + pointwise instantiation to 1 line",
+    provenance: "AltProof.finset_mono"
+  },
+  {
+    id: "induction-rescaling",
+    family: "structural-induction",
+    matchShape: "fixed-arity numbered scalar parameters (a0 a1 a2 a3) or recursive loop with decreasing Nat measure n - i",
+    rewriteHint: "generalize fixed-arity parameters to Fin n / List or attach certified termination_by n - i decreasing_by omega",
+    costHint: "eliminates fixed-arity duplication and WellFounded fuel boilerplate",
+    provenance: "lean-analyzer SOUND-04 NatZoneDomain::check_nat_sub_decreasing + FIDELITY-08"
   }
 ];
 
@@ -2007,6 +2072,7 @@ export function analyzeAltProofGoalAndBlock(
   const hasWellFounded = /(?:\bWellFounded\.fix\b|\btermination_by\b|\bdecreasing_by\b)/.test(combined);
   const hasWellFormed = /(?:\bWellFormed\b|\bwellformed_tac\b|\bfin_cases\b[\s\S]*?\bnorm_num\b)/.test(`${target}\n${proof}`);
   const hasChannelOrPrior = /(?:\bChannel\b|\bPrior\b|\bchannel_fields\b)/.test(`${target}\n${proof}`);
+  const hasBitVec = /(?:\bBitVec\b|\bUInt8\b|\bUInt16\b|\bUInt32\b|\bUInt64\b|&&&|\|\|\||\^\^\^|<<<|>>>|\bbv_decide\b)/.test(combined);
   const hasNatArith = Boolean(
     (hasNatContext || (hasArithOp && !hasFinsetSumInTargetOrProof && !hasWellFormed)) &&
     hasArithOp &&
@@ -2024,7 +2090,8 @@ export function analyzeAltProofGoalAndBlock(
     hasNatArith,
     hasWellFounded,
     hasWellFormed,
-    hasChannelOrPrior
+    hasChannelOrPrior,
+    hasBitVec
   };
 
   const pickedRoutes = ALTPROOF_ROUTE_TABLE.filter((r) => {
@@ -2041,9 +2108,25 @@ export function analyzeAltProofGoalAndBlock(
       case "redirect-by-contradiction":
         return features.hasNegOrContra;
       case "algorithm-class-substitution":
-        return features.hasFinsetSum || features.hasWellFounded;
+        return features.hasFinsetSum || features.hasWellFounded || Boolean(features.hasBitVec);
       case "kernel-friendly-term-design":
-        return features.hasWellFounded || features.hasNatArith;
+        return features.hasWellFounded || features.hasNatArith || Boolean(features.hasBitVec);
+      case "constructive-decidable-reduction":
+        return features.hasIteOrDecide || features.hasNatArith || Boolean(features.hasBitVec);
+      case "closed-def-whnf-caching":
+        return features.hasNatArith || Boolean(features.hasBitVec);
+      case "gmp-swar-word-packing":
+        return Boolean(features.hasBitVec) || features.hasWellFounded;
+      case "bv_decide":
+        return Boolean(features.hasBitVec);
+      case "sum_congr_ring":
+        return features.hasFinsetSum;
+      case "finset_nonneg":
+        return features.hasFinsetNonneg || features.hasFinsetSum;
+      case "finset_mono":
+        return features.hasFinsetMono || features.hasFinsetSum;
+      case "induction-rescaling":
+        return features.hasNatArith || features.hasWellFounded;
       default:
         return false;
     }

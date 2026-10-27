@@ -2,3 +2,9 @@ node_modules/
 dist/
 *.log
 .DS_Store
+itp_ontology_graph.db
+**/itp_ontology_graph.db
+loom_proving_state.db*
+*.db-shm
+*.db-wal
+

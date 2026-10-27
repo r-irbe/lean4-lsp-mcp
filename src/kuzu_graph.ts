@@ -300,11 +300,12 @@ export class KuzuKnowledgeGraph {
         const parts = this.parseCsvLine(trimmed);
         if (parts.length >= 2 && parts[0] !== "id" && parts[0] !== "key") {
           const key = parts[0].trim();
+          const hasTotalRows = parts.length >= 5 && /^\d+$/.test(parts[2].trim());
           this.books.set(key, {
             key,
             title: parts[1].trim(),
-            license: parts[2] ? parts[2].trim() : "Unknown",
-            sourceFormat: parts[3] ? parts[3].trim() : "Markdown",
+            license: hasTotalRows ? parts[3].trim() : (parts[2] ? parts[2].trim() : "Unknown"),
+            sourceFormat: hasTotalRows ? parts[4].trim() : (parts[3] ? parts[3].trim() : "Markdown"),
           });
           this.bookSections.set(key, []);
         }
@@ -322,8 +323,11 @@ export class KuzuKnowledgeGraph {
         if (parts.length >= 4 && parts[0] !== "id") {
           const id = parts[0].trim();
           const bookKey = parts[1].trim();
-          const level = parseInt(parts[2].trim(), 10) || 0;
-          const title = parts[3].trim();
+          const isNumericThird = /^-?\d+$/.test(parts[2].trim());
+          const level = isNumericThird
+            ? (parseInt(parts[2].trim(), 10) || 0)
+            : (parts[4] ? (parseInt(parts[4].trim(), 10) || 0) : 0);
+          const title = isNumericThird ? parts[3].trim() : parts[2].trim();
           this.sections.set(id, { id, bookKey, level, title });
           if (!this.bookSections.has(bookKey)) {
             this.bookSections.set(bookKey, []);
