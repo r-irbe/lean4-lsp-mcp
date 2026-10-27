@@ -3669,9 +3669,14 @@ export class FileWorkerManager {
       if (lines[i].includes(bareName) && /\b(?:theorem|lemma|def)\b/.test(lines[i])) {
         foundLine = i + 1;
         const chunk = lines.slice(i, Math.min(lines.length, i + 40)).join("\n");
-        const bySplit = chunk.split(/:=\s*by\b/);
-        headerText = bySplit[0] || lines[i];
-        bodyText = bySplit[1] || "";
+        const firstByMatch = chunk.match(/:=\s*by\b/);
+        if (firstByMatch && firstByMatch.index !== undefined) {
+          headerText = chunk.slice(0, firstByMatch.index);
+          bodyText = chunk.slice(firstByMatch.index + firstByMatch[0].length);
+        } else {
+          headerText = lines[i];
+          bodyText = "";
+        }
         break;
       }
     }
@@ -3699,13 +3704,12 @@ export class FileWorkerManager {
     const unusedHypotheses: string[] = [];
     let prunedHeader = headerText;
 
+    // First pass: determine which propositional hypotheses or variables are referenced in the conclusion, proof body,
+    // or overlap the active cone of a wildcard tactic (excluding duplicate propositional hypotheses).
+    const keptBinderNames = new Set<string>();
     for (const slot of binders) {
       const explicitInBody = new RegExp(`\\b${slot.varName}\\b`).test(bodyText);
-      const referencedInLaterTypes = binders.some(
-        (other) => other.varName !== slot.varName && new RegExp(`\\b${slot.varName}\\b`).test(other.typeText)
-      );
       const referencedInReturnType = new RegExp(`\\b${slot.varName}\\b`).test(returnPart);
-
       const typeFreeIds = extractTypeIdentifiers(slot.typeText);
       const overlapsActiveCone =
         usesWildcardTactic &&
@@ -3716,16 +3720,37 @@ export class FileWorkerManager {
 
       if (
         explicitInBody ||
-        referencedInLaterTypes ||
         referencedInReturnType ||
         (overlapsActiveCone && !isDuplicatePropHyp)
       ) {
-        usedHypotheses.push(slot.varName);
+        keptBinderNames.add(slot.varName);
         activeVars.add(slot.varName);
         for (const id of typeFreeIds) activeVars.add(id);
-        if (!referencedInLaterTypes && !referencedInReturnType) {
+        if (!referencedInReturnType && typeFreeIds.length > 0) {
           keptPropTypes.add(normalizedPropType);
         }
+      }
+    }
+
+    // Second pass: transitively keep any binder referenced by the type of an already-kept binder
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const slot of binders) {
+        if (keptBinderNames.has(slot.varName)) continue;
+        const referencedByKept = binders.some(
+          (other) => keptBinderNames.has(other.varName) && new RegExp(`\\b${slot.varName}\\b`).test(other.typeText)
+        );
+        if (referencedByKept) {
+          keptBinderNames.add(slot.varName);
+          changed = true;
+        }
+      }
+    }
+
+    for (const slot of binders) {
+      if (keptBinderNames.has(slot.varName)) {
+        usedHypotheses.push(slot.varName);
       } else {
         unusedHypotheses.push(slot.varName);
         prunedHeader = removeHypothesisFromHeader(prunedHeader, slot.varName);

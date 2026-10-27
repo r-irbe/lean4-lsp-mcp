@@ -227,7 +227,7 @@ console.log("Running SOTA Upgrades Test Suite...");
     );
     assert.strictEqual(isaRoute.prover, "isabelle-hol");
 
-    // 6c. lean_repair_proof
+    // 6c. lean_repair_proof (including single-line `have h : a - b = 0 := by ...` with minus sign)
     const rep = JSON.parse(
       await server.executeTool("lean_repair_proof", {
         filePath: sampleLean,
@@ -238,34 +238,97 @@ console.log("Running SOTA Upgrades Test Suite...");
     assert.strictEqual(rep.nativeDecideExcluded, true);
     assert(rep.branchRepairs.length >= 1);
 
-    // 6d. lean_minimal_hypotheses
+    const haveMinusSource = [
+      "theorem minus_repair (a b : Nat) (h : a >= b) : a - b >= 0 := by",
+      "  have h_sub : a - b = a - b := by bad_tactic -- keep comment",
+      "  omega",
+    ].join("\n");
+    const sorrifiedMinus = sorrifyFailingLeafLines(haveMinusSource, [2]);
+    assert(
+      sorrifiedMinus.sorrifiedSource.includes("have h_sub : a - b = a - b := by sorry -- keep comment"),
+      "sorrifyFailingLeafLines preserves `have` header with `-` in type and replaces only the RHS after `:= by`"
+    );
+
+    // 6d. lean_minimal_hypotheses (wildcard tactic cone keeps `h1` & `a`, prunes duplicate `h2` & disjoint `h_unused` & `b`)
     const minHyp = JSON.parse(
       await server.executeTool("lean_minimal_hypotheses", {
         filePath: sampleLean,
         theoremName: "sample_thm",
       })
     );
-    assert(minHyp.unusedHypotheses.includes("h_unused"), "detects unused hypothesis h_unused");
-    assert(!minHyp.prunedHeader.includes("h_unused"), "prunes h_unused from header");
+    assert(minHyp.usedHypotheses.includes("a"), "keeps variable `a` used in return type");
+    assert(minHyp.usedHypotheses.includes("h1"), "keeps hypothesis `h1 : a > 0` in active wildcard cone of `a >= 1`");
+    assert(minHyp.unusedHypotheses.includes("h2"), "detects duplicate hypothesis `h2 : a > 0` as redundant");
+    assert(minHyp.unusedHypotheses.includes("h_unused"), "detects disjoint hypothesis `h_unused : b > 0` as unused");
+    assert(minHyp.prunedHeader.includes("(h1 : a > 0)"), "retains `(h1 : a > 0)` after pruning `h2` from grouped binder");
+    assert(!minHyp.prunedHeader.includes("h_unused"), "prunes `h_unused` from header");
 
-    // 6e. lean_profile_proof
-    const prof = JSON.parse(
+    // Verify implicit `{...}` and nested-paren binder parsing & pruning
+    const complexHeader =
+      "theorem complex_binders {x y : Nat} (h1 h2 : (x + 1) > (y - 1)) [Decidable (x = y)] : (x : Nat) = x";
+    const parsedComplex = parseTheoremBindersForPruning(complexHeader);
+    assert.strictEqual(parsedComplex.length, 4, "parses {x y : Nat} and (h1 h2 : (x + 1) > (y - 1)) without matching return type `(x : Nat)`");
+    const prunedImplicit = removeHypothesisFromHeader(complexHeader, "y");
+    assert(prunedImplicit.includes("{x : Nat}"), "preserves implicit `{...}` brackets when pruning `y`");
+    const prunedNested = removeHypothesisFromHeader(prunedImplicit, "h1");
+    assert(prunedNested.includes("(h2 : (x + 1) > (y - 1))"), "handles nested parentheses in binder type when pruning `h1`");
+
+    // 6e. lean_profile_proof with theoremName scoping
+    const secondLean = path.join(tmpDir, "MultiThm.lean");
+    fs.writeFileSync(
+      secondLean,
+      [
+        "@[to_additive add_custom_thm, simps]",
+        "theorem mul_custom_thm (x : Nat) : x = x := by",
+        "  rfl",
+        "",
+        "theorem heavy_thm (x : Nat) : x + 0 = x := by",
+        "  aesop",
+      ].join("\n"),
+      "utf-8"
+    );
+    const profScoped = JSON.parse(
       await server.executeTool("lean_profile_proof", {
-        filePath: sampleLean,
-        theoremName: "sample_thm",
+        filePath: secondLean,
+        theoremName: "heavy_thm",
       })
     );
-    assert(prof.totalTacticStepsProfiled >= 1);
+    assert.strictEqual(profScoped.totalTacticStepsProfiled, 1, "scopes tactic profiling strictly to `heavy_thm`");
+    assert.strictEqual(profScoped.topHotspots[0].category, "search", "identifies `aesop` in `heavy_thm`");
+    assert.strictEqual(profScoped.isolatedScratchCopyUsed, true);
 
-    // 6f. lean_skill_dispatch
+    // 6f. lean_skill_dispatch with projectRoot and domain-deltas override merging
+    const ovSkillsDir = path.join(tmpDir, "skills-overrides", "skills");
+    fs.mkdirSync(ovSkillsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(tmpDir, "skills-overrides", "subst_table.json"),
+      JSON.stringify({ substitutions: { "Generic Placeholder": "Domain Override Target" } }),
+      "utf-8"
+    );
+    fs.writeFileSync(
+      path.join(ovSkillsDir, "alpha-extra.md"),
+      "Extra secondary note.",
+      "utf-8"
+    );
+    fs.writeFileSync(
+      path.join(ovSkillsDir, "project-domain-deltas.md"),
+      "## Domain Delta\nScaled integer arithmetic x100 invariant.",
+      "utf-8"
+    );
     const skill = JSON.parse(
       await server.executeTool("lean_skill_dispatch", {
         skillOrQuery: "lean-proof",
         role: "prover",
+        projectRoot: tmpDir,
       })
     );
     assert.strictEqual(skill.role, "prover");
+    assert.strictEqual(skill.projectRoot, tmpDir);
     assert(skill.allowedTools.includes("lean_multi_attempt"));
+    assert(
+      skill.instructionsExcerpt.includes("project-domain-deltas.md"),
+      "prioritizes and merges `*-domain-deltas.md` in skills-overrides/skills/"
+    );
 
     // 6g. lean_theorem_preflight
     const preflight = JSON.parse(
@@ -278,16 +341,74 @@ console.log("Running SOTA Upgrades Test Suite...");
     assert.strictEqual(preflight.theoremName, "sample_thm");
     assert(preflight.altProofAdvisor);
 
-    // 6h. lean_search with source='similar_proofs' and detail='summary'
+    // 6h. lean_search with source='similar_proofs' (directImports resolution) and source='workspace_symbols' (metaprogram lemmas)
+    const importedLean = path.join(tmpDir, "ImportedHelper.lean");
+    fs.writeFileSync(
+      importedLean,
+      [
+        "theorem imported_omega_helper (a : Nat) (h : a > 0) : a >= 1 := by",
+        "  omega",
+      ].join("\n"),
+      "utf-8"
+    );
+    const callerLean = path.join(tmpDir, "Caller.lean");
+    fs.writeFileSync(
+      callerLean,
+      [
+        "import ImportedHelper",
+        "theorem caller_thm (a : Nat) (h : a > 0) : a >= 1 := by",
+        "  sorry",
+      ].join("\n"),
+      "utf-8"
+    );
     const simSummary = await server.executeTool("lean_search", {
-      query: "sample_thm Nat omega",
+      query: "imported_omega_helper Nat omega",
       source: "similar_proofs",
-      filePath: sampleLean,
+      filePath: callerLean,
       detail: "summary",
     });
-    assert(typeof simSummary === "string");
+    assert(
+      simSummary.includes("imported_omega_helper"),
+      "similar_proofs resolves imported modules (`import ImportedHelper`) and retrieves matching proofs"
+    );
 
-    console.log("  - End-to-End McpServer SOTA Tools (6 tools + hybrid search + multi-prover): PASS");
+    const wsSymbolsRaw = await server.executeTool("lean_search", {
+      query: "add_custom_thm",
+      source: "workspace_symbols",
+      detail: "full",
+    });
+    const wsSymbols = JSON.parse(wsSymbolsRaw);
+    assert(
+      wsSymbols.results.some((r) => r.item.id === "add_custom_thm"),
+      "workspace_symbols indexes @[to_additive] metaprogram-generated lemma names"
+    );
+
+    // 6i. lean_metrics(action: "sair_audit") exposes wasmDiagnostics & sairDiagnostics
+    const sairLean = path.join(tmpDir, "SairSample.lean");
+    fs.writeFileSync(
+      sairLean,
+      [
+        "def fastDiv (x : Nat) : Nat := x / 64",
+        "theorem sair_echo (a : Nat) (h : a > 5) : a > 5 := by",
+        "  exact h",
+      ].join("\n"),
+      "utf-8"
+    );
+    const sairAuditJson = JSON.parse(
+      await server.executeTool("lean_metrics", {
+        action: "sair_audit",
+        target: sairLean,
+        format: "json",
+      })
+    );
+    assert(Array.isArray(sairAuditJson.wasmDiagnostics), "sair_audit JSON includes wasmDiagnostics array");
+    assert(Array.isArray(sairAuditJson.sairDiagnostics), "sair_audit JSON includes sairDiagnostics array");
+    assert(
+      sairAuditJson.sairDiagnostics.some((d) => d.code === "SAIR-LAW-14"),
+      "sair_audit exposes SAIR-LAW-14 diagnostics from lean_analyzer.wasm"
+    );
+
+    console.log("  - End-to-End McpServer SOTA Tools (6 tools + hybrid search + multi-prover + SAIR WASM): PASS");
   } finally {
     delete process.env.LEAN_SKIP_LSP_FOR_TEST;
     fs.rmSync(tmpDir, { recursive: true, force: true });
