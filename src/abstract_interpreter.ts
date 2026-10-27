@@ -560,7 +560,7 @@ export class LeanAbstractInterpreter {
   /**
    * Synthesizes a Lean 4 `termination_by` / `decreasing_by` clause when Zone DBM
    * proves `n - (i + step) < n - i` under guard `i - n <= guardDiff`.
-   * Emits `by omega` by default and includes `by easci_omega` as an alternative
+   * Emits `by omega` by default and includes a custom domain tactic alternative
    * when custom project tactics are enabled or detected.
    */
   synthesizeTerminationDecreasingBy(
@@ -569,6 +569,7 @@ export class LeanAbstractInterpreter {
     options?: {
       measureExpr?: string;
       enableCustomProjectTactics?: boolean;
+      customTacticName?: string;
       sourceContext?: string;
     }
   ): {
@@ -586,12 +587,14 @@ export class LeanAbstractInterpreter {
         terminationSnippet: null
       };
     }
+    const customTactic = options?.customTacticName || "scaled_omega";
     const customDetected = Boolean(
       options?.enableCustomProjectTactics ||
-      (options?.sourceContext && /\b(?:easci_omega|EASCI|Scale100)\b/.test(options.sourceContext))
+      Boolean(options?.customTacticName) ||
+      (options?.sourceContext && /\b(?:scaled_omega|Scale100)\b/.test(options.sourceContext))
     );
     const decreasingBy = "by omega";
-    const alternatives = customDetected ? ["by omega", "by easci_omega"] : ["by omega"];
+    const alternatives = customDetected ? ["by omega", `by ${customTactic}`] : ["by omega"];
     const measure = options?.measureExpr || "n - i";
     return {
       verdict,

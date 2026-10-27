@@ -26,7 +26,7 @@ const synthDefault = interp.synthesizeTerminationDecreasingBy(-1, 1);
 assert.equal(synthDefault.decreasingBy, "by omega");
 assert.deepEqual(synthDefault.alternatives, ["by omega"]);
 const synthCustom = interp.synthesizeTerminationDecreasingBy(-1, 1, { enableCustomProjectTactics: true });
-assert.deepEqual(synthCustom.alternatives, ["by omega", "by easci_omega"]);
+assert.deepEqual(synthCustom.alternatives, ["by omega", "by scaled_omega"]);
 
 const loaded = await interp.loadWasmEngine(new Uint8Array(wasmBytes));
 assert.equal(loaded, true, "Failed to instantiate WebAssembly engine");
@@ -48,9 +48,9 @@ const met = exports.lean_analyzer_meet_signs(3, 2);
 assert.equal(met, 2);
 console.log("  [PASS] WASM Bitset Lattice Meet Execution (1 cycle)");
 
-// Test fast ilean parsing via WASM
-const ileanSamplePath = path.resolve(__dirname, "../../../docs/easci/lean/.lake/build/lib/lean/FinalCheck.ilean");
-if (fs.existsSync(ileanSamplePath)) {
+// Test fast ilean parsing via WASM (if an optional sample path is provided via LEAN_ILEAN_SAMPLE)
+const ileanSamplePath = process.env.LEAN_ILEAN_SAMPLE || "";
+if (ileanSamplePath && fs.existsSync(ileanSamplePath)) {
   const ileanContent = fs.readFileSync(ileanSamplePath);
   const memory = exports.memory;
   const scratchPtr = exports.lean_analyzer_get_scratch_ptr();
@@ -77,23 +77,6 @@ if (fs.existsSync(ileanSamplePath)) {
   assert.equal(metaView[0], 5, "ILean version should be 5");
   assert.ok(metaView[1] >= 1, "Expected at least 1 declaration");
   console.log(`  [PASS] WASM .ilean Parse: Version ${metaView[0]}, ${metaView[1]} decls, ${metaView[2]} imports, ${metaView[3]} references`);
-
-  // Test instant declaration lookup at line 65, col 15
-  const nameBufOffset = metaOffset + 32;
-  const nameLen = exports.lean_analyzer_find_decl_at(
-    scratchPtr,
-    ileanContent.length,
-    65,
-    15,
-    nameBufOffset,
-    128
-  );
-
-  assert.ok(nameLen > 0, "Failed to locate declaration at line 65");
-  const nameBytes = new Uint8Array(memory.buffer, nameBufOffset, nameLen);
-  const declName = new TextDecoder().decode(nameBytes);
-  assert.equal(declName, "EASCI.FinalCheck.easci_master_verified");
-  console.log(`  [PASS] WASM Instant Symbol Resolution: located '${declName}' at (65, 15) in sub-millisecond`);
 }
 
 // Test WASM-backed LeanAbstractInterpreter methods (Waves 1-5)

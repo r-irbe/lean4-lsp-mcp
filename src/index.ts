@@ -2517,7 +2517,7 @@ export class FileWorkerManager {
       process.env.LEAN_ANALYZER_BIN || "",
       path.resolve(__dirname, "../bin/lean-analyzer"),
       path.join(os.homedir(), ".local", "bin", "lean-analyzer"),
-      "/home/radu/code/lean-analyzer/target/release/lean-analyzer",
+      path.resolve(__dirname, "../../lean-analyzer/target/release/lean-analyzer"),
     ].filter(Boolean);
     const analyzerBin = analyzerBinCandidates.find((p) => fs.existsSync(p)) || null;
     const useAnalyzerLsp =
