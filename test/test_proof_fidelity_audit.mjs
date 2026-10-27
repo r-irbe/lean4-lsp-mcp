@@ -94,4 +94,20 @@ describe("auditLeanProofFidelity - 7 Defect Detectors & Clean Theorem Baseline",
     assert.equal(underDiags.length, 1);
     assert.equal(underDiags[0].theoremName, "implicit_under");
   });
+
+  it("ignores function-application tokens across - and recognizes equality/additive/strict-lt guards", () => {
+    const fpSource = [
+      "theorem fn_app_sub (numStages n : Nat) (h_stages : numStages >= 2) (h_n : n > 0) :",
+      "    unfusedGlobalMemOps numStages n - fusedGlobalMemOps n = 2 * (numStages - 1) * n := by omega",
+      "theorem int_cast_sub (pp pn : Nat) :",
+      "    ternaryDot pp pn = (Int.ofNat pp - Int.ofNat pn) := by rfl",
+      "theorem eq_guard_sub (s1 s2 : Nat) (h_eq : s1 = s2) : s1 - s2 = 0 := by omega",
+      "theorem add_sum_guard (visited culled total : Nat) (h_part : visited + culled = total) :",
+      "    total - culled = visited := by omega",
+      "theorem strict_lt_guard (i h_read : Nat) (hi : i < h_read) : i <= h_read - 1 := by omega",
+    ].join("\n");
+    const report = auditLeanProofFidelity(fpSource);
+    const subDiags = report.diagnostics.filter((d) => d.kind === "NAT_SUB_UNGUARDED");
+    assert.equal(subDiags.length, 0, `Expected 0 NAT_SUB_UNGUARDED, got: ${JSON.stringify(subDiags)}`);
+  });
 });

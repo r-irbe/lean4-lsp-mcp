@@ -62,6 +62,81 @@ const DOCSTRING_OVERCLAIM_KEYWORDS = [
   "bijection",
 ];
 
+const LEAN_PRECEDING_KW = new Set(["then", "else", "in", "fun", "let", "have", "return", "by"]);
+const LEAN_FOLLOWING_KW = new Set(["then", "else", "with", "by"]);
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isStandaloneNatSubMatch(
+  clause: string,
+  matchIndex: number,
+  lhs: string,
+  rhs: string,
+  natVars: Set<string>
+): boolean {
+  if (!natVars.has(lhs) || rhs === "0" || lhs === rhs) return false;
+  const before = clause.slice(0, matchIndex).trimEnd();
+  if (before.length > 0) {
+    const lastCh = before[before.length - 1];
+    if (lastCh === ")" || lastCh === "]") return false;
+    const pm = before.match(/([A-Za-z0-9_'.]+)$/);
+    if (pm && !LEAN_PRECEDING_KW.has(pm[1])) return false;
+  }
+  if (!/^\d+$/.test(rhs)) {
+    if (!natVars.has(rhs)) return false;
+    const matchText = clause.slice(matchIndex);
+    const subPrefix = matchText.match(/^([A-Za-z_][A-Za-z0-9_']*\s*-\s*[A-Za-z_][A-Za-z0-9_']*)/);
+    const afterIdx = matchIndex + (subPrefix ? subPrefix[1].length : lhs.length + 3 + rhs.length);
+    const after = clause.slice(afterIdx);
+    if (after.startsWith(".")) return false;
+    const fm = after.match(/^\s+([A-Za-z0-9_'(]+)/);
+    if (fm) {
+      const tok = fm[1].split("(")[0];
+      if (!LEAN_FOLLOWING_KW.has(tok)) return false;
+    }
+  }
+  return true;
+}
+
+function isNatSubGuarded(lhs: string, rhs: string, otherHyps: string): boolean {
+  const L = escapeRegExp(lhs);
+  const R = escapeRegExp(rhs);
+  const guardRes: RegExp[] = [
+    new RegExp(`\\b${R}\\b[^;]*(?:<=|\\u2264|<)\\s*[^;]*\\b${L}\\b`),
+    new RegExp(`\\b${L}\\b[^;]*(?:>=|\\u2265|>)\\s*[^;]*\\b${R}\\b`),
+    new RegExp(`\\b${L}\\b\\s*=\\s*\\b${R}\\b`),
+    new RegExp(`\\b${R}\\b\\s*=\\s*\\b${L}\\b`),
+    new RegExp(`\\b${L}\\b\\s*=\\s*[^;]*\\b${R}\\b\\s*\\+`),
+    new RegExp(`\\b${L}\\b\\s*=\\s*[^;]*\\+\\s*[^;]*\\b${R}\\b`),
+    new RegExp(`\\b${R}\\b\\s*\\+[^;=]*=\\s*\\b${L}\\b`),
+    new RegExp(`\\+\\s*[^;=]*\\b${R}\\b[^;=]*=\\s*\\b${L}\\b`),
+    new RegExp(`\\b${R}\\b\\s*=\\s*\\b${L}\\b\\s*-`),
+    new RegExp(
+      `\\b${L}\\b\\s*=\\s*\\(?([A-Za-z0-9_']+\\s*\\+\\s*[A-Za-z0-9_']+)\\)?.*?\\b${R}\\b\\s*=\\s*\\(?\\1\\)?\\s*-`
+    ),
+  ];
+  if (/^\d+$/.test(rhs)) {
+    guardRes.push(new RegExp(`\\b${L}\\b[^;]*(?:>=|\\u2265|>)\\s*\\d+`));
+    guardRes.push(new RegExp(`\\d+\\s*(?:<=|\\u2264|<)\\s*[^;]*\\b${L}\\b`));
+    guardRes.push(new RegExp(`\\b${L}\\s*(?:!=|\\u2260)\\s*0`));
+    guardRes.push(new RegExp(`0\\s*<\\s*[^;]*\\b${L}\\b`));
+    guardRes.push(new RegExp(`\\b${L}\\b\\s*>\\s*0`));
+    if (rhs === "1") {
+      guardRes.push(new RegExp(`\\b[A-Za-z0-9_']+\\s*<\\s*\\b${L}\\b`));
+      guardRes.push(new RegExp(`\\b${L}\\b\\s*>\\s*\\b[A-Za-z0-9_']+`));
+      guardRes.push(
+        new RegExp(`\\b${L}\\b\\s*(?:>=|\\u2265)\\s*[A-Za-z0-9_']+\\s*\\+\\s*[A-Za-z0-9_']+`)
+      );
+      guardRes.push(
+        new RegExp(`[A-Za-z0-9_']+\\s*\\+\\s*[A-Za-z0-9_']+\\s*(?:<=|\\u2264)\\s*\\b${L}\\b`)
+      );
+    }
+  }
+  return guardRes.some((r) => r.test(otherHyps));
+}
+
 const AUTOMATION_TACTICS = [
   "omega",
   "simp",
@@ -677,18 +752,8 @@ export function auditLeanProofFidelity(sourceText: string): ProofFidelityAuditRe
         while ((sm = subRe.exec(clause)) !== null) {
           const lhs = sm[1];
           const rhs = sm[2];
-          if (!natVars.has(lhs) || rhs === "0" || lhs === rhs) continue;
-          const guardRes = [
-            new RegExp(`\\b${rhs}\\b[^;]*(?:<=|\\u2264|<)\\s*[^;]*\\b${lhs}\\b`),
-            new RegExp(`\\b${lhs}\\b[^;]*(?:>=|\\u2265|>)\\s*[^;]*\\b${rhs}\\b`),
-          ];
-          if (/^\d+$/.test(rhs)) {
-            guardRes.push(new RegExp(`\\b${lhs}\\b[^;]*(?:>=|\\u2265|>)\\s*\\d+`));
-            guardRes.push(new RegExp(`\\d+\\s*(?:<=|\\u2264|<)\\s*[^;]*\\b${lhs}\\b`));
-            guardRes.push(new RegExp(`\\b${lhs}\\s*(?:!=|\\u2260)\\s*0`));
-            guardRes.push(new RegExp(`0\\s*<\\s*\\b${lhs}\\b`));
-          }
-          if (!guardRes.some((r) => r.test(otherHyps))) {
+          if (!isStandaloneNatSubMatch(clause, sm.index, lhs, rhs, natVars)) continue;
+          if (!isNatSubGuarded(lhs, rhs, otherHyps)) {
             pushDiag({
               kind: "NAT_SUB_UNGUARDED",
               severity: "warning",
