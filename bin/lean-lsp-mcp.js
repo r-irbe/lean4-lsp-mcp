@@ -44,7 +44,14 @@ if (!fs.existsSync(sdkPath) && fs.existsSync(pkgJsonPath)) {
 const distEntry = path.resolve(pkgRoot, "dist/index.js");
 const srcEntry = path.resolve(pkgRoot, "src/index.ts");
 
-if (fs.existsSync(distEntry)) {
+const nodeMajor = Number.parseInt(process.versions.node.split(".")[0] || "0", 10);
+const nodeMinor = Number.parseInt(process.versions.node.split(".")[1] || "0", 10);
+const supportsStripTypes = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 6);
+const srcNewerThanDist =
+  fs.existsSync(srcEntry) &&
+  (!fs.existsSync(distEntry) || fs.statSync(srcEntry).mtimeMs > fs.statSync(distEntry).mtimeMs);
+
+if (fs.existsSync(distEntry) && !(supportsStripTypes && srcNewerThanDist)) {
   await import(pathToFileURL(distEntry).href);
 } else {
   const child = spawn(
