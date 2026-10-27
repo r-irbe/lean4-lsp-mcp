@@ -15,7 +15,7 @@
     "build": "tsc",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
-    "test": "node --test tests/test_rules_fixtures.mjs tests/test_architecture.mjs && node --test tests/test_harvest.mjs && node --experimental-strip-types tests/test_lean_lsp_mcp.mjs && node --experimental-strip-types tests/test_file_worker_manager.mjs && node --experimental-strip-types tests/test_counterexample_verb.mjs && node --experimental-strip-types tests/test_project_root.mjs && node --experimental-strip-types tests/test_diagnostics_ready.mjs && node --experimental-strip-types tests/test_decl_references.mjs && node --experimental-strip-types tests/test_abstract_interpreter.mjs && node --experimental-strip-types tests/test_tranche1_modules.mjs && node --experimental-strip-types --test tests/test_proof_fidelity_audit.mjs && node tests/test_wasm_integration.mjs"
+    "test": "node --test tests/test_rules_fixtures.mjs tests/test_architecture.mjs && node --test tests/test_harvest.mjs && node --experimental-strip-types tests/test_lean_lsp_mcp.mjs && node --experimental-strip-types tests/test_file_worker_manager.mjs && node --experimental-strip-types tests/test_counterexample_verb.mjs && node --experimental-strip-types tests/test_project_root.mjs && node --experimental-strip-types tests/test_diagnostics_ready.mjs && node --experimental-strip-types tests/test_decl_references.mjs && node --experimental-strip-types tests/test_abstract_interpreter.mjs && node --experimental-strip-types tests/test_tranche1_modules.mjs && node --experimental-strip-types --test tests/test_proof_fidelity_audit.mjs && node --experimental-strip-types tests/test_sota_upgrades.mjs && node tests/test_wasm_integration.mjs"
   },
   "engines": {
     "node": ">=22.6.0"
@@ -40,14 +40,14 @@
     "tools": [
       {
         "name": "lean_goal",
-        "description": "Interactive proof state, filtered goal, term goal, and AltProof route/tactic advisor",
+        "description": "Interactive proof state, before+after goals (col='both'), filtered goal, term goal, and AltProof route/tactic advisor",
         "access": "read",
         "scope": "workspace",
         "network": false
       },
       {
         "name": "lean_search",
-        "description": "Unified declaration, semantic, ontology, reservoir, dataset, arXiv, and Kuzu knowledge graph search",
+        "description": "Unified declaration, semantic, similar_proofs (BM25 + RRF), workspace_symbols, ontology, reservoir, dataset, arXiv, and Kuzu knowledge graph search",
         "access": "read",
         "scope": "workspace_and_public_apis",
         "network": true,
@@ -68,7 +68,7 @@
       },
       {
         "name": "lean_metrics",
-        "description": "Module census, dependency hierarchy, DAG subgraphs, bigraphs, axiom audit, and AltProof analysis",
+        "description": "Module census, dependency hierarchy, DAG subgraphs, bigraphs, axiom audit, WASM proof_fidelity/SAIR audit, and AltProof analysis",
         "access": "read",
         "scope": "workspace",
         "network": false
@@ -116,13 +116,6 @@
         "network": false
       },
       {
-        "name": "lean_run_code",
-        "description": "Execute Lean 4 code against the compiled environment (legacy alias of lean_exec)",
-        "access": "exec",
-        "scope": "isolated_process",
-        "network": false
-      },
-      {
         "name": "lean_axiom_closure",
         "description": "Transitive axiom closure check (#print axioms) for a declaration",
         "access": "read",
@@ -131,49 +124,7 @@
       },
       {
         "name": "lean_diagnostics",
-        "description": "Live compiler, linter, and static analyzer diagnostics for a Lean file",
-        "access": "read",
-        "scope": "workspace",
-        "network": false
-      },
-      {
-        "name": "lean_book_index_lookup",
-        "description": "Author-curated book index lookup over the source-materials corpus",
-        "access": "read",
-        "scope": "workspace",
-        "network": false
-      },
-      {
-        "name": "lean_cross_itp_concordance",
-        "description": "Cross-ITP concordance across Lean 4, Coq, Isabelle, and HOL Light",
-        "access": "read",
-        "scope": "workspace",
-        "network": false
-      },
-      {
-        "name": "lean_proof_skeleton",
-        "description": "Generate proof skeleton with sorry-punched tactic placeholders",
-        "access": "read",
-        "scope": "workspace",
-        "network": false
-      },
-      {
-        "name": "lean_blueprint_scaffold",
-        "description": "Blueprint scaffold for a declaration with proof outline",
-        "access": "read",
-        "scope": "workspace",
-        "network": false
-      },
-      {
-        "name": "lean_dependency_subgraph",
-        "description": "Render dependency subgraph around a module from .ilean index",
-        "access": "read",
-        "scope": "workspace",
-        "network": false
-      },
-      {
-        "name": "lean_module_census",
-        "description": "Declaration census over a target path from compiled corpus",
+        "description": "Live compiler, linter, Goedel-Prover-V2 <error> spans, and APOLLO static analyzer diagnostics",
         "access": "read",
         "scope": "workspace",
         "network": false
@@ -191,11 +142,53 @@
         "access": "exec",
         "scope": "isolated_process",
         "network": false
+      },
+      {
+        "name": "lean_multi_attempt",
+        "description": "Tri-modal speculative multi-tactic branching without disk mutation (Virtual LSP, lean-repl, Pantograph)",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_repair_proof",
+        "description": "APOLLO comment/string-safe leaf sorrification, solver cascade, and Rule G-15 sub-lemma extraction",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_minimal_hypotheses",
+        "description": "Sound unused-hypothesis detector and grouped-binder-aware pruner",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_profile_proof",
+        "description": "Per-tactic elaboration profiler and heartbeat hotspot analyzer",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_skill_dispatch",
+        "description": "Self-contained skill and local domain override dispatcher with role-scoped MCP allowlists",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_theorem_preflight",
+        "description": "Composite Phase-0 theorem preflight: counterexample search, WASM proof_fidelity/SAIR audit, AltProof, and similar_proofs",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
       }
     ]
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.6.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "js-yaml": "^4.3.2"
   },
   "devDependencies": {

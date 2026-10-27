@@ -1,14 +1,11 @@
 // src/proof_fidelity_audit.ts
-// Automated specification & vacuity fidelity audit for Lean 4 source files.
-// Detects all 7 structural defect classes:
-//   1. HYPOTHESIS_ECHO
-//   2. REFLEXIVE_TAUTOLOGY
-//   3. NAT_NONNEG_TRIVIALITY
-//   4. NAT_SUB_UNGUARDED
-//   5. UNUSED_UNDERSCORE_HYP
-//   6. MISALIGNED_DOCSTRING
-//   7. ONE_WAY_BOOL_CHECKER
+// Automated specification, vacuity fidelity, and SAIR 37-Law audit for Lean 4 source files.
+// Delegates to `LeanAbstractInterpreter.diagnoseSourceText()` (`lean_analyzer.wasm`) merged
+// with structural theorem-block analysis so all 10 proof-fidelity defect classes,
+// 4 soundness classes (`SOUND-01..04`), and 37 `SAIR-LAW-*` diagnostics are reported from a single source.
 // Strict 7-bit ASCII only (INV-001).
+
+import { LeanAbstractInterpreter, type WasmSourceDiagnostic } from "./abstract_interpreter.ts";
 
 export type ProofFidelityDefectKind =
   | "HYPOTHESIS_ECHO"
@@ -17,10 +14,14 @@ export type ProofFidelityDefectKind =
   | "NAT_SUB_UNGUARDED"
   | "UNUSED_UNDERSCORE_HYP"
   | "MISALIGNED_DOCSTRING"
-  | "ONE_WAY_BOOL_CHECKER";
+  | "ONE_WAY_BOOL_CHECKER"
+  | "OVER_CONCRETE_FIXED_ARITY"
+  | "UNANNOTATED_COLLECTION_LITERAL"
+  | "HAVE_SUBGOAL_NAT_TRUNCATION";
 
 export interface ProofFidelityDiagnostic {
   kind: ProofFidelityDefectKind;
+  code?: string;
   severity: "warning" | "error";
   line: number;
   theoremName: string;
@@ -33,6 +34,8 @@ export interface ProofFidelityAuditReport {
   boolDefsScanned: number;
   diagnostics: ProofFidelityDiagnostic[];
   countsByKind: Record<ProofFidelityDefectKind, number>;
+  wasmDiagnostics: WasmSourceDiagnostic[];
+  sairDiagnostics: WasmSourceDiagnostic[];
   clean: boolean;
 }
 
@@ -580,6 +583,9 @@ export function auditLeanProofFidelity(sourceText: string): ProofFidelityAuditRe
     UNUSED_UNDERSCORE_HYP: 0,
     MISALIGNED_DOCSTRING: 0,
     ONE_WAY_BOOL_CHECKER: 0,
+    OVER_CONCRETE_FIXED_ARITY: 0,
+    UNANNOTATED_COLLECTION_LITERAL: 0,
+    HAVE_SUBGOAL_NAT_TRUNCATION: 0,
   };
 
   const pushDiag = (d: ProofFidelityDiagnostic) => {
@@ -828,6 +834,7 @@ export function auditLeanProofFidelity(sourceText: string): ProofFidelityAuditRe
       ) {
         pushDiag({
           kind: "MISALIGNED_DOCSTRING",
+          code: "FIDELITY-06",
           severity: "warning",
           line: thm.line,
           theoremName: thm.name,
@@ -835,6 +842,126 @@ export function auditLeanProofFidelity(sourceText: string): ProofFidelityAuditRe
           remediationHint:
             "Align the docstring with the actual arithmetic lemma or strengthen the theorem statement to formalize the claimed domain property.",
         });
+      }
+    }
+
+    // 8. OVER_CONCRETE_FIXED_ARITY (FIDELITY-08)
+    const prefixGroups = new Map<string, Array<{ name: string; num: number }>>();
+    for (const b of binders) {
+      for (const nm of b.names) {
+        if (!nm || nm === "_" || nm.startsWith("_")) continue;
+        const m = nm.replace(/'+$/, "").match(/^([A-Za-z_][A-Za-z0-9_]*?)(\d+)$/);
+        if (m) {
+          const pref = m[1];
+          const num = Number.parseInt(m[2], 10);
+          const list = prefixGroups.get(pref) || [];
+          list.push({ name: nm, num });
+          prefixGroups.set(pref, list);
+        }
+      }
+    }
+    for (const [pref, items] of prefixGroups.entries()) {
+      const threshold = pref.includes("_") ? 3 : 4;
+      if (items.length >= threshold) {
+        const nums = Array.from(new Set(items.map((x) => x.num))).sort((a, b) => a - b);
+        if (nums.length >= threshold && nums.every((v, idx) => idx === 0 || v === nums[idx - 1] + 1)) {
+          pushDiag({
+            kind: "OVER_CONCRETE_FIXED_ARITY",
+            code: "FIDELITY-08",
+            severity: "warning",
+            line: thm.line,
+            theoremName: thm.name,
+            summary: `Theorem \`${thm.name}\` has ${items.length} sequential numbered scalar parameters (${items.map((i) => i.name).join(" ")}) with prefix \`${pref}\`.`,
+            remediationHint:
+              "Generalize fixed-arity scalar parameters (`a0 a1 a2 a3 ...`) to a `List` or `Fin n -> Nat` induction theorem.",
+          });
+          break;
+        }
+      }
+    }
+
+    // 9. UNANNOTATED_COLLECTION_LITERAL & 10. HAVE_SUBGOAL_NAT_TRUNCATION (ml-hilbert / BFS-Prover-V2 have-subgoal lints)
+    const natVarsForHave = new Set<string>();
+    for (const b of binders) {
+      if (/^(?:Nat|\u2115)$/.test(b.typeText.trim())) {
+        for (const nm of b.names) natVarsForHave.add(nm);
+      }
+    }
+    const priorHaveGuards: string[] = [];
+    let reportedCollInThm = false;
+    let reportedHaveSubInThm = false;
+    for (const rawLine of bodyLines) {
+      const lineNoComment = rawLine.split("--")[0].trim();
+      if (!lineNoComment.startsWith("have ")) continue;
+      const rest = lineNoComment.slice(5).trim();
+      const assignIdx = rest.indexOf(":=");
+      const lhsPart = assignIdx >= 0 ? rest.slice(0, assignIdx).trim() : rest;
+      const rhsPart = assignIdx >= 0 ? rest.slice(assignIdx + 2).trim() : "";
+      const colonIdx = lhsPart.indexOf(":");
+      const haveName = colonIdx >= 0 ? lhsPart.slice(0, colonIdx).trim() : lhsPart.trim();
+      const haveTy = colonIdx >= 0 ? lhsPart.slice(colonIdx + 1).trim() : "";
+
+      const hasExplicitCollType =
+        haveTy !== "" &&
+        haveTy !== "_" &&
+        /\b(?:Finset|Set|Multiset)\b/.test(haveTy);
+      if (!reportedCollInThm && !hasExplicitCollType) {
+        const checkTarget = haveTy === "" || haveTy === "_" ? rhsPart : haveTy;
+        const openBrace = checkTarget.indexOf("{");
+        const closeBrace = checkTarget.lastIndexOf("}");
+        if (openBrace >= 0 && openBrace < closeBrace) {
+          const inner = checkTarget.slice(openBrace + 1, closeBrace).trim();
+          const beforeBrace = checkTarget.slice(0, openBrace).trim();
+          const afterBrace = checkTarget.slice(closeBrace + 1).trim();
+          const isExplicitTyped =
+            /(?:Finset|Set)$/.test(beforeBrace) || /^:\s*(?:Finset|Set)\b/.test(afterBrace);
+          const isStructOrComp =
+            inner.includes(" with ") || inner.includes("//") || inner.includes("|") || inner.length === 0;
+          const looksLikeColl =
+            inner.includes(",") ||
+            (assignIdx >= 0 && checkTarget.startsWith("{") && !inner.includes(" ") && !inner.includes(":"));
+          if (!isExplicitTyped && !isStructOrComp && looksLikeColl) {
+            pushDiag({
+              kind: "UNANNOTATED_COLLECTION_LITERAL",
+              code: "UNANNOTATED_COLLECTION_LITERAL",
+              severity: "warning",
+              line: thm.line,
+              theoremName: thm.name,
+              summary: `Intermediate \`have ${haveName}\` in \`${thm.name}\` uses an unannotated collection literal \`{${inner}}\` (Set vs Finset coercion ambiguity).`,
+              remediationHint:
+                "Annotate the collection type explicitly (e.g., `have s : Finset Nat := {a, b}` or `({a, b} : Finset _)`).",
+            });
+            reportedCollInThm = true;
+          }
+        }
+      }
+
+      if (!reportedHaveSubInThm && haveTy && haveTy !== "_" && !/\bInt\b/.test(haveTy)) {
+        const binderGuardBlob = [
+          ...binders.map((b) => b.typeText.replace(/[()]/g, "")),
+          ...priorHaveGuards,
+        ].join(" ; ");
+        const subRe = /\b([A-Za-z_][A-Za-z0-9_']*)\s*-\s*([A-Za-z0-9_']+)\b/g;
+        let sm: RegExpExecArray | null;
+        while ((sm = subRe.exec(haveTy)) !== null) {
+          const lhs = sm[1];
+          const rhs = sm[2];
+          if (!isStandaloneNatSubMatch(haveTy, sm.index, lhs, rhs, natVarsForHave)) continue;
+          if (!isNatSubGuarded(lhs, rhs, binderGuardBlob + " ; " + haveTy)) {
+            pushDiag({
+              kind: "HAVE_SUBGOAL_NAT_TRUNCATION",
+              code: "HAVE_SUBGOAL_NAT_TRUNCATION",
+              severity: "warning",
+              line: thm.line,
+              theoremName: thm.name,
+              summary: `Intermediate \`have ${haveName} : ${haveTy}\` in \`${thm.name}\` contains unguarded Nat subtraction \`${lhs} - ${rhs}\`.`,
+              remediationHint: `Establish \`have h_le : ${rhs} <= ${lhs}\` before \`${haveName}\` or cast to \`Int\` so \`omega\`/\`linarith\` does not fail on \`Nat.sub\` truncation.`,
+            });
+            reportedHaveSubInThm = true;
+            break;
+          }
+        }
+        priorHaveGuards.push(haveTy);
       }
     }
   }
@@ -901,6 +1028,7 @@ export function auditLeanProofFidelity(sourceText: string): ProofFidelityAuditRe
       const firstThm = oneWaySoundness[0];
       pushDiag({
         kind: "ONE_WAY_BOOL_CHECKER",
+        code: "FIDELITY-07",
         severity: "warning",
         line: firstThm.line,
         theoremName: firstThm.name,
@@ -910,11 +1038,18 @@ export function auditLeanProofFidelity(sourceText: string): ProofFidelityAuditRe
     }
   }
 
+  // Delegate to WASM single-source engine (`lean_analyzer.wasm`) for 37 SAIR laws and soundness certificates
+  const interp = new LeanAbstractInterpreter();
+  const wasmDiagnostics = interp.diagnoseSourceText(sourceText, 1);
+  const sairDiagnostics = wasmDiagnostics.filter((d) => d.code.startsWith("SAIR-LAW-"));
+
   return {
     theoremsScanned: theoremBlocks.length,
     boolDefsScanned: boolDefs.size,
     diagnostics,
     countsByKind,
+    wasmDiagnostics,
+    sairDiagnostics,
     clean: diagnostics.length === 0,
   };
 }

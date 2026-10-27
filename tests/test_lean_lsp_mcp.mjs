@@ -98,14 +98,24 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     });
     assert(listRes && Array.isArray(listRes.result.tools), "tools list is array");
     const toolNames = listRes.result.tools.map(t => t.name);
-    assert.strictEqual(toolNames.length, 21, "Exposes exactly 21 tools (the consolidated 6, the recovery verb, the tranche-2 definitions, the axiom-closure audit, the diagnostics pull, the counterexample-search verb, and the .ilean declaration-reference graph)");
+    assert.strictEqual(toolNames.length, 20, "Exposes exactly 20 canonical tools (14 core + 6 SOTA engines; 7 legacy duplicate wrappers retired from tools/list)");
 
-    const expectedTools = ["lean_goal", "lean_search", "lean_blueprint", "lean_metrics", "lean_ffi", "lean_exec", "lean_resync",
-        "lean_lookup_symbol", "lean_module_hierarchy", "lean_run_code", "lean_axiom_closure", "lean_diagnostics", "lean_book_index_lookup", "lean_cross_itp_concordance",
-        "lean_proof_skeleton", "lean_blueprint_scaffold", "lean_dependency_subgraph", "lean_module_census", "lean_server_status", "lean_decl_references",
-        "lean_counterexample_search"];
+    const expectedTools = [
+        "lean_goal", "lean_search", "lean_blueprint", "lean_metrics", "lean_ffi", "lean_exec", "lean_resync",
+        "lean_lookup_symbol", "lean_module_hierarchy", "lean_axiom_closure", "lean_diagnostics",
+        "lean_server_status", "lean_decl_references", "lean_counterexample_search",
+        "lean_multi_attempt", "lean_repair_proof", "lean_minimal_hypotheses",
+        "lean_profile_proof", "lean_skill_dispatch", "lean_theorem_preflight"
+    ];
     for (const t of expectedTools) {
-        assert(toolNames.includes(t), `Includes consolidated tool: ${t}`);
+        assert(toolNames.includes(t), `Includes canonical tool: ${t}`);
+    }
+    const retiredLegacyWrappers = [
+        "lean_run_code", "lean_book_index_lookup", "lean_cross_itp_concordance",
+        "lean_proof_skeleton", "lean_blueprint_scaffold", "lean_dependency_subgraph", "lean_module_census"
+    ];
+    for (const legacy of retiredLegacyWrappers) {
+        assert(!toolNames.includes(legacy), `Retired legacy wrapper must not appear in tools/list: ${legacy}`);
     }
 
     // F3-class pin (adopted from the pi-lens #2939 slice-2 pins): the

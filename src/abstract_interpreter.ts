@@ -25,6 +25,8 @@ export function getDefaultWasmInstance(): WasmInstanceLike | null {
     const wasm = (globalThis as any).WebAssembly;
     if (typeof wasm !== "undefined") {
       const candidates = [
+        path.resolve(__dirname, "../wasm/lean_analyzer.wasm"),
+        path.resolve(__dirname, "../../wasm/lean_analyzer.wasm"),
         path.resolve(__dirname, "../data/lean_analyzer.wasm"),
         path.resolve(__dirname, "../../data/lean_analyzer.wasm"),
       ];
@@ -85,6 +87,8 @@ export type DiagnosticKind =
   | "MisalignedDocstring"
   | "OneWayBoolChecker"
   | "OverConcreteFixedArity"
+  | "UnannotatedCollectionLiteral"
+  | "HaveSubgoalNatTruncation"
   | "SairLaw01LetZetaTax"
   | "SairLaw01bDagSharing"
   | "SairLaw01cSiblingWhnfCse"
@@ -1639,6 +1643,19 @@ export class LeanAbstractInterpreter {
    */
   analyzeAltProof(goalText: string, proofText: string = ""): AltProofAnalysisReport {
     return analyzeAltProofGoalAndBlock(this, goalText, proofText);
+  }
+
+  /**
+   * Runs `lean_analyzer.wasm` (`diagnoseLeanSourceWasm`) over a Lean 4 source string
+   * and returns structured `WasmSourceDiagnostic` records covering all 4 soundness defects,
+   * 8+ proof-fidelity defects (including `OVER_CONCRETE_FIXED_ARITY`, `UNANNOTATED_COLLECTION_LITERAL`,
+   * `HAVE_SUBGOAL_NAT_TRUNCATION`), and 37 SAIR optimization laws.
+   */
+  diagnoseSourceText(
+    sourceText: string,
+    profileMode: number | boolean = 1
+  ): WasmSourceDiagnostic[] {
+    return diagnoseLeanSourceWasm(sourceText, profileMode);
   }
 }
 
