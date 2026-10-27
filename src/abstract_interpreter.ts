@@ -25,8 +25,6 @@ export function getDefaultWasmInstance(): WasmInstanceLike | null {
     const wasm = (globalThis as any).WebAssembly;
     if (typeof wasm !== "undefined") {
       const candidates = [
-        path.resolve(__dirname, "../wasm/lean_analyzer.wasm"),
-        path.resolve(__dirname, "../../wasm/lean_analyzer.wasm"),
         path.resolve(__dirname, "../data/lean_analyzer.wasm"),
         path.resolve(__dirname, "../../data/lean_analyzer.wasm"),
       ];
