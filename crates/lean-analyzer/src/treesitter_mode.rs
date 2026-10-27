@@ -156,7 +156,7 @@ impl TreeSitterCstNode {
                     let op_expr = match &op.kind {
                         CstNodeKind::Ident(id) => match id.trim() {
                             "-" | "neg" => LeanExpr::Const("Neg.neg".to_string()),
-                            "!" | "not" | "¬" => LeanExpr::Const("Bool.not".to_string()),
+                            "!" | "not" | "\u{00ac}" => LeanExpr::Const("Bool.not".to_string()),
                             other => LeanExpr::Const(Self::normalize_ident_operator(other)),
                         },
                         _ => op.to_lean_expr()?,

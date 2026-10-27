@@ -662,6 +662,7 @@ impl LeanAbstractInterpreter {
         let mut certs = Vec::new();
         let lines: Vec<&str> = source_text.lines().collect();
         let mut bool_defs: Vec<String> = Vec::new();
+        let mut nat_consts: HashMap<String, u64> = HashMap::new();
         let mut theorem_headers: Vec<(String, String, String)> = Vec::new();
 
         let mut i = 0;
@@ -671,6 +672,9 @@ impl LeanAbstractInterpreter {
                 i += 1;
                 continue;
             }
+            if let Some((cname, cval)) = Self::parse_nat_const_decl(trimmed) {
+                nat_consts.insert(cname, cval);
+            }
             if let Some(def_name) = Self::parse_bool_def_name(trimmed) {
                 bool_defs.push(def_name);
             }
@@ -678,7 +682,7 @@ impl LeanAbstractInterpreter {
                 Self::parse_computational_def_decl(&lines, i)
             {
                 if !is_noncomp && !has_csimp {
-                    Self::lint_computational_def(&def_name, &sig, &body, &mut certs);
+                    Self::lint_computational_def(&def_name, &sig, &body, &nat_consts, &mut certs);
                 }
                 i = next_i;
                 continue;
@@ -767,10 +771,94 @@ impl LeanAbstractInterpreter {
         k >= 4 && (k & (k - 1)) == 0
     }
 
+    fn parse_nat_const_decl(trimmed_line: &str) -> Option<(String, u64)> {
+        let mut rest = trimmed_line;
+        while rest.starts_with("@[") {
+            if let Some(idx) = rest.find(']') {
+                rest = rest[idx + 1..].trim_start();
+            } else {
+                break;
+            }
+        }
+        loop {
+            let mut matched = false;
+            for kw in ["private ", "protected ", "public ", "scoped ", "noncomputable "] {
+                if let Some(r) = rest.strip_prefix(kw) {
+                    rest = r.trim_start();
+                    matched = true;
+                }
+            }
+            if !matched {
+                break;
+            }
+        }
+        let after_kw = rest
+            .strip_prefix("abbrev ")
+            .or_else(|| rest.strip_prefix("def "))?;
+        let name: String = after_kw
+            .trim_start()
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '\'' || *c == '.')
+            .collect();
+        if name.is_empty() {
+            return None;
+        }
+        let (sig_part, rhs_part) = after_kw.split_once(":=")?;
+        let before_assign = sig_part[name.len()..].trim();
+        if !before_assign.is_empty()
+            && before_assign != ": Nat"
+            && before_assign != ": \u{2115}"
+        {
+            return None;
+        }
+        let rhs_clean = rhs_part
+            .split("--")
+            .next()
+            .unwrap_or(rhs_part)
+            .trim()
+            .trim_matches(|c| c == '(' || c == ')')
+            .trim();
+        if let Some((base_s, exp_s)) = rhs_clean.split_once('^') {
+            if base_s.trim() == "2" {
+                if let Ok(exp) = exp_s.trim().parse::<u32>() {
+                    if exp < 64 {
+                        return Some((name, 1u64 << exp));
+                    }
+                }
+            }
+        }
+        let val = rhs_clean.replace('_', "").parse::<u64>().ok()?;
+        Some((name, val))
+    }
+
+    fn is_top_level_decl_boundary(trimmed: &str) -> bool {
+        trimmed.starts_with("theorem ")
+            || trimmed.starts_with("lemma ")
+            || trimmed.starts_with("def ")
+            || trimmed.starts_with("abbrev ")
+            || trimmed.starts_with("noncomputable ")
+            || trimmed.starts_with("partial ")
+            || trimmed.starts_with("unsafe ")
+            || trimmed.starts_with("private ")
+            || trimmed.starts_with("protected ")
+            || trimmed.starts_with("structure ")
+            || trimmed.starts_with("inductive ")
+            || trimmed.starts_with("class ")
+            || trimmed.starts_with("instance ")
+            || trimmed.starts_with("mutual")
+            || trimmed.starts_with("namespace ")
+            || trimmed.starts_with("section ")
+            || trimmed.starts_with("@[")
+            || trimmed.starts_with("/--")
+            || trimmed.starts_with("end ")
+            || trimmed == "end"
+    }
+
     fn parse_computational_def_decl(
         lines: &[&str],
         start_idx: usize,
     ) -> Option<(String, String, String, bool, bool, usize)> {
+        let base_indent = lines[start_idx].len() - lines[start_idx].trim_start().len();
         let mut first = lines[start_idx].trim();
         let mut has_csimp = first.contains("@[csimp");
         if start_idx > 0 && lines[start_idx - 1].trim().contains("@[csimp") {
@@ -814,27 +902,34 @@ impl LeanAbstractInterpreter {
         let mut combined = String::new();
         let mut j = start_idx;
         let mut found_assign = false;
+        let mut is_pattern_match_def = false;
         while j < lines.len() {
             let ln = lines[j];
-            if j > start_idx && !ln.starts_with(' ') && !ln.starts_with('\t') && !ln.trim().is_empty() {
-                let t = ln.trim();
-                if t.starts_with("theorem ")
-                    || t.starts_with("lemma ")
-                    || t.starts_with("def ")
-                    || t.starts_with("abbrev ")
-                    || t.starts_with("noncomputable ")
-                    || t.starts_with("@[")
-                    || t.starts_with("end ")
-                {
-                    break;
-                }
+            let t = ln.trim();
+            let indent = ln.len() - ln.trim_start().len();
+            if j > start_idx && !t.is_empty() && indent <= base_indent && Self::is_top_level_decl_boundary(t) {
+                break;
             }
             let code_part = ln.split("--").next().unwrap_or(ln).trim();
             if !code_part.is_empty() {
-                if !combined.is_empty() {
-                    combined.push(' ');
+                if j > start_idx && !found_assign && code_part.starts_with("| ") {
+                    if let Some((lhs, rhs)) = code_part.split_once("=>") {
+                        combined.push_str(" := ");
+                        combined.push_str(lhs);
+                        combined.push_str(" => ");
+                        combined.push_str(rhs);
+                        found_assign = true;
+                        is_pattern_match_def = true;
+                    } else {
+                        combined.push(' ');
+                        combined.push_str(code_part);
+                    }
+                } else {
+                    if !combined.is_empty() {
+                        combined.push(' ');
+                    }
+                    combined.push_str(code_part);
                 }
-                combined.push_str(code_part);
             }
             if code_part.contains(":=") {
                 found_assign = true;
@@ -842,18 +937,14 @@ impl LeanAbstractInterpreter {
             j += 1;
             if found_assign && j < lines.len() {
                 let nxt = lines[j].trim();
-                if nxt.is_empty()
-                    || (!lines[j].starts_with(' ')
-                        && !lines[j].starts_with('\t')
-                        && (nxt.starts_with("theorem ")
-                            || nxt.starts_with("lemma ")
-                            || nxt.starts_with("def ")
-                            || nxt.starts_with("abbrev ")
-                            || nxt.starts_with("noncomputable ")
-                            || nxt.starts_with("@[")
-                            || nxt.starts_with("/--")
-                            || nxt.starts_with("--")))
-                {
+                let nxt_indent = lines[j].len() - lines[j].trim_start().len();
+                if nxt.is_empty() {
+                    if is_pattern_match_def && j + 1 < lines.len() && lines[j + 1].trim().starts_with("| ") {
+                        continue;
+                    }
+                    break;
+                }
+                if nxt_indent <= base_indent && (Self::is_top_level_decl_boundary(nxt) || nxt.starts_with("--")) {
                     break;
                 }
             }
@@ -869,10 +960,44 @@ impl LeanAbstractInterpreter {
         ))
     }
 
+    fn resolve_pow2_divisor_token(tok: &str, next_tok: Option<&str>, nat_consts: &HashMap<String, u64>) -> Option<u64> {
+        let clean = tok.trim_matches(|c| c == '(' || c == ')').replace('_', "");
+        if let Ok(k) = clean.parse::<u64>() {
+            if Self::is_power_of_two_ge_4(k) {
+                return Some(k);
+            }
+        }
+        if let Some((base_s, exp_s)) = clean.split_once('^') {
+            if base_s == "2" && !exp_s.is_empty() {
+                if let Ok(exp) = exp_s.parse::<u32>() {
+                    if (2..64).contains(&exp) {
+                        return Some(1u64 << exp);
+                    }
+                }
+            }
+        }
+        if clean == "2^" {
+            if let Some(nt) = next_tok {
+                if let Ok(exp) = nt.trim_matches(|c| c == '(' || c == ')').parse::<u32>() {
+                    if (2..64).contains(&exp) {
+                        return Some(1u64 << exp);
+                    }
+                }
+            }
+        }
+        if let Some(&val) = nat_consts.get(tok) {
+            if Self::is_power_of_two_ge_4(val) {
+                return Some(val);
+            }
+        }
+        None
+    }
+
     fn lint_computational_def(
         def_name: &str,
         _sig: &str,
         body: &str,
+        nat_consts: &HashMap<String, u64>,
         certs: &mut Vec<DiagnosticCertificate>,
     ) {
         // SAIR Law 6: KernelBrecOnTax
@@ -903,53 +1028,67 @@ impl LeanAbstractInterpreter {
             .split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == '[' || c == ']' || c == ',')
             .filter(|s| !s.is_empty())
             .collect();
-        let mut reported_pow2 = false;
         for idx in 0..tokens.len() {
             let tok = tokens[idx];
             if (tok == "/" || tok == "%") && idx + 1 < tokens.len() {
-                if let Ok(k) = tokens[idx + 1].parse::<u64>() {
-                    if Self::is_power_of_two_ge_4(k) {
-                        let shift = k.trailing_zeros();
-                        let mask = k - 1;
-                        certs.push(DiagnosticCertificate {
-                            kind: DiagnosticKind::KernelPowerOfTwoDivMod,
-                            operator: def_name.to_string(),
-                            summary: format!(
-                                "Computational def `{def_name}` uses `{tok} {k}` by literal power-of-2 >= 4 (SAIR Law 14)."
-                            ),
-                            hint: format!(
-                                "Replace `/ {k}` with bitwise shift `>>> {shift}` (`Nat.shiftRight`) or `% {k}` with bitwise mask `&&& {mask}` (`Nat.land`)."
-                            ),
-                        });
-                        reported_pow2 = true;
-                        break;
+                let next_after = if idx + 2 < tokens.len() {
+                    Some(tokens[idx + 2])
+                } else {
+                    None
+                };
+                let mut resolved = Self::resolve_pow2_divisor_token(tokens[idx + 1], next_after, nat_consts);
+                if resolved.is_none()
+                    && tokens[idx + 1] == "2"
+                    && idx + 3 < tokens.len()
+                    && tokens[idx + 2] == "^"
+                {
+                    if let Ok(exp) = tokens[idx + 3].parse::<u32>() {
+                        if (2..64).contains(&exp) {
+                            resolved = Some(1u64 << exp);
+                        }
                     }
+                }
+                if let Some(k) = resolved {
+                    let shift = k.trailing_zeros();
+                    let mask = k - 1;
+                    certs.push(DiagnosticCertificate {
+                        kind: DiagnosticKind::KernelPowerOfTwoDivMod,
+                        operator: def_name.to_string(),
+                        summary: format!(
+                            "Computational def `{def_name}` uses `{tok} {k}` by power-of-2 >= 4 (SAIR Law 14)."
+                        ),
+                        hint: format!(
+                            "Replace `/ {k}` with bitwise shift `>>> {shift}` (`Nat.shiftRight`) or `% {k}` with bitwise mask `&&& {mask}` (`Nat.land`)."
+                        ),
+                    });
+                    break;
                 }
             }
             if (tok == "Nat.div" || tok == "Nat.mod" || tok == "HDiv.hDiv" || tok == "HMod.hMod")
                 && idx + 2 < tokens.len()
             {
-                if let Ok(k) = tokens[idx + 2].parse::<u64>() {
-                    if Self::is_power_of_two_ge_4(k) {
-                        let shift = k.trailing_zeros();
-                        let mask = k - 1;
-                        certs.push(DiagnosticCertificate {
-                            kind: DiagnosticKind::KernelPowerOfTwoDivMod,
-                            operator: def_name.to_string(),
-                            summary: format!(
-                                "Computational def `{def_name}` applies `{tok}` by literal power-of-2 `{k}` >= 4 (SAIR Law 14)."
-                            ),
-                            hint: format!(
-                                "Replace `{tok} _ {k}` with `Nat.shiftRight _ {shift}` (`>>> {shift}`) or `Nat.land _ {mask}` (`&&& {mask}`)."
-                            ),
-                        });
-                        reported_pow2 = true;
-                        break;
-                    }
+                let next_after = if idx + 3 < tokens.len() {
+                    Some(tokens[idx + 3])
+                } else {
+                    None
+                };
+                if let Some(k) = Self::resolve_pow2_divisor_token(tokens[idx + 2], next_after, nat_consts) {
+                    let shift = k.trailing_zeros();
+                    let mask = k - 1;
+                    certs.push(DiagnosticCertificate {
+                        kind: DiagnosticKind::KernelPowerOfTwoDivMod,
+                        operator: def_name.to_string(),
+                        summary: format!(
+                            "Computational def `{def_name}` applies `{tok}` by power-of-2 `{k}` >= 4 (SAIR Law 14)."
+                        ),
+                        hint: format!(
+                            "Replace `{tok} _ {k}` with `Nat.shiftRight _ {shift}` (`>>> {shift}`) or `Nat.land _ {mask}` (`&&& {mask}`)."
+                        ),
+                    });
+                    break;
                 }
             }
         }
-        let _ = reported_pow2;
     }
 
     fn split_trailing_digits(name: &str) -> Option<(&str, u64)> {
@@ -999,9 +1138,11 @@ impl LeanAbstractInterpreter {
         let mut found_assign = false;
         while j < lines.len() {
             let ln = lines[j];
-            if j > start_idx && !ln.starts_with(' ') && !ln.starts_with('\t') && !ln.trim().is_empty() {
+            let base_indent = lines[start_idx].len() - lines[start_idx].trim_start().len();
+            let ln_indent = ln.len() - ln.trim_start().len();
+            if j > start_idx && !ln.trim().is_empty() && ln_indent <= base_indent {
                 let t = ln.trim();
-                if t.starts_with("theorem ") || t.starts_with("lemma ") || t.starts_with("def ") || t.starts_with("end ") {
+                if Self::is_top_level_decl_boundary(t) {
                     break;
                 }
             }
@@ -2132,6 +2273,32 @@ theorem two_params_ok (x1 x2 : Nat) : x1 + x2 = x2 + x1 := by omega
                 .any(|c| c.kind == DiagnosticKind::KernelBrecOnTax),
             "Expected KernelBrecOnTax from diagnose_expr: {:?}",
             brec_expr_certs
+        );
+
+        // 4. Edge cases: mutual ... end blocks, pattern-matching defs without `:=`, `2^k` syntax, and `abbrev` power-of-2 aliases
+        let edge_src = "abbrev radixMod : Nat := 64
+mutual
+  def mutualStepA (n : Nat) : Nat :=
+    Nat.brecOn n (fun k _ => k)
+  def mutualStepB : Nat -> Nat
+    | 0 => 0
+    | k + 1 => (k / radixMod) + (k % (2 ^ 12))
+end
+";
+        let edge_certs = interp.diagnose_source_text(edge_src);
+        assert!(
+            edge_certs
+                .iter()
+                .any(|c| c.kind == DiagnosticKind::KernelBrecOnTax && c.operator == "mutualStepA"),
+            "Expected KernelBrecOnTax on indented mutualStepA: {:?}",
+            edge_certs
+        );
+        assert!(
+            edge_certs
+                .iter()
+                .any(|c| c.kind == DiagnosticKind::KernelPowerOfTwoDivMod && c.operator == "mutualStepB"),
+            "Expected KernelPowerOfTwoDivMod on pattern-matched mutualStepB with abbrev alias: {:?}",
+            edge_certs
         );
     }
 }
