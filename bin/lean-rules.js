@@ -10,7 +10,7 @@
 // RULE_COMPILE_WARNING, never a crash.
 //
 // Usage:
-//   lean-rules [files-or-dirs...] [--rules <dir>] [--json] [--min-severity warning|error]
+//   lean-rules [files-or-dirs...] [--rules <dir>]... [--config lean-project.toml] [--json] [--min-severity warning|error]
 //   (with no positional targets, scans the current directory recursively
 //    for *.lean)
 // Exit codes: 0 = no findings at or above the severity floor, 1 = findings,
@@ -19,18 +19,20 @@
 import fs from "node:fs";
 import path from "node:path";
 import yaml from "js-yaml";
+import { parseToml, findConfig, checkArchitecture } from "./lean-architecture.mjs";
 
 const SEVERITY_ORDER = { hint: 0, info: 1, warning: 2, error: 3 };
 
 function parseArgs(argv) {
-  const opts = { targets: [], rulesDir: null, json: false, minSeverity: "warning" };
+  const opts = { targets: [], rulesDirs: [], json: false, minSeverity: "warning" };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--rules") opts.rulesDir = argv[++i];
+    if (a === "--rules") opts.rulesDirs.push(argv[++i]);
+    else if (a === "--config") opts.config = argv[++i];
     else if (a === "--json") opts.json = true;
     else if (a === "--min-severity") opts.minSeverity = argv[++i];
     else if (a === "--help" || a === "-h") {
-      console.log("usage: lean-rules [files-or-dirs...] [--rules <dir>] [--json] [--min-severity warning|error]");
+      console.log("usage: lean-rules [files-or-dirs...] [--rules <dir>]... [--config lean-project.toml] [--json] [--min-severity warning|error]");
       process.exit(0);
     } else opts.targets.push(a);
   }
@@ -161,7 +163,7 @@ function walkLean(targets) {
     const st = fs.statSync(p);
     if (st.isDirectory()) {
       for (const e of fs.readdirSync(p).sort()) {
-        if (e === "node_modules" || e === ".git" || e === "dist") continue;
+        if (e === "node_modules" || e === ".git" || e === "dist" || e === ".lake" || e === "build") continue;
         visit(path.join(p, e));
       }
     } else if (p.endsWith(".lean") || targets.includes(p)) {
@@ -175,8 +177,22 @@ function walkLean(targets) {
   return files;
 }
 
-export function runScan({ rulesDir, targets, minSeverity = "warning" }) {
-  const { rules, warnings } = loadRules(rulesDir);
+export function runScan({ rulesDir, rulesDirs, targets, minSeverity = "warning", config = null }) {
+  const dirs = rulesDirs ?? (rulesDir ? [rulesDir] : []);
+  const rules = [];
+  const warnings = [];
+  for (const d of dirs) {
+    const r = loadRules(d);
+    rules.push(...r.rules);
+    warnings.push(...r.warnings);
+  }
+  const cfgPath = config ?? findConfig(targets[0] ?? ".");
+  const cfg = cfgPath ? parseToml(fs.readFileSync(cfgPath, "utf-8")) : null;
+  const cfgDir = cfgPath ? path.dirname(cfgPath) : ".";
+  if (cfg) for (const d of cfg.rules?.extra_dirs ?? []) {
+    const full = path.resolve(cfgDir, d);
+    if (fs.existsSync(full)) { const r = loadRules(full); rules.push(...r.rules); warnings.push(...r.warnings); }
+  }
   const compileCache = new Map();
   const compiled = (pattern) => {
     if (!compileCache.has(pattern)) {
@@ -192,6 +208,12 @@ export function runScan({ rulesDir, targets, minSeverity = "warning" }) {
     const content = fs.readFileSync(file, "utf-8");
     // `scope: any` opts a rule into raw text (prose rules); default is code.
     const codeContent = maskLeanNonCode(content);
+    if (cfg) {
+      const floor = SEVERITY_ORDER[minSeverity] ?? 2;
+      for (const f of checkArchitecture(file, content, codeContent, cfg, cfgDir)) {
+        if ((SEVERITY_ORDER[f.severity] ?? 2) >= floor) findings.push({ file, ...f });
+      }
+    }
     for (const rule of rules) {
       const haystack = rule.scope === "any" ? content : codeContent;
       let matched = null;
@@ -244,8 +266,8 @@ export function runScan({ rulesDir, targets, minSeverity = "warning" }) {
 
 function main() {
   const opts = parseArgs(process.argv.slice(2));
-  const rulesDir = opts.rulesDir ?? path.join(path.dirname(new URL(import.meta.url).pathname), "..", "rules");
-  if (!fs.existsSync(rulesDir)) {
+  const rulesDirs = opts.rulesDirs.length > 0 ? opts.rulesDirs : [path.join(path.dirname(new URL(import.meta.url).pathname), "..", "rules")];
+  for (const rulesDir of rulesDirs) if (!fs.existsSync(rulesDir)) {
     console.error(`rules directory not found: ${rulesDir}`);
     process.exit(2);
   }
@@ -257,7 +279,7 @@ function main() {
     }
   }
   const { findings, warnings, compileWarnRules, ruleCount, fileCount } = runScan({
-    rulesDir, targets, minSeverity: opts.minSeverity,
+    rulesDirs, targets, minSeverity: opts.minSeverity, config: opts.config,
   });
   if (opts.json) {
     console.log(JSON.stringify({ ruleCount, fileCount, findings, warnings, compileWarnRules }, null, 2));
