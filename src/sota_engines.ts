@@ -225,7 +225,7 @@ export function tokenizeLeanCommentsAndStrings(source: string): LexerSafeTokenSp
 }
 
 const STRUCTURAL_TACTIC_HEADERS =
-  /^\s*(?:by\b|have\b|suffices\b|show\b|calc\b|induction\b|cases\b|rcases\b|obtain\b|match\b|intro\b|intros\b|rintro\b|constructor\b|refine\b|·|\u00B7|\||case\b)/;
+  /^\s*(?:by\b|have\b|suffices\b|show\b|calc\b|induction\b|cases\b|rcases\b|obtain\b|match\b|intro\b|intros\b|rintro\b|constructor\b|refine\b|\u00B7|\u22C5|\||case\b)/;
 
 /**
  * Replaces failing leaf tactic lines (given by 1-based `errorLines`) with `sorry`
@@ -277,33 +277,40 @@ export function sorrifyFailingLeafLines(
     const trimmedCode = codeChars.trim();
     if (!trimmedCode || firstCodeIdx === -1) return line;
 
-    // If it is a `have h : T := by tac` single-line leaf, replace only the RHS after `:= by`
-    const haveByMatch = line.match(/^(\s*have\b[\s\S]*?:=\s*by\s+)([^-\n]+?)(\s*(?:--.*)?)$/);
-    if (haveByMatch) {
-      replacedLines.push(lineNo);
-      return `${haveByMatch[1]}sorry${haveByMatch[3] || ""}`;
-    }
-
-    // Do not clobber theorem/lemma/def headers or multi-line structural openers ending with `:= by` or `where`
-    if (
+    // Check if the code portion contains `:= by` on a single-line `have` or `theorem`/`lemma`/`example`
+    const isHaveDecl = /^\s*have\b/.test(trimmedCode);
+    const isTopDecl =
       /^\s*(?:@\[[^\]]*\]\s*)*(?:private\s+|protected\s+|noncomputable\s+)*(?:theorem|lemma|def|example|instance|structure)\b/.test(
         trimmedCode
-      )
-    ) {
-      const oneLineThm = line.match(/^(\s*(?:theorem|lemma|example)\b[\s\S]*?:=\s*by\s+)([^-\n]+?)(\s*(?:--.*)?)$/);
-      if (oneLineThm) {
+      );
+
+    if (isHaveDecl || isTopDecl) {
+      // Find `:= by` in the code-only view and locate the corresponding position in `line`
+      const codeSlice = line.slice(0, lastCodeIdx + 1);
+      const byAssignRe = /^(\s*(?:@\[[^\]]*\]\s*)*(?:private\s+|protected\s+|noncomputable\s+)*(?:have|theorem|lemma|example)\b[\s\S]*?:=\s*by\s+)(\S[\s\S]*)$/;
+      const m = codeSlice.match(byAssignRe);
+      if (m) {
+        const trailingComment = lastCodeIdx + 1 < line.length ? line.slice(lastCodeIdx + 1) : "";
         replacedLines.push(lineNo);
-        return `${oneLineThm[1]}sorry${oneLineThm[3] || ""}`;
+        return `${m[1]}sorry${trailingComment}`;
       }
       return line;
     }
 
-    if (STRUCTURAL_TACTIC_HEADERS.test(trimmedCode) && trimmedCode.endsWith("by")) {
+    if (STRUCTURAL_TACTIC_HEADERS.test(trimmedCode) && (trimmedCode.endsWith("by") || trimmedCode.endsWith("=>"))) {
       return line;
     }
 
-    const indent = line.match(/^\s*/)?.[0] ?? "  ";
+    // Preserve bullet prefixes (`\u00B7 ` or `| tag => `) when sorrifying a branch line
+    const codeSlice = line.slice(0, lastCodeIdx + 1);
+    const bulletMatch = codeSlice.match(/^(\s*(?:\u00B7|\u22C5|\|\s*[^=>]+=>)\s*)(\S[\s\S]*)$/);
     const trailingComment = lastCodeIdx + 1 < line.length ? line.slice(lastCodeIdx + 1) : "";
+    if (bulletMatch) {
+      replacedLines.push(lineNo);
+      return `${bulletMatch[1]}sorry${trailingComment}`;
+    }
+
+    const indent = line.match(/^\s*/)?.[0] ?? "  ";
     replacedLines.push(lineNo);
     return `${indent}sorry${trailingComment}`;
   });
@@ -383,29 +390,149 @@ export function synthesizeSubLemmaFromGoal(
 
 /**
  * Question 7: Grouped-binder-aware hypothesis parser & pruning helper (`oOo0oOo/lean-lsp-mcp` + `.olean` BVar).
- * Splits `(h1 h2 : P) (h3 : Q)` into individual binder entries and can reconstruct a declaration
- * header with a candidate hypothesis removed without deleting sibling variables in a grouped binder.
+ * Supports explicit `(h1 h2 : P)`, implicit `{a b : Nat}`, strict implicit `\u2983a b : Nat\u2984`,
+ * and instance `[inst : Decidable P]` binders with arbitrary nested brackets in types,
+ * scanning only the header binder region before the top-level `:` return type separator.
  */
 export interface HypothesisBinderSlot {
   varName: string;
   typeText: string;
   groupNames: string[];
   rawBinderText: string;
+  openBracket: string;
+  closeBracket: string;
+}
+
+const BINDER_CLOSE_MAP: Record<string, string> = {
+  "(": ")",
+  "{": "}",
+  "[": "]",
+  "\u2983": "\u2984",
+};
+
+export function splitDeclarationBinderAndReturn(header: string): {
+  leadPrefix: string;
+  binderSection: string;
+  returnSection: string;
+} {
+  const leadRe =
+    /^\s*(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|public|scoped|noncomputable)\s+)*(?:theorem|lemma|def|example)\b(?:\s+[^\s({[\u2983:]+)?/;
+  const leadMatch = header.match(leadRe);
+  const leadPrefix = leadMatch ? leadMatch[0] : "";
+  const rest = header.slice(leadPrefix.length);
+
+  let depth = 0;
+  let inString = false;
+  let colonPos = -1;
+  for (let i = 0; i < rest.length; i++) {
+    const ch = rest[i];
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "(" || ch === "{" || ch === "[" || ch === "\u2983" || ch === "\u27e8") {
+      depth++;
+    } else if (ch === ")" || ch === "}" || ch === "]" || ch === "\u2984" || ch === "\u27e9") {
+      depth = Math.max(0, depth - 1);
+    } else if (ch === ":" && depth === 0) {
+      if (i + 1 < rest.length && rest[i + 1] === "=") break;
+      colonPos = i;
+      break;
+    }
+  }
+
+  if (colonPos < 0) {
+    return { leadPrefix, binderSection: rest, returnSection: "" };
+  }
+  return {
+    leadPrefix,
+    binderSection: rest.slice(0, colonPos),
+    returnSection: rest.slice(colonPos),
+  };
+}
+
+interface ScannedBinderSpan {
+  start: number;
+  end: number;
+  openBracket: string;
+  closeBracket: string;
+  names: string[];
+  typeText: string;
+  raw: string;
+}
+
+function scanBinderSpans(binderSection: string): ScannedBinderSpan[] {
+  const spans: ScannedBinderSpan[] = [];
+  let j = 0;
+  while (j < binderSection.length) {
+    const openCh = binderSection[j];
+    const closeCh = BINDER_CLOSE_MAP[openCh];
+    if (!closeCh) {
+      j++;
+      continue;
+    }
+    let depth = 1;
+    let k = j + 1;
+    let inStr = false;
+    let topColon = -1;
+    while (k < binderSection.length && depth > 0) {
+      const ch = binderSection[k];
+      if (ch === '"') {
+        inStr = !inStr;
+      } else if (!inStr) {
+        if (ch === "(" || ch === "{" || ch === "[" || ch === "\u2983") {
+          depth++;
+        } else if (ch === ")" || ch === "}" || ch === "]" || ch === "\u2984") {
+          depth--;
+          if (depth === 0) break;
+        } else if (ch === ":" && depth === 1 && topColon < 0) {
+          if (k + 1 < binderSection.length && binderSection[k + 1] === "=") {
+            k++;
+          } else {
+            topColon = k;
+          }
+        }
+      }
+      k++;
+    }
+    if (depth === 0 && topColon > j) {
+      const namesPart = binderSection.slice(j + 1, topColon).trim();
+      const typePart = binderSection.slice(topColon + 1, k).replace(/\s+/g, " ").trim();
+      const names = namesPart
+        .split(/\s+/)
+        .map((n) => n.trim())
+        .filter((tok) => /^[A-Za-z_][A-Za-z0-9_']*$/.test(tok));
+      if (names.length > 0 && typePart) {
+        spans.push({
+          start: j,
+          end: k + 1,
+          openBracket: openCh,
+          closeBracket: closeCh,
+          names,
+          typeText: typePart,
+          raw: binderSection.slice(j, k + 1),
+        });
+      }
+    }
+    j = k + 1;
+  }
+  return spans;
 }
 
 export function parseTheoremBindersForPruning(header: string): HypothesisBinderSlot[] {
+  const { binderSection } = splitDeclarationBinderAndReturn(header);
+  const spans = scanBinderSpans(binderSection);
   const slots: HypothesisBinderSlot[] = [];
-  const binderRe = /\(\s*([^:()]+?)\s*:\s*([^()]+(?:\([^()]*\)[^()]*)*)\)/g;
-  let m: RegExpExecArray | null;
-  while ((m = binderRe.exec(header)) !== null) {
-    const rawNames = m[1].trim().split(/\s+/).filter(Boolean);
-    const typeText = m[2].trim();
-    for (const v of rawNames) {
+  for (const sp of spans) {
+    for (const v of sp.names) {
       slots.push({
         varName: v,
-        typeText,
-        groupNames: rawNames,
-        rawBinderText: m[0],
+        typeText: sp.typeText,
+        groupNames: sp.names,
+        rawBinderText: sp.raw,
+        openBracket: sp.openBracket,
+        closeBracket: sp.closeBracket,
       });
     }
   }
@@ -413,17 +540,216 @@ export function parseTheoremBindersForPruning(header: string): HypothesisBinderS
 }
 
 export function removeHypothesisFromHeader(header: string, varToRemove: string): string {
-  const binderRe = /\(\s*([^:()]+?)\s*:\s*([^()]+(?:\([^()]*\)[^()]*)*)\)/g;
-  return header
-    .replace(binderRe, (full, namesPart: string, typePart: string) => {
-      const names = namesPart.trim().split(/\s+/).filter(Boolean);
-      if (!names.includes(varToRemove)) return full;
-      const remaining = names.filter((n) => n !== varToRemove);
-      if (remaining.length === 0) return "";
-      return `(${remaining.join(" ")} : ${typePart.trim()})`;
-    })
+  const { leadPrefix, binderSection, returnSection } = splitDeclarationBinderAndReturn(header);
+  const spans = scanBinderSpans(binderSection);
+  if (spans.length === 0) return header.replace(/\s+/g, " ").trim();
+
+  let outBinder = "";
+  let cursor = 0;
+  for (const sp of spans) {
+    outBinder += binderSection.slice(cursor, sp.start);
+    if (sp.names.includes(varToRemove)) {
+      const remaining = sp.names.filter((n) => n !== varToRemove);
+      if (remaining.length > 0) {
+        outBinder += `${sp.openBracket}${remaining.join(" ")} : ${sp.typeText}${sp.closeBracket}`;
+      }
+    } else {
+      outBinder += sp.raw;
+    }
+    cursor = sp.end;
+  }
+  outBinder += binderSection.slice(cursor);
+
+  return `${leadPrefix}${outBinder}${returnSection}`
     .replace(/\s{2,}/g, " ")
+    .replace(/\s+:/g, " :")
     .trim();
+}
+
+/**
+ * Extracts free identifier tokens from a Lean type expression (excluding core type/constructor keywords)
+ * so wildcard tactics (`omega`, `linarith`, `simp_all`, `aesop`, `grind`) can determine whether a
+ * propositional hypothesis shares variables with the theorem goal or used hypotheses.
+ */
+export function extractTypeIdentifiers(typeExpr: string): string[] {
+  const ignored = new Set([
+    "Nat",
+    "Int",
+    "Real",
+    "Bool",
+    "Prop",
+    "Type",
+    "Sort",
+    "True",
+    "False",
+    "And",
+    "Or",
+    "Not",
+    "Iff",
+    "Eq",
+    "Ne",
+    "LT",
+    "LE",
+    "GT",
+    "GE",
+    "Fin",
+    "List",
+    "Array",
+    "Finset",
+    "Set",
+    "Multiset",
+    "Option",
+    "Sum",
+    "Prod",
+    " Decidable",
+    "Decidable",
+    "OfNat",
+    "HAdd",
+    "HSub",
+    "HMul",
+    "HDiv",
+    "HMod",
+    "by",
+    "fun",
+    "let",
+    "have",
+    "if",
+    "then",
+    "else",
+  ]);
+  const tokens = (typeExpr || "").match(/\b[A-Za-z_][A-Za-z0-9_']*\b/g) || [];
+  return Array.from(new Set(tokens.filter((t) => !ignored.has(t))));
+}
+
+/**
+ * Synthesizes metaprogram-generated workspace symbols (`@[to_additive]`, `@[simps]`, `@[reassoc]`, `mk_iff`)
+ * from Lean source files so `lean_search(source: "workspace_symbols")` indexes generated lemmas even before
+ * an interactive LSP `workspace/symbol` session is warm.
+ */
+export function extractMetaprogramGeneratedSymbols(
+  files: Array<{ filePath: string; content: string }>,
+  query: string
+): Array<{ id: string; kind: string; file: string }> {
+  const qLower = (query || "").toLowerCase();
+  const out: Array<{ id: string; kind: string; file: string }> = [];
+
+  const attrDeclRe =
+    /@\[([^\]]*(?:to_additive|simps|reassoc)[^\]]*)\]\s*(?:(?:private|protected|public|scoped|noncomputable)\s+)*(theorem|lemma|def)\s+([A-Za-z0-9_'.]+)/g;
+  const mkIffRe = /mk_iff\s+([A-Za-z0-9_'.]+)/g;
+
+  for (const f of files) {
+    let m: RegExpExecArray | null;
+    while ((m = attrDeclRe.exec(f.content)) !== null) {
+      const attrs = m[1];
+      const baseKind = m[2];
+      const baseName = m[3];
+      const generated: Array<{ id: string; kind: string }> = [];
+
+      if (/\bsimps\b/.test(attrs)) {
+        generated.push({ id: `${baseName}_simps`, kind: "simps_lemma" });
+      }
+      if (/\breassoc\b/.test(attrs)) {
+        generated.push({ id: `${baseName}_assoc`, kind: "reassoc_lemma" });
+      }
+      if (/\bto_additive\b/.test(attrs)) {
+        const customMatch = attrs.match(/to_additive\s+([A-Za-z0-9_'.]+)/);
+        const addName = customMatch
+          ? customMatch[1]
+          : baseName
+              .replace(/\bmul\b/g, "add")
+              .replace(/\bMul\b/g, "Add")
+              .replace(/\bone\b/g, "zero")
+              .replace(/\bOne\b/g, "Zero")
+              .replace(/\binv\b/g, "neg")
+              .replace(/\bnpow\b/g, "nsmul")
+              .replace(/\bzpow\b/g, "zsmul");
+        if (addName !== baseName) {
+          generated.push({ id: addName, kind: `to_additive_${baseKind}` });
+        } else {
+          generated.push({ id: `${baseName}_add`, kind: `to_additive_${baseKind}` });
+        }
+      }
+
+      for (const g of generated) {
+        if (!qLower || g.id.toLowerCase().includes(qLower) || baseName.toLowerCase().includes(qLower)) {
+          out.push({ id: g.id, kind: g.kind, file: f.filePath });
+        }
+      }
+    }
+
+    while ((m = mkIffRe.exec(f.content)) !== null) {
+      const indName = m[1];
+      const iffName = `${indName}_iff`;
+      if (!qLower || iffName.toLowerCase().includes(qLower) || indName.toLowerCase().includes(qLower)) {
+        out.push({ id: iffName, kind: "mk_iff_lemma", file: f.filePath });
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Optional local neural/FAISS adapter hooks for Question 8 (Proposal 6):
+ *   - `LEAN_EXPLORE_DB`: queries a local `lean-explore` SQLite/FAISS index when configured.
+ *   - `LEAN_BYT5_MODEL_DIR`: queries a local `ReProver`/`LeanCopilot` ByT5 premise retriever when configured.
+ */
+export function queryOptionalNeuralPremiseAdapters(
+  query: string,
+  limit: number = 5
+): Array<{ id: string; kind: string; file: string; source: string }> {
+  const results: Array<{ id: string; kind: string; file: string; source: string }> = [];
+  const exploreDb = process.env.LEAN_EXPLORE_DB;
+  if (exploreDb && fs.existsSync(exploreDb)) {
+    try {
+      if (exploreDb.endsWith(".json")) {
+        const raw = JSON.parse(fs.readFileSync(exploreDb, "utf-8"));
+        const entries: any[] = Array.isArray(raw) ? raw : raw.declarations || [];
+        const qLower = query.toLowerCase();
+        for (const e of entries) {
+          const name = String(e.name || e.id || "");
+          if (name && name.toLowerCase().includes(qLower)) {
+            results.push({
+              id: name,
+              kind: String(e.kind || "theorem"),
+              file: String(e.file || e.module || "lean_explore_db"),
+              source: "lean-explore-db",
+            });
+            if (results.length >= limit) break;
+          }
+        }
+      }
+    } catch {
+      // ignore adapter error
+    }
+  }
+
+  const byt5Dir = process.env.LEAN_BYT5_MODEL_DIR;
+  if (byt5Dir && fs.existsSync(byt5Dir)) {
+    try {
+      const indexJson = path.join(byt5Dir, "premises.json");
+      if (fs.existsSync(indexJson)) {
+        const raw = JSON.parse(fs.readFileSync(indexJson, "utf-8"));
+        const entries: any[] = Array.isArray(raw) ? raw : raw.premises || [];
+        const qLower = query.toLowerCase();
+        for (const e of entries) {
+          const name = String(e.name || e.id || "");
+          if (name && name.toLowerCase().includes(qLower)) {
+            results.push({
+              id: name,
+              kind: String(e.kind || "premise"),
+              file: String(e.file || "byt5_premises"),
+              source: "reprover-byt5",
+            });
+            if (results.length >= limit * 2) break;
+          }
+        }
+      }
+    } catch {
+      // ignore adapter error
+    }
+  }
+
+  return results;
 }
 
 /**
@@ -546,7 +872,6 @@ export function retrieveSimilarProofsBM25(
 
   // Apply lean-explore in-pool transitive dependency boost:
   // If proof A is referenced inside another high-scoring proof B in the candidate pool, boost A's score.
-  const poolNames = new Set(scored.map((s) => s.theoremName));
   for (const item of scored) {
     let inPoolDeps = 0;
     for (const other of scored) {
@@ -557,7 +882,6 @@ export function retrieveSimilarProofsBM25(
     if (inPoolDeps > 0) {
       item.score = Number((item.score * (1 + 0.15 * inPoolDeps)).toFixed(4));
     }
-    void poolNames;
   }
 
   scored.sort((a, b) => b.score - a.score);
@@ -648,7 +972,8 @@ export const ROLE_MCP_PROFILES: Record<
 /**
  * Question 4a: `lean_skill_dispatch(skillOrQuery, role?, projectRoot?)`
  * Loads `skills/<slug>/SKILL.md`, automatically merges any local project overrides
- * (`skills-overrides/` + `subst_table.json`), and returns the role-scoped MCP allowlist.
+ * (`skills-overrides/skills/*-domain-deltas.md` + `<slug>.md` + `subst_table.json`),
+ * and returns the role-scoped MCP allowlist.
  */
 export function dispatchLeanSkill(
   projectRoot: string,
@@ -709,6 +1034,7 @@ export function dispatchLeanSkill(
 
   let substApplied = 0;
   let domainDeltasNote = "";
+  const activeOverrideFiles: string[] = [];
 
   for (const ovDir of candidateOverrideDirs) {
     if (!fs.existsSync(ovDir)) continue;
@@ -731,14 +1057,26 @@ export function dispatchLeanSkill(
     }
     try {
       const skillsSubdir = path.join(ovDir, "skills");
-      if (fs.existsSync(skillsSubdir)) {
-        const deltaFiles = fs.readdirSync(skillsSubdir).filter((f) => f.endsWith(".md"));
-        if (deltaFiles.length > 0) {
-          const deltaText = fs
-            .readFileSync(path.join(skillsSubdir, deltaFiles[0]), "utf-8")
-            .slice(0, 1200);
-          domainDeltasNote = `\n\n## Active Local Override Layer (${deltaFiles[0]})\n${deltaText}`;
+      const searchDirs = fs.existsSync(skillsSubdir) ? [skillsSubdir, ovDir] : [ovDir];
+      const mergedSections: string[] = [];
+      for (const sDir of searchDirs) {
+        const mdFiles = fs.readdirSync(sDir).filter((f) => f.endsWith(".md"));
+        // Prioritize *-domain-deltas.md and any file matching matchedSlug
+        const prioritized = mdFiles.sort((a, b) => {
+          const aPri = a.includes("domain-deltas") ? 0 : a.includes(matchedSlug) ? 1 : 2;
+          const bPri = b.includes("domain-deltas") ? 0 : b.includes(matchedSlug) ? 1 : 2;
+          return aPri - bPri || a.localeCompare(b);
+        });
+        for (const fName of prioritized.slice(0, 2)) {
+          if (activeOverrideFiles.includes(fName)) continue;
+          const deltaText = fs.readFileSync(path.join(sDir, fName), "utf-8").slice(0, 1200);
+          activeOverrideFiles.push(fName);
+          mergedSections.push(`## Active Local Override Layer (${fName})\n${deltaText}`);
         }
+        if (mergedSections.length > 0) break;
+      }
+      if (mergedSections.length > 0) {
+        domainDeltasNote = "\n\n" + mergedSections.join("\n\n");
       }
     } catch {
       // ignore
@@ -753,10 +1091,12 @@ export function dispatchLeanSkill(
     {
       skill: matchedSlug,
       sourcePath: foundSkillPath || "synthesized",
+      projectRoot,
       role: roleKey,
       allowedTools: profile.allowedTools,
       soulOverlay: profile.soulOverlay,
       substitutionsApplied: substApplied,
+      overrideFilesMerged: activeOverrideFiles,
       instructionsExcerpt: skillContent.slice(0, 2400) + domainDeltasNote,
     },
     null,
@@ -864,8 +1204,9 @@ export function routeMultiProverRequest(
 
 /**
  * Question 7: `lean_profile_proof(filePath, line?, theoremName?, topN?)`
- * Runs `lean --profile` (or static heartbeat estimation fallback when Lake is locked/unavailable)
- * on an isolated scratch copy and parses per-tactic millisecond timings and heartbeat hotspots.
+ * Runs `lean --profile` on an isolated scratch copy in `os.tmpdir()` (or static heartbeat
+ * estimation fallback when Lake is locked/unavailable) scoped to `theoremName` when provided,
+ * and parses per-tactic millisecond timings and heartbeat hotspots.
  */
 export function profileLeanProof(
   projectRoot: string,
@@ -879,7 +1220,31 @@ export function profileLeanProof(
   const content = fs.readFileSync(absFilePath, "utf-8");
   const lines = content.split(/\r?\n/);
 
-  // Identify proof lines and estimate static heartbeat weights + run `lean --profile` if fast/available
+  // Determine the line range of `theoremName` if provided
+  let scanStartIdx = 0;
+  let scanEndIdx = lines.length - 1;
+  if (theoremName && theoremName.trim()) {
+    const bare = theoremName.trim().split(".").pop() || theoremName.trim();
+    const declStartRe = new RegExp(
+      `^\\s*(?:@\\[[^\\]]*\\]\\s*)*(?:(?:private|protected|public|scoped|noncomputable)\\s+)*(?:theorem|lemma|def|example)\\s+${bare.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}\\b`
+    );
+    const nextDeclRe =
+      /^\s*(?:@\[[^\]]*\]\s*)*(?:(?:private|protected|public|scoped|noncomputable)\s+)*(?:theorem|lemma|def|example|structure|inductive|class|end|namespace)\b/;
+    for (let i = 0; i < lines.length; i++) {
+      if (declStartRe.test(lines[i])) {
+        scanStartIdx = i;
+        scanEndIdx = lines.length - 1;
+        for (let j = i + 1; j < lines.length; j++) {
+          if (lines[j] && !/^\s/.test(lines[j]) && nextDeclRe.test(lines[j])) {
+            scanEndIdx = j - 1;
+            break;
+          }
+        }
+        break;
+      }
+    }
+  }
+
   const hotspots: Array<{
     line: number;
     tactic: string;
@@ -888,7 +1253,7 @@ export function profileLeanProof(
     category: string;
   }> = [];
 
-  for (let i = 0; i < lines.length; i++) {
+  for (let i = scanStartIdx; i <= scanEndIdx; i++) {
     const trimmed = lines[i].split("--")[0].trim();
     if (!trimmed) continue;
     let hb = 0;
@@ -924,9 +1289,20 @@ export function profileLeanProof(
   }
 
   let profileRawOutput = "";
+  const parsedProfileTimings: Array<{ label: string; elapsedMs: number }> = [];
   if (process.env.LEAN_PROFILE_LIVE === "1") {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "lean-profile-"));
+    const scratchFile = path.join(tmpDir, path.basename(absFilePath));
     try {
-      const out = execSync(`lake env lean --profile "${absFilePath}"`, {
+      const targetSlice =
+        scanStartIdx > 0 || scanEndIdx < lines.length - 1
+          ? [
+              ...lines.filter((l) => /^\s*(?:import|open|variable|set_option)\b/.test(l)),
+              ...lines.slice(scanStartIdx, scanEndIdx + 1),
+            ].join("\n")
+          : content;
+      fs.writeFileSync(scratchFile, targetSlice, "utf-8");
+      const out = execSync(`lake env lean --profile "${scratchFile}"`, {
         cwd: projectRoot,
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "pipe"],
@@ -935,6 +1311,23 @@ export function profileLeanProof(
       profileRawOutput = out.slice(0, 1500);
     } catch (err: any) {
       profileRawOutput = `${err.stdout || ""}${err.stderr || ""}`.slice(0, 1500);
+    } finally {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // ignore cleanup error
+      }
+    }
+
+    // Parse Lean `--profile` lines such as `elaboration 12.4ms` or `tactic execution 4.2ms`
+    const timingRe = /([A-Za-z0-9_.\s-]+?)\s+(\d+(?:\.\d+)?)\s*(ms|s)\b/g;
+    let tm: RegExpExecArray | null;
+    while ((tm = timingRe.exec(profileRawOutput)) !== null) {
+      const rawVal = Number.parseFloat(tm[2]);
+      const ms = tm[3] === "s" ? rawVal * 1000 : rawVal;
+      if (Number.isFinite(ms)) {
+        parsedProfileTimings.push({ label: tm[1].trim(), elapsedMs: Number(ms.toFixed(2)) });
+      }
     }
   }
 
@@ -946,9 +1339,12 @@ export function profileLeanProof(
     {
       filePath: path.relative(projectRoot, absFilePath),
       theoremName: theoremName || null,
+      scopedLineRange: [scanStartIdx + 1, scanEndIdx + 1],
+      isolatedScratchCopyUsed: true,
       totalTacticStepsProfiled: hotspots.length,
       totalEstimatedHeartbeats,
       topHotspots,
+      ...(parsedProfileTimings.length > 0 ? { parsedProfileTimings } : {}),
       ...(profileRawOutput ? { leanProfileOutput: profileRawOutput } : {}),
     },
     null,
