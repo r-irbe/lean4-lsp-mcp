@@ -2196,5 +2196,80 @@ export function analyzeAltProofGoalAndBlock(
   };
 }
 
+export interface WasmSourceDiagnostic {
+  code: string;
+  severity: number;
+  range: [number, number, number, number];
+  operator: string;
+  summary: string;
+  hint: string;
+  altproofRoute?: string;
+}
 
+/**
+ * Invokes `lean_analyzer_diagnose_utf8` in `lean_analyzer.wasm` over a UTF-8 Lean 4 source buffer
+ * and parses the returned compact TSV records into structured `WasmSourceDiagnostic` items.
+ */
+export function diagnoseLeanSourceWasm(
+  source: string,
+  profileMode: number | boolean = 1,
+  wasmInstance?: WasmInstanceLike | null
+): WasmSourceDiagnostic[] {
+  const inst = wasmInstance ?? getDefaultWasmInstance();
+  const ex = inst?.exports;
+  if (
+    !ex ||
+    typeof ex.lean_analyzer_diagnose_utf8 !== "function" ||
+    typeof ex.lean_analyzer_result_ptr !== "function" ||
+    !ex.memory
+  ) {
+    return [];
+  }
+  const encoded = new TextEncoder().encode(source);
+  if (encoded.length === 0) return [];
+  const ptr =
+    typeof ex.lean_analyzer_alloc === "function"
+      ? (ex.lean_analyzer_alloc(encoded.length) >>> 0)
+      : typeof ex.lean_analyzer_get_scratch_ptr === "function"
+        ? (ex.lean_analyzer_get_scratch_ptr() >>> 0)
+        : 0;
+  if (ptr === 0) return [];
+  const memBytes = new Uint8Array(ex.memory.buffer);
+  if (ptr + encoded.length > memBytes.length) return [];
+  memBytes.set(encoded, ptr);
+
+  const modeNum = typeof profileMode === "boolean" ? (profileMode ? 1 : 0) : (profileMode >>> 0);
+  const writtenLen = ex.lean_analyzer_diagnose_utf8(ptr, encoded.length, modeNum) >>> 0;
+  if (writtenLen === 0) return [];
+
+  const resPtr = ex.lean_analyzer_result_ptr() >>> 0;
+  const outBytes = new Uint8Array(ex.memory.buffer, resPtr, writtenLen);
+  const tsv = new TextDecoder("utf-8").decode(outBytes);
+  const results: WasmSourceDiagnostic[] = [];
+  for (const line of tsv.split("\n")) {
+    if (!line.trim()) continue;
+    const cols = line.split("\t");
+    if (cols.length < 9) continue;
+    const code = cols[0] ?? "";
+    const severity = Number(cols[1] ?? "2") || 2;
+    const sr = Number(cols[2] ?? "0") || 0;
+    const sc = Number(cols[3] ?? "0") || 0;
+    const er = Number(cols[4] ?? "0") || 0;
+    const ec = Number(cols[5] ?? "0") || 0;
+    const operator = cols[6] ?? "";
+    const summary = cols[7] ?? "";
+    const hint = cols[8] ?? "";
+    const altproofRoute = cols[9] && cols[9].trim().length > 0 ? cols[9].trim() : undefined;
+    results.push({
+      code,
+      severity,
+      range: [sr, sc, er, ec],
+      operator,
+      summary,
+      hint,
+      ...(altproofRoute ? { altproofRoute } : {}),
+    });
+  }
+  return results;
+}
 

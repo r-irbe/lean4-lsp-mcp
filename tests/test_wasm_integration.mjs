@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { LeanAbstractInterpreter } from "../dist/abstract_interpreter.js";
+import { LeanAbstractInterpreter, diagnoseLeanSourceWasm } from "../dist/abstract_interpreter.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -133,6 +133,15 @@ assert.ok(wasmWeighted !== null);
 assert.deepEqual(wasmWeighted[0], { min: 11, max: 50 });
 assert.deepEqual(wasmWeighted[1], { min: 0, max: 26 });
 console.log("  [PASS] WASM-Accelerated Wave 9 Weighted Linear / Karr Affine Conservation");
+
+
+const fullBufDiags = diagnoseLeanSourceWasm(
+  "def fastDiv (x : Nat) : Nat := x / 64\ntheorem refl_thm (x : Nat) : x = x := by rfl\n",
+  1
+);
+assert.ok(fullBufDiags.some((d) => d.code === "SAIR-LAW-14"), "Expected SAIR-LAW-14 from diagnoseLeanSourceWasm");
+assert.ok(fullBufDiags.some((d) => d.code === "FIDELITY-02"), "Expected FIDELITY-02 from diagnoseLeanSourceWasm");
+console.log("  [PASS] WASM Full-Buffer UTF-8 Source Diagnostics (lean_analyzer_diagnose_utf8)");
 
 console.log("All Real Lean WASM Engine Integration tests passed 100% cleanly!");
 
