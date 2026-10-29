@@ -11,7 +11,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { execSync, spawnSync } from "node:child_process";
+import { execFileSync, execSync, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { LeanAbstractInterpreter } from "./abstract_interpreter.ts";
 import { auditLeanProofFidelity } from "./proof_fidelity_audit.ts";
@@ -988,16 +988,30 @@ export function dispatchLeanSkill(
   const candidateSkillRoots = [
     path.join(projectRoot, "skills/skills"),
     path.join(projectRoot, "skills"),
+    path.join(projectRoot, "vendor/proof-skills/skills"),
     path.resolve(projectRoot, "docs/lean/skills/skills"),
     path.join(os.homedir(), ".gemini/config/plugins/proof-skills/skills"),
     path.join(os.homedir(), ".claude/skills"),
   ];
 
-  // Look for local override layers in the project tree
+  // Look for local override layers in the project tree (including nested docs/*/lean/ layouts)
   const candidateOverrideDirs = [
     path.join(projectRoot, "skills-overrides"),
     path.resolve(projectRoot, "../skills-overrides"),
   ];
+  const docsRoot = path.join(projectRoot, "docs");
+  if (fs.existsSync(docsRoot)) {
+    try {
+      for (const ent of fs.readdirSync(docsRoot, { withFileTypes: true })) {
+        if (ent.isDirectory()) {
+          candidateSkillRoots.push(path.join(docsRoot, ent.name, "lean/skills/skills"));
+          candidateOverrideDirs.push(path.join(docsRoot, ent.name, "lean/skills-overrides"));
+        }
+      }
+    } catch {
+      // ignore unreadable docs dir
+    }
+  }
 
   let foundSkillPath: string | null = null;
   let matchedSlug = query;
@@ -1042,12 +1056,19 @@ export function dispatchLeanSkill(
     if (fs.existsSync(substPath)) {
       try {
         const substJson = JSON.parse(fs.readFileSync(substPath, "utf-8"));
-        const table = substJson.substitutions || substJson;
-        if (table && typeof table === "object") {
-          for (const [k, v] of Object.entries(table)) {
-            if (typeof v === "string" && skillContent.includes(k)) {
-              skillContent = skillContent.split(k).join(v);
-              substApplied++;
+        const tables = [
+          substJson.substitutions,
+          substJson.path_substitutions,
+          substJson.domain_mappings,
+          substJson.substitutions ? null : substJson,
+        ].filter(Boolean);
+        for (const table of tables) {
+          if (table && typeof table === "object") {
+            for (const [k, v] of Object.entries(table)) {
+              if (typeof v === "string" && skillContent.includes(k)) {
+                skillContent = skillContent.split(k).join(v);
+                substApplied++;
+              }
             }
           }
         }
@@ -1295,14 +1316,11 @@ export function profileLeanProof(
     const scratchFile = path.join(tmpDir, path.basename(absFilePath));
     try {
       const targetSlice =
-        scanStartIdx > 0 || scanEndIdx < lines.length - 1
-          ? [
-              ...lines.filter((l) => /^\s*(?:import|open|variable|set_option)\b/.test(l)),
-              ...lines.slice(scanStartIdx, scanEndIdx + 1),
-            ].join("\n")
+        scanEndIdx < lines.length - 1
+          ? lines.slice(0, scanEndIdx + 1).join("\n")
           : content;
       fs.writeFileSync(scratchFile, targetSlice, "utf-8");
-      const out = execSync(`lake env lean --profile "${scratchFile}"`, {
+      const out = execFileSync("lake", ["env", "lean", "--profile", scratchFile], {
         cwd: projectRoot,
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "pipe"],
@@ -1379,9 +1397,32 @@ export function buildTheoremPreflightStatic(
     }
   }
   const altProof = interp.analyzeAltProof(declSlice, declSlice);
+  const corpusDocs: Array<{ filePath: string; content: string }> = [
+    { filePath: path.relative(projectRoot, absFilePath), content },
+  ];
+  const parentDir = path.dirname(absFilePath);
+  if (fs.existsSync(parentDir)) {
+    try {
+      const siblings = fs
+        .readdirSync(parentDir)
+        .filter((f) => f.endsWith(".lean"))
+        .slice(0, 20);
+      for (const sib of siblings) {
+        const sibAbs = path.join(parentDir, sib);
+        if (sibAbs !== absFilePath && fs.existsSync(sibAbs)) {
+          corpusDocs.push({
+            filePath: path.relative(projectRoot, sibAbs),
+            content: fs.readFileSync(sibAbs, "utf-8"),
+          });
+        }
+      }
+    } catch {
+      // ignore unreadable sibling files
+    }
+  }
   const similarProofs = retrieveSimilarProofsBM25(
     `${theoremName} ${declSlice}`,
-    [{ filePath: path.relative(projectRoot, absFilePath), content }],
+    corpusDocs,
     5
   );
 

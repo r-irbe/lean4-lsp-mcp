@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { LeanAbstractInterpreter, diagnoseLeanSourceWasm } from "../dist/abstract_interpreter.js";
+import { LeanAbstractInterpreter, diagnoseLeanSourceWasm } from "../src/abstract_interpreter.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

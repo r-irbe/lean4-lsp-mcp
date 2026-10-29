@@ -28,6 +28,15 @@ export interface SectionRecord {
   bookKey: string;
   level: number;
   title: string;
+  leittext?: string;
+  page?: number;
+}
+
+export interface ConcordanceRecord {
+  conceptId: string;
+  prover: string;
+  tactic: string;
+  syntax: string;
 }
 
 export interface ConceptRecord {
@@ -129,6 +138,7 @@ export class KuzuKnowledgeGraph {
   public books: Map<string, BookRecord> = new Map();
   public sections: Map<string, SectionRecord> = new Map();
   public concepts: Map<string, ConceptRecord> = new Map();
+  public concordances: ConcordanceRecord[] = [];
   public zettels: Map<string, ZettelRecord> = new Map();
   public bookSections: Map<string, string[]> = new Map();
   private loaded: boolean = false;
@@ -324,11 +334,13 @@ export class KuzuKnowledgeGraph {
           const id = parts[0].trim();
           const bookKey = parts[1].trim();
           const isNumericThird = /^-?\d+$/.test(parts[2].trim());
-          const level = isNumericThird
+          const page = isNumericThird
             ? (parseInt(parts[2].trim(), 10) || 0)
             : (parts[4] ? (parseInt(parts[4].trim(), 10) || 0) : 0);
+          const level = isNumericThird ? page : 1;
           const title = isNumericThird ? parts[3].trim() : parts[2].trim();
-          this.sections.set(id, { id, bookKey, level, title });
+          const leittext = isNumericThird ? parts[3].trim() : (parts[3] ? parts[3].trim() : "");
+          this.sections.set(id, { id, bookKey, level, title, leittext, page });
           if (!this.bookSections.has(bookKey)) {
             this.bookSections.set(bookKey, []);
           }
@@ -390,6 +402,30 @@ export class KuzuKnowledgeGraph {
         // Zettel.csv optional
       }
 
+      // Try reading Concordance.csv from zip if present
+      try {
+        const concCsv = execFileSync("unzip", ["-p", this.kzPath, "Concordance.csv"], {
+          encoding: "utf-8",
+          maxBuffer: 10 * 1024 * 1024,
+          stdio: ["ignore", "pipe", "ignore"],
+        });
+        for (const line of concCsv.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          const parts = this.parseCsvLine(trimmed);
+          if (parts.length >= 3 && parts[0] !== "concept_id") {
+            this.concordances.push({
+              conceptId: parts[0].trim(),
+              prover: parts[1].trim(),
+              tactic: parts[2].trim(),
+              syntax: parts[3] ? parts[3].trim() : "",
+            });
+          }
+        }
+      } catch {
+        // Concordance.csv optional
+      }
+
       this.loaded = true;
       return true;
     } catch {
@@ -398,7 +434,7 @@ export class KuzuKnowledgeGraph {
   }
 
   /**
-   * Sub-millisecond keyword search across all 1,759 book sections.
+   * Sub-millisecond keyword search across all book sections (including leittext).
    */
   public search(query: string, limit: number = 10): KuzuSearchResult[] {
     if (!this.loaded) {
@@ -413,7 +449,7 @@ export class KuzuKnowledgeGraph {
     const results: KuzuSearchResult[] = [];
 
     for (const [id, section] of this.sections.entries()) {
-      const text = `${id} ${section.bookKey} ${section.title}`.toLowerCase();
+      const text = `${id} ${section.bookKey} ${section.title} ${section.leittext || ""}`.toLowerCase();
       let matchCount = 0;
       for (const term of terms) {
         if (text.includes(term)) {
@@ -574,7 +610,12 @@ export class KuzuKnowledgeGraph {
     for (let i = 0; i < line.length; i++) {
       const char = line[i];
       if (char === '"') {
-        inQuotes = !inQuotes;
+        if (inQuotes && i + 1 < line.length && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = !inQuotes;
+        }
       } else if (char === "," && !inQuotes) {
         result.push(current);
         current = "";
