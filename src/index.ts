@@ -185,6 +185,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
             "reservoir",
             "book",
             "concordance",
+            "handbook",
             "symbol",
             "graph",
             "local",
@@ -4205,6 +4206,82 @@ export class McpServer {
     return this.lakeManager;
   }
 
+  private handbookTablesCache: { tablePath: string; data: any } | null = null;
+
+  /**
+   * Load handbook-tables.v1.json (the pi-lens vendored handbook asset, mirrored
+   * under data/itp-ontology to avoid a divergent second copy). Cached per
+   * resolved path; null when the file is absent or unreadable.
+   */
+  private loadHandbookTables(): any | null {
+    const candidates = [
+      path.resolve(__dirname, "../data/itp-ontology/handbook-tables.v1.json"),
+      path.resolve(__dirname, "../../data/itp-ontology/handbook-tables.v1.json"),
+      path.resolve(process.cwd(), "data/itp-ontology/handbook-tables.v1.json"),
+    ];
+    const tablePath = candidates.find((p) => fs.existsSync(p));
+    if (!tablePath) return null;
+    if (this.handbookTablesCache && this.handbookTablesCache.tablePath === tablePath) {
+      return this.handbookTablesCache.data;
+    }
+    try {
+      const data = JSON.parse(fs.readFileSync(tablePath, "utf-8"));
+      this.handbookTablesCache = { tablePath, data };
+      return data;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Search the vendored handbook tables (intent_phrasebook, error_to_fix,
+   * goal_shape_templates). `book` filters by handbook id substring, matching
+   * the source='book' corpus filter convention.
+   */
+  private searchHandbookTables(query: string, opts: { book?: string; limit?: number } = {}): string {
+    const q = query.trim().toLowerCase();
+    if (!q) throw new Error("Missing required argument: 'query'");
+    const bookFilter = opts.book ? opts.book.trim().toLowerCase() : undefined;
+    const limit = Math.max(1, Number(opts.limit ?? 10));
+    const data = this.loadHandbookTables();
+    if (!data) {
+      return "Handbook tables unavailable (data/itp-ontology/handbook-tables.v1.json not found).";
+    }
+    const matches: string[] = [];
+    const rowMatches = (row: any, fields: string[]) =>
+      (!bookFilter || String(row.handbook || "").toLowerCase().includes(bookFilter)) &&
+      fields.some((f) => String(row[f] || "").toLowerCase().includes(q));
+    for (const row of (Array.isArray(data.intent_phrasebook) ? data.intent_phrasebook : []) as any[]) {
+      if (matches.length >= limit) break;
+      if (rowMatches(row, ["intent", "tactic_or_idiom", "notes"])) {
+        matches.push(
+          `- [intent_phrasebook:${row.handbook}] ${row.intent} -> ${row.tactic_or_idiom}` +
+          (row.notes ? ` (${row.notes})` : "")
+        );
+      }
+    }
+    for (const row of (Array.isArray(data.error_to_fix) ? data.error_to_fix : []) as any[]) {
+      if (matches.length >= limit) break;
+      if (rowMatches(row, ["error_pattern", "cause", "fix"])) {
+        matches.push(
+          `- [error_to_fix:${row.handbook}] ${row.error_pattern}\n    cause: ${row.cause}\n    fix: ${row.fix}`
+        );
+      }
+    }
+    for (const row of (Array.isArray(data.goal_shape_templates) ? data.goal_shape_templates : []) as any[]) {
+      if (matches.length >= limit) break;
+      if (rowMatches(row, ["goal_shape", "route_or_concordance", "template"])) {
+        matches.push(
+          `- [goal_shape_templates:${row.handbook}] ${row.goal_shape}\n    template: ${row.template}` +
+          (row.route_or_concordance ? ` (${row.route_or_concordance})` : "")
+        );
+      }
+    }
+    return matches.length
+      ? `Handbook table matches for "${q}":\n` + matches.join("\n")
+      : `No handbook table matches for "${q}".`;
+  }
+
   public async handleMessage(req: any): Promise<McpResponse | null> {
     if (!req || typeof req !== "object") return null;
     const { id, method, params } = req;
@@ -4821,6 +4898,11 @@ export class McpServer {
             source_prover: args.source_prover,
             target_prover: args.target_prover ?? args.prover,
           }));
+        } else if (source === "handbook") {
+          return formatWithDetail(await this.searchHandbookTables(String(query), {
+            book: args.book ? String(args.book) : undefined,
+            limit,
+          }));
         } else if (source === "symbol") {
           return formatWithDetail(await this.executeTool("lean_lookup_symbol", { symbol: query }));
         } else if (source === "graph") {
@@ -5262,6 +5344,25 @@ export class McpServer {
                   }
                 }
               } catch { /* skip */ }
+            }
+          }
+
+          // 3b. Fallback: handbook intent phrasebook / error-to-fix rows
+          // (pi-lens handbook-tables.v1.json) - cross-prover idioms that have
+          // no canonical concordance mechanism entry yet.
+          const handbook = this.loadHandbookTables();
+          if (handbook) {
+            for (const row of (Array.isArray(handbook.intent_phrasebook) ? handbook.intent_phrasebook : []) as any[]) {
+              const hay = `${row.intent} ${row.tactic_or_idiom} ${row.notes}`.toLowerCase();
+              if (hay.includes(concept)) {
+                lines.push(`- [handbook:${row.handbook}] ${row.intent} -> ${row.tactic_or_idiom}${row.notes ? ` (${row.notes})` : ""}`);
+              }
+            }
+            for (const row of (Array.isArray(handbook.error_to_fix) ? handbook.error_to_fix : []) as any[]) {
+              const hay = `${row.error_pattern} ${row.cause} ${row.fix}`.toLowerCase();
+              if (hay.includes(concept)) {
+                lines.push(`- [handbook:${row.handbook}] error: ${row.error_pattern} | fix: ${row.fix}`);
+              }
             }
           }
         }

@@ -90,7 +90,7 @@ See [`instructions.md`](./instructions.md) for full copy-paste examples and para
 | `lean_decl_references` | `symbol` | `direction` (`"uses" \| "usedBy" \| "both"`), `limit` (default `50`) |
 | `lean_module_hierarchy` | `moduleName` | `direction` (`"imports" \| "importedBy" \| "both"`), `transitive` (bool), `maxDepth` |
 | `lean_dependency_subgraph` | `moduleName` | `maxDepth` (default `5`), `format` (`"mermaid" \| "dot" \| "json"`) |
-| `lean_search` | `query` | `source` (`"code" \| "loogle" \| "ontology" \| "arxiv" \| "datasets" \| "reservoir" \| "book" \| "concordance" \| "symbol" \| "graph"`), `limit`, `prover`, `book` |
+| `lean_search` | `query` | `source` (`"code" \| "loogle" \| "ontology" \| "arxiv" \| "datasets" \| "reservoir" \| "book" \| "handbook" \| "concordance" \| "symbol" \| "graph"`), `limit`, `prover`, `book` |
 | `lean_book_index_lookup` | `term` (alias `query`) | `book` (corpus substring), `prover` (`"lean4" \| "coq" \| "isabelle" \| "hol_light"`) |
 | `lean_cross_itp_concordance` | `concept` (alias `query`) | `source_prover`, `target_prover` |
 | `lean_metrics` | `target` | `action` (`"census" \| "hierarchy" \| "subgraph" \| "bigraph" \| "axiom_audit" \| "altproof"`), `format`, `goal`, `proof` |

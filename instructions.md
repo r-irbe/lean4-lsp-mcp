@@ -17,7 +17,7 @@
 | Find where a theorem/def/structure is defined (file & line) | `lean_lookup_symbol` | < 5 ms | **No** (reads `.ilean` cache) |
 | Find what constants a declaration uses or what uses it | `lean_decl_references` | < 5 ms | **No** (reads `.ilean` cache) |
 | Check module imports or reverse `importedBy` blast radius | `lean_module_hierarchy` or `lean_metrics` (`action: "hierarchy"`) | < 5 ms | **No** (reads `.ilean` cache) |
-| Search local declarations, Loogle, LeanSearch, Reservoir, arXiv, or ITP Ontology | `lean_search` (`source: "code" | "loogle" | "ontology" | "reservoir" | "arxiv" | "book" | "concordance" | "graph"`) | < 20 ms (local) | **No** |
+| Search local declarations, Loogle, LeanSearch, Reservoir, arXiv, or ITP Ontology | `lean_search` (`source: "code" | "loogle" | "ontology" | "reservoir" | "arxiv" | "book" | "handbook" | "concordance" | "graph"`) | < 20 ms (local) | **No** |
 | Look up a concept in author-curated textbook indexes (Cousot, Pierce SF, Chlipala CPDT, Nipkow, Harrison, etc.) | `lean_book_index_lookup` | < 10 ms | **No** |
 | Translate a proof concept or tactic across Lean 4, Coq/Rocq, Isabelle, HOL Light, Agda | `lean_cross_itp_concordance` | < 10 ms | **No** |
 | Verify a theorem depends only on standard axioms (`propext`, `Classical.choice`, `Quot.sound`) | `lean_axiom_closure` (single symbol) or `lean_metrics` (`action: "axiom_audit"`, directory/file) | ~1-3 s / < 50 ms | **No** |
@@ -150,7 +150,7 @@ Renders the import subgraph around a module in Mermaid, DOT, or JSON.
 Unified multi-source search dispatcher.
 - **Required**: `query` (string).
 - **Optional**:
-  - `source` (`"code" | "loogle" | "ontology" | "arxiv" | "datasets" | "reservoir" | "book" | "concordance" | "symbol" | "graph" | "local"`, default `"code"`)
+  - `source` (`"code" | "loogle" | "ontology" | "arxiv" | "datasets" | "reservoir" | "book" | "handbook" | "concordance" | "symbol" | "graph" | "local"`, default `"code"`)
   - `limit` (integer, default `10`)
   - `prover` (string, e.g. `"lean4"`, `"coq"`, `"isabelle"`, `"hol_light"`)
   - `source_prover` (string), `target_prover` (string)
