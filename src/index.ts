@@ -5,7 +5,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
-import { execSync, spawn, ChildProcess } from "node:child_process";
+import { execSync, execFileSync, spawn, ChildProcess } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { KuzuKnowledgeGraph } from "./kuzu_graph.ts";
 import { createHash } from "node:crypto";
@@ -15,6 +15,14 @@ import { BoundedCache } from "./bounded_cache.ts";
 import {
   planLeanInvocation,
   resolveProjectRoot,
+  isLakeRoot,
+  leanEnvironmentFingerprint,
+  leanInvocationEnv,
+  explainLeanVersion,
+  validateLeanContext,
+  LEAN_CONTEXT_SCHEMA,
+  type LeanContext,
+  type LeanInvocation,
   explainLeanFailure,
   LAKE_ROOT_MARKERS,
   type ProjectRootResolution,
@@ -23,6 +31,19 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function leanContextUnavailable(invocation: LeanInvocation): string {
+  if (!invocation.context) return "";
+  try {
+    const output = execFileSync(invocation.command, ["--version"], {
+      cwd: invocation.cwd, env: leanInvocationEnv(invocation), encoding: "utf8",
+      timeout: 2000, maxBuffer: 65536, stdio: ["ignore", "pipe", "ignore"],
+    });
+    return explainLeanVersion(output, invocation.context);
+  } catch {
+    return `environment_unavailable: cannot verify installed Lean ${invocation.context.targetVersion}; select an available exact compiler`;
+  }
+}
+
 import { LeanAbstractInterpreter } from "./abstract_interpreter.ts";
 export * from "./abstract_interpreter.ts";
 import { auditLeanProofFidelity, type ProofFidelityDiagnostic } from "./proof_fidelity_audit.ts";
@@ -30,7 +51,6 @@ export * from "./proof_fidelity_audit.ts";
 import {
   lspRequestTimeoutMs,
   computeGoalShapeHash,
-  shiftBaselineKeys,
   filterAttemptDiagnostics,
   buildAnnotatedErrorSpan,
   synthesizeApolloDiagnosticHint,
@@ -279,6 +299,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         },
         externName: { type: "string", description: "Optional Lean @[extern] identifier or C function name" },
         cHeaderPath: { type: "string", description: "Optional path to C header to inspect" },
+        context: LEAN_CONTEXT_SCHEMA,
       },
     },
     annotations: {
@@ -292,6 +313,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       type: "object",
       properties: {
         code: { type: "string", description: "Lean 4 code to execute" },
+        context: LEAN_CONTEXT_SCHEMA,
         timeoutMs: { type: "integer", description: "Execution timeout in milliseconds (default: 15000)" },
       },
       required: ["code"],
@@ -1544,23 +1566,25 @@ export interface FFIBidirectionalReport {
 }
 
 export class LeanSysrootBridge {
-  private static cachedPrefix: string | null = null;
-
-  public static getPrefix(): string | null {
-    if (!this.cachedPrefix) {
-      try {
-        const out = execSync("lean --print-prefix", { encoding: "utf-8" }).trim();
-        this.cachedPrefix = out;
-      } catch {
-        return null;
-      }
+  public static getPrefix(projectRoot?: string, context?: LeanContext): string | null {
+    if (!projectRoot) return null;
+    const invocation = context ? planLeanInvocation(projectRoot, ["--print-prefix"], context)
+      : { command: "lean", args: ["--print-prefix"], cwd: projectRoot, via: "bare" as const };
+    if (leanContextUnavailable(invocation)) return null;
+    try {
+      const prefix = execFileSync(invocation.command, invocation.args, {
+        cwd: invocation.cwd, env: leanInvocationEnv(invocation), encoding: "utf-8", timeout: 2000,
+        stdio: ["ignore", "pipe", "ignore"], maxBuffer: 65536,
+      }).trim();
+      return path.isAbsolute(prefix) ? prefix : null;
+    } catch {
+      return null;
     }
-    return this.cachedPrefix;
   }
 
-  public static getIncludeFlags(): string[] {
-    const prefix = this.getPrefix();
-    if (!prefix) return [];
+  public static getIncludeFlags(projectRoot?: string, context?: LeanContext): string[] {
+    const prefix = this.getPrefix(projectRoot, context);
+    if (!prefix || !fs.existsSync(path.join(prefix, "include", "lean", "lean.h"))) return [];
 
     const includeDir = path.join(prefix, "include");
     const clangDir = path.join(includeDir, "clang");
@@ -1575,7 +1599,7 @@ export class LeanSysrootBridge {
     return flags;
   }
 
-  public static resolveSymbol(projectRoot: string, symbol: string): FFIBidirectionalReport {
+  public static resolveSymbol(projectRoot: string, symbol: string, context?: LeanContext): FFIBidirectionalReport {
     const leanToC: FFISymbolMatch[] = [];
     const cToLean: FFISymbolMatch[] = [];
     const sysrootMatches: FFISymbolMatch[] = [];
@@ -1636,7 +1660,7 @@ export class LeanSysrootBridge {
     };
     scanFiles(projectRoot);
 
-    const prefix = this.getPrefix();
+    const prefix = this.getPrefix(projectRoot, context);
     if (prefix) {
       const leanInc = path.join(prefix, "include", "lean");
       if (fs.existsSync(leanInc)) {
@@ -1722,12 +1746,13 @@ export class LeanSysrootBridge {
     projectRoot: string,
     externName?: string,
     action: string = "inspect_env",
-    cHeaderPath?: string
+    cHeaderPath?: string,
+    context?: LeanContext
   ): string {
     const act = String(action || "inspect_env").toLowerCase();
 
     if (act === "resolve_symbol" && externName) {
-      const res = this.resolveSymbol(projectRoot, externName);
+      const res = this.resolveSymbol(projectRoot, externName, context);
       const lines: string[] = [
         `=== Bidirectional C FFI Resolution for '${externName}' ===`,
         `\n[Lean -> C External Declarations] (${res.leanToC.length} matches):`,
@@ -1758,11 +1783,11 @@ export class LeanSysrootBridge {
       return this.verifyHeaders(projectRoot, cHeaderPath);
     }
 
-    const flags = this.getIncludeFlags();
-    const prefix = this.getPrefix();
+    const flags = this.getIncludeFlags(projectRoot, context);
+    const prefix = this.getPrefix(projectRoot, context);
     const lines: string[] = [
       "=== Lean 4 C FFI Environment ===",
-      `Toolchain Prefix: ${prefix || "(not detected)"}`,
+      `Toolchain Prefix: ${prefix || "(unavailable: select an installed Lean toolchain for this project root)"}`,
       `Sysroot Include Flags: ${flags.length > 0 ? flags.join(" ") : "(none)"}`,
     ];
 
@@ -1773,7 +1798,7 @@ export class LeanSysrootBridge {
     }
 
     if (externName) {
-      const res = this.resolveSymbol(projectRoot, externName);
+      const res = this.resolveSymbol(projectRoot, externName, context);
       lines.push(`\nInspecting symbol: '${externName}'`);
       if (res.leanToC.length > 0) {
         lines.push(`Found Lean declarations (${res.leanToC.length}):`);
@@ -2432,6 +2457,8 @@ export interface TrackedFileWorker {
 export interface FileWorkerSession {
   child: ChildProcess;
   leanRoot: string;
+  environmentFingerprint: string;
+  generation: number;
   nextId: number;
   pendingRequests: Map<number, { resolve: (val: any) => void; reject: (err: any) => void }>;
   openFiles: Map<string, TrackedFileWorker>;
@@ -2473,33 +2500,29 @@ export class FileWorkerManager {
   private warmedRoots = new Set<string>();
   private shmRing: SharedMemorySnapshotRing | null = null;
   private sessions: Map<string, FileWorkerSession> = new Map();
+  private nextSessionGeneration = 1;
   private reaperTimer: NodeJS.Timeout | null = null;
   private readonly idleFileTimeoutMs: number = 60000;
   private readonly idleSessionTimeoutMs: number = 120000;
   private readonly memoryCeilingKb: number = 1048576; // 1 GB RSS ceiling
 
-  constructor(projectRoot: string) {
+  private leanContext?: LeanContext;
+
+  /** Only trusted hosts may admit context; never derive it from project files. */
+  public setLeanContext(context?: LeanContext): void {
+    this.leanContext = context === undefined ? undefined : validateLeanContext(context);
+  }
+
+  constructor(projectRoot: string, context?: LeanContext) {
     this.projectRoot = path.resolve(projectRoot);
+    this.setLeanContext(context);
     this.startLifecycleReaper();
     this.initShmRing();
   }
 
   public findLeanRoot(targetFile: string): string {
-    let curr = path.dirname(path.resolve(targetFile));
-    while (curr !== path.dirname(curr)) {
-      if (
-        fs.existsSync(path.join(curr, "lakefile.lean")) ||
-        fs.existsSync(path.join(curr, "lakefile.toml")) ||
-        fs.existsSync(path.join(curr, "lean-toolchain"))
-      ) {
-        return curr;
-      }
-      if (path.resolve(curr) === path.resolve(this.projectRoot)) {
-        break;
-      }
-      curr = path.dirname(curr);
-    }
-    return this.projectRoot;
+    const resolved = resolveProjectRoot(path.dirname(path.resolve(targetFile)), {}, this.projectRoot);
+    return resolved.source === "none" ? this.projectRoot : resolved.root;
   }
 
 
@@ -2574,15 +2597,6 @@ export class FileWorkerManager {
 
   private async ensureSession(leanRoot: string): Promise<FileWorkerSession> {
     let session = this.sessions.get(leanRoot);
-    if (session && session.child && session.child.exitCode === null) {
-      session.lastActiveMs = Date.now();
-      return session;
-    }
-
-    if (session) {
-      this.disposeSession(leanRoot);
-    }
-
     const useDirect = process.env.LEAN_SERVE_DIRECT === "1";
     let brokerScript: string | null = null;
     if (!useDirect) {
@@ -2614,24 +2628,39 @@ export class FileWorkerManager {
     const useAnalyzerLsp =
       process.env.LEAN_ANALYZER_LSP === "1" || (lakeLocked && analyzerBin !== null);
 
-    const child = useAnalyzerLsp && analyzerBin
-      ? spawn(analyzerBin, ["lsp", "--mode=auto"], {
-          cwd: leanRoot,
-          stdio: ["pipe", "pipe", "ignore"],
-        })
-      : brokerScript
-      ? spawn("python3", [brokerScript, "attach", "--root", leanRoot], {
-          cwd: leanRoot,
-          stdio: ["pipe", "pipe", "ignore"],
-        })
-      : spawn("lake", ["serve"], {
-          cwd: leanRoot,
-          stdio: ["pipe", "pipe", "ignore"],
-        });
+    if (lakeLocked && !analyzerBin) {
+      throw new Error("environment_unavailable: Lake workspace is locked and no lock-safe analyzer is available");
+    }
+    if (!this.leanContext && !useAnalyzerLsp && !isLakeRoot(leanRoot)) {
+      throw new Error("environment_unavailable: standalone Lean LSP requires a trusted exact compiler and explicitly admitted module roots; supply LeanContext or use a Lake project");
+    }
+    if (this.leanContext && useAnalyzerLsp) {
+      throw new Error("environment_unavailable: analyzer mode cannot certify the admitted exact compiler; release the build lock or use an explicitly supported analyzer context");
+    }
+    const explicit = this.leanContext ? planLeanInvocation(leanRoot, ["--server"], this.leanContext) : undefined;
+    const command = explicit?.command ?? (useAnalyzerLsp && analyzerBin ? analyzerBin : brokerScript ? "python3" : "lake");
+    const args = explicit?.args ?? (useAnalyzerLsp && analyzerBin ? ["lsp", "--mode=auto"]
+      : brokerScript ? [brokerScript, "attach", "--root", leanRoot] : ["serve"]);
+    const environmentFingerprint = leanEnvironmentFingerprint(leanRoot, command, args, process.env, explicit?.context);
+    if (session?.child?.exitCode === null && session.environmentFingerprint === environmentFingerprint) {
+      session.lastActiveMs = Date.now();
+      return session;
+    }
+    if (session) this.disposeSession(leanRoot);
+    const unavailable = explicit ? leanContextUnavailable(explicit) : "";
+    if (unavailable) throw new Error(unavailable);
+
+    const child = spawn(command, args, {
+      cwd: leanRoot,
+      ...(explicit ? { env: leanInvocationEnv(explicit) } : {}),
+      stdio: ["pipe", "pipe", "ignore"],
+    });
 
     session = {
       child,
       leanRoot,
+      environmentFingerprint,
+      generation: this.nextSessionGeneration++,
       nextId: 1,
       pendingRequests: new Map(),
       openFiles: new Map(),
@@ -2666,7 +2695,7 @@ export class FileWorkerManager {
 
     session.child.on("error", () => {});
     session.child.on("exit", () => {
-      this.sessions.delete(leanRoot);
+      if (this.sessions.get(leanRoot) === session) this.sessions.delete(leanRoot);
     });
 
     this.sessions.set(leanRoot, session);
@@ -2696,6 +2725,7 @@ export class FileWorkerManager {
     session: FileWorkerSession,
     parsed: any
   ): void {
+    if (this.sessions.get(session.leanRoot) !== session) return;
     if (parsed?.id !== undefined && session.pendingRequests.has(parsed.id)) {
       const handler = session.pendingRequests.get(parsed.id)!;
       session.pendingRequests.delete(parsed.id);
@@ -2943,7 +2973,7 @@ export class FileWorkerManager {
       const r = this.projectRootResolution;
       lines.push(`projectRoot source: ${r.source}${r.marker ? ` (marker ${r.marker})` : ""}`);
     }
-    const invocation = planLeanInvocation(this.projectRoot, ["--stdin"]);
+    const invocation = planLeanInvocation(this.projectRoot, ["--stdin"], this.leanContext);
     lines.push(`stdin invocation: ${invocation.command} ${invocation.args.join(" ")} (cwd ${invocation.cwd}, via ${invocation.via})`);
     if (invocation.via === "bare") {
       lines.push(`root markers: none of ${LAKE_ROOT_MARKERS.join(", ")} found; set LEAN_PROJECT_ROOT to a Lake project root for project imports`);
@@ -2956,7 +2986,7 @@ export class FileWorkerManager {
       openFiles += session.openFiles.size;
       const rss = this.getProcessRssKb(session.child.pid);
       totalRssKb += rss;
-      lines.push(`  session ${root}: ${session.openFiles.size} open file(s), server RSS ${rss} kB, idle ${Math.round((Date.now() - session.lastActiveMs) / 1000)}s`);
+      lines.push(`  session ${root}: ${session.openFiles.size} open file(s), server RSS ${rss} kB, idle ${Math.round((Date.now() - session.lastActiveMs) / 1000)}s, environment: ${session.environmentFingerprint}`);
     }
     lines.push(`total open files: ${openFiles}`);
     lines.push(`total server RSS: ${totalRssKb} kB`);
@@ -2987,7 +3017,7 @@ export class FileWorkerManager {
       // Single-flight (pi-lens port): the key carries the synced file's
       // version+hash so a post-edit request never shares a stale flight.
       const fileInfo = session.openFiles.get(absPath);
-      const flightKey = `${absPath}|${line}|${col}|${fileInfo?.version}|${fileInfo?.hash}|${JSON.stringify(filterOpts)}`;
+      const flightKey = `${session.generation}|${absPath}|${line}|${col}|${fileInfo?.version}|${fileInfo?.hash}|${JSON.stringify(filterOpts)}`;
       return await this.goalFlight.run(flightKey, async () => {
         const uri = this.syncDocument(session, absPath);
 
@@ -2999,6 +3029,7 @@ export class FileWorkerManager {
           },
         });
 
+        if (this.sessions.get(leanRoot) !== session) throw new Error("environment_unavailable: Lean session was replaced during the goal request");
         const goalText = res?.rendered || (Array.isArray(res?.goals) ? res.goals.join("\n\n") : "");
         if (filterOpts) {
           return filterGoalText(goalText, filterOpts);
@@ -3083,7 +3114,7 @@ export class FileWorkerManager {
     try {
       const session = await this.ensureSession(leanRoot);
       const fileInfo = session.openFiles.get(absPath);
-      const flightKey = `${absPath}|term|${line}|${col}|${fileInfo?.version}|${fileInfo?.hash}`;
+      const flightKey = `${session.generation}|${absPath}|term|${line}|${col}|${fileInfo?.version}|${fileInfo?.hash}`;
       return await this.goalFlight.run(flightKey, async () => {
         const uri = this.syncDocument(session, absPath);
 
@@ -3095,6 +3126,7 @@ export class FileWorkerManager {
           },
         });
 
+        if (this.sessions.get(leanRoot) !== session) throw new Error("environment_unavailable: Lean session was replaced during the term request");
         const goalText = res?.rendered || res?.goal || "";
         return formatGoalAsMarkdown(goalText);
       });
@@ -3122,6 +3154,7 @@ export class FileWorkerManager {
       const uri = this.syncDocument(session, absPath);
       const deadline = startedAt + Math.max(250, maxWaitMs);
       let entry = session.diagnostics.get(uri);
+      const currentSession = () => this.sessions.get(leanRoot) === session;
       const analysisComplete = () => {
         const progress = session.progress?.get(uri);
         return (
@@ -3132,7 +3165,7 @@ export class FileWorkerManager {
           entry.ts >= startedAt
         );
       };
-      while (!analysisComplete() && Date.now() < deadline) {
+      while (currentSession() && !analysisComplete() && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 50));
         entry = session.diagnostics.get(uri);
         if (analysisComplete()) {
@@ -3141,6 +3174,7 @@ export class FileWorkerManager {
           break;
         }
       }
+      if (!currentSession()) return "analysis_incomplete: Lean environment was replaced during analysis; re-run diagnostics in the current context (NOT a clean result)";
       const sevName = (s: number) => (s === 1 ? "error" : s === 2 ? "warning" : s === 3 ? "info" : "hint");
       const formatDiagnosticLines = (diagList: any[], limit: number) =>
         diagList.slice(0, limit).map((d: any) => {
@@ -3827,6 +3861,10 @@ export class FileWorkerManager {
       } catch {
         // the reaper race: the child may already be dead; deletion below is the source of truth
       }
+      for (const request of session.pendingRequests?.values() ?? []) request.reject(new Error("Lean environment session retired"));
+      session.pendingRequests?.clear();
+      session.diagnostics?.clear();
+      this.warmedRoots.delete(leanRoot);
       this.sessions.delete(leanRoot);
     }
   }
@@ -4177,12 +4215,26 @@ export class McpServer {
   // only a never-settling child can trip it (the M10 guard shape).
   private counterexampleFlight = createSingleFlight<string>({ settleBudgetMs: 125000 });
 
-  constructor(projectRoot: string = process.cwd()) {
+  private readonly leanContext?: LeanContext;
+
+  constructor(projectRoot: string = process.cwd(), context?: LeanContext) {
     this.projectRoot = projectRoot;
+    this.leanContext = context === undefined ? undefined : validateLeanContext(context);
     this.ileanIndex = new Lean4IleanIndex(projectRoot);
     this.ileanIndex.refresh();
-    this.lakeManager = new LakeServerManager(projectRoot);
+    this.lakeManager = new LakeServerManager(projectRoot, this.leanContext);
     this.kuzuGraph = new KuzuKnowledgeGraph(undefined, { workspaceRoot: projectRoot });
+  }
+
+  /** Inspection cannot grant the executable-selection privilege of lean_exec. */
+  private resolveFfiContext(value: unknown): LeanContext | undefined {
+    if (value === undefined) return this.leanContext;
+    if (!this.leanContext) throw new Error("environment_unavailable: FFI executable context requires trusted host constructor admission before any probe");
+    const context = validateLeanContext(value);
+    if (JSON.stringify(context) !== JSON.stringify(this.leanContext)) {
+      throw new Error("environment_unavailable: FFI context does not match trusted host admission");
+    }
+    return this.leanContext;
   }
 
   /** Root provenance travels with the file worker, which serves the status verb. */
@@ -4618,12 +4670,13 @@ export class McpServer {
         const externName = args.externName || args.symbol;
         const action = args.action || "inspect_env";
         const cHeaderPath = args.cHeaderPath;
-        return LeanSysrootBridge.inspectFFI(this.projectRoot, externName, action, cHeaderPath);
+        const context = this.resolveFfiContext(args.context);
+        return LeanSysrootBridge.inspectFFI(this.projectRoot, externName, action, cHeaderPath, context);
       }
       case "lean_run_code": {
         const code = args.code;
         if (!code) throw new Error("Missing required argument: 'code'");
-        return this.runLeanStdin(code);
+        return this.runLeanStdin(code, args.context === undefined ? this.leanContext : validateLeanContext(args.context));
       }
 
       case "lean_axiom_closure": {
@@ -6600,8 +6653,9 @@ export class McpServer {
       case "lean_ffi": {
         const action = String(args.action || "inspect_env").toLowerCase();
         if (action === "sysroot") {
-          const flags = LeanSysrootBridge.getIncludeFlags();
-          return `Lean Sysroot Include Flags:\n${flags.join(" ")}`;
+          const context = this.resolveFfiContext(args.context);
+          const flags = LeanSysrootBridge.getIncludeFlags(this.projectRoot, context);
+          return `Lean Sysroot Include Flags:\n${flags.length ? flags.join(" ") : "environment_unavailable: select an installed Lean toolchain with runtime headers for this project root"}`;
         }
         return await this.executeTool("lean_c_ffi_inspect", args);
       }
@@ -6945,12 +6999,16 @@ export class McpServer {
    * modules resolve; the failure text carries a [hint] when the error is an
    * environment error (`unknown module prefix`, `unknown package`).
    */
-  private runLeanStdin(code: string): string {
-    const invocation = planLeanInvocation(this.projectRoot, ["--stdin"]);
+  private runLeanStdin(code: string, context: LeanContext | undefined = this.leanContext): string {
+    const invocation = planLeanInvocation(this.projectRoot, ["--stdin"], context);
+    const unavailable = leanContextUnavailable(invocation);
+    if (unavailable) return unavailable;
     try {
-      const out = execSync(`${invocation.command} ${invocation.args.join(" ")}`, {
+      const out = execFileSync(invocation.command, invocation.args, {
         input: code,
         cwd: invocation.cwd,
+        env: leanInvocationEnv(invocation),
+        maxBuffer: 1024 * 1024,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
         timeout: 15000,

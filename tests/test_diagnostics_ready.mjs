@@ -18,6 +18,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
 import { FileWorkerManager } from "../src/index.ts";
+import { leanEnvironmentFingerprint } from "../src/project_root.ts";
 
 console.log("=== Testing lean_diagnostics readiness ===");
 
@@ -35,6 +36,7 @@ function makeManager() {
   const session = {
     child,
     leanRoot: root,
+    environmentFingerprint: leanEnvironmentFingerprint(root, "lake", ["serve"]),
     nextId: 1,
     pendingRequests: new Map(),
     openFiles: new Map(),

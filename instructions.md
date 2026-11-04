@@ -91,13 +91,22 @@ Synthesizes and executes a Plausible property test in an isolated scratch direct
   ```
 
 #### `lean_exec` (and legacy alias `lean_run_code`)
-Runs standalone Lean 4 code via `lake env lean --stdin` without creating temporary files.
+Runs Lean 4 code through an argument-vector invocation without creating temporary files: `lake env lean --stdin` for a Lake root, otherwise the explicitly admitted compiler.
 - **Required**: `code` (string).
-- **Optional**: `timeoutMs` (integer, default `15000`).
+- **Optional**: `timeoutMs` (integer, default `15000`), `context` (trusted exact compiler context; see below).
 - **Example**:
   ```json
   {"code": "import Mathlib.Data.Nat.Basic\n#check Nat.sub_add_cancel"}
   ```
+
+#### Explicit exact compiler context (experimental)
+`lean_exec` and `lean_ffi` accept optional `context`:
+```json
+{"compilerPath":"/absolute/installed/toolchain/bin/lean","targetVersion":"4.35.0","moduleRoots":["/absolute/admitted/modules"]}
+```
+For read-only `lean_ffi` (including legacy FFI aliases), a request context is accepted only when it exactly matches the context admitted by the embedding host through `new McpServer(projectRoot, context)`. Without that host admission, request-selected executable paths are refused **before any version probe**. Supplying a path named `lean` is not host admission. `lean_exec` is a separate execution-capability tool: authorized execution callers can supply its context without granting that selection privilege to inspection callers. Context is never automatically loaded from project files. Only these three fields are accepted: no arbitrary command, args, or environment. The executable and module directories must exist. Compiler paths whose realpath differs from their normalized absolute spelling (including `lean` → `lean-real` symlinks or parent-directory indirection) are explicitly unsupported: admit a direct installed `lean` binary. This avoids silently changing argv0-dependent shim semantics and makes validation idempotent; not every elan launcher path is supported. The exact version is probed before source checking; a mismatch is `environment_unavailable`, not a source diagnostic. Module roots replace inherited `LEAN_PATH` (an empty array admits no extra module roots). A markerless standalone file needs an explicit module root; neither its directory name nor global search paths declare a target.
+
+Without context, existing Lake/toolchain-pin behavior remains; root discovery uses the nearest Lake or `lean-toolchain` marker consistently. Worker sessions include pin content and host-admitted context in their identity; changing either replaces the session and rejects retired replies. An embedding host can set worker context through an exported manager instance: `manager.setLeanContext(context)` (or `new FileWorkerManager(projectRoot, context)`). This prototype does **not** add context arguments to `lean_diagnostics`/`lean_goal`, nor does an exec/FFI request reconfigure worker sessions. Runtime-header inspection is resolved per invocation, never from a process-global compiler-prefix cache. This does not certify compatibility against a target that was never declared, build imports automatically, or relax workspace build locks/analyzer routing.
 
 #### `lean_resync` & `lean_server_status`
 - `lean_resync`: `{"filePath": "MyProject/QualityGates.lean"}`: forces disk re-read and `textDocument/didChange` bump when goals look stale after external edits.

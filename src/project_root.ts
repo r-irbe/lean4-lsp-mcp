@@ -10,6 +10,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createHash } from "node:crypto";
 
 /** Files/dirs that mark a directory as a Lake project root. */
 export const LAKE_ROOT_MARKERS = [
@@ -49,11 +50,12 @@ export function isLakeRoot(dir: string): boolean {
   return findMarker(dir, LAKE_ROOT_MARKERS) !== "";
 }
 
-function walkUp(start: string, markers: readonly string[]): { dir: string; marker: string } | null {
+function walkUp(start: string, markers: readonly string[], ceiling?: string): { dir: string; marker: string } | null {
   let curr = path.resolve(start);
   while (true) {
     const marker = findMarker(curr, markers);
     if (marker) return { dir: curr, marker };
+    if (ceiling && curr === path.resolve(ceiling)) return null;
     const parent = path.dirname(curr);
     if (parent === curr) return null;
     curr = parent;
@@ -63,15 +65,16 @@ function walkUp(start: string, markers: readonly string[]): { dir: string; marke
 /**
  * Resolve the project root to serve.
  *
- * Precedence: `LEAN_PROJECT_ROOT` (absolutised, must exist) -> cwd when it is a
- * Lake root -> nearest Lake root above cwd -> nearest `lean-toolchain` above cwd
- * -> cwd unchanged. The last case is deliberately *not* redirected to any other
+ * Precedence: `LEAN_PROJECT_ROOT` (absolutised, must exist) -> nearest Lean
+ * boundary (Lake marker or toolchain pin) -> cwd unchanged. A nested pin is a
+ * boundary: an outer Lake environment must not silently select its compiler. The last case is deliberately *not* redirected to any other
  * directory: a wrong root silently points every tool at another project's build
  * tree, which is harder to debug than an honest empty project.
  */
 export function resolveProjectRoot(
   cwd: string,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  ceiling?: string
 ): ProjectRootResolution {
   const configured = (env.LEAN_PROJECT_ROOT || "").trim();
   if (configured) {
@@ -82,26 +85,105 @@ export function resolveProjectRoot(
   }
 
   const start = path.resolve(cwd);
-  const ownMarker = findMarker(start, LAKE_ROOT_MARKERS);
-  if (ownMarker) return { root: start, source: "cwd", marker: ownMarker };
-
-  const lakeAncestor = walkUp(start, LAKE_ROOT_MARKERS);
-  if (lakeAncestor) return { root: lakeAncestor.dir, source: "ancestor", marker: lakeAncestor.marker };
-
-  const toolchainAncestor = walkUp(start, TOOLCHAIN_MARKERS);
-  if (toolchainAncestor) {
-    return { root: toolchainAncestor.dir, source: "toolchain-ancestor", marker: toolchainAncestor.marker };
+  const nearest = walkUp(start, [...LAKE_ROOT_MARKERS, ...TOOLCHAIN_MARKERS], ceiling);
+  if (nearest) {
+    const source = nearest.marker === "lean-toolchain" ? "toolchain-ancestor"
+      : nearest.dir === start ? "cwd" : "ancestor";
+    return { root: nearest.dir, source, marker: nearest.marker };
   }
 
   return { root: start, source: "none", marker: "" };
+}
+
+/** Worker identity includes the pin's contents, not just its directory/name. */
+export function leanEnvironmentFingerprint(
+  root: string,
+  command: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+  context?: LeanContext
+): string {
+  const pin = walkUp(root, TOOLCHAIN_MARKERS);
+  let toolchain = "";
+  try { toolchain = pin ? fs.readFileSync(path.join(pin.dir, pin.marker), "utf8") : ""; }
+  catch { toolchain = "unreadable"; }
+  return createHash("sha256").update(JSON.stringify({
+    root: path.resolve(root), command, args, pin: pin?.dir, toolchain, context,
+    compiler: context ? fs.statSync(context.compilerPath, { bigint: true }).mtimeNs.toString() : undefined,
+    // Implicit invocations still depend on these inherited selection inputs.
+    path: context ? undefined : env.PATH,
+    elan: context ? undefined : env.ELAN_TOOLCHAIN,
+    modules: context ? context.moduleRoots : env.LEAN_PATH,
+  })).digest("hex");
+}
+
+/** Explicit host/exec-caller admission, never loaded implicitly from a project. */
+export interface LeanContext {
+  readonly compilerPath: string;
+  readonly targetVersion: string;
+  readonly moduleRoots: readonly string[];
+}
+
+export const LEAN_CONTEXT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    compilerPath: { type: "string", description: "Trusted absolute path to an installed lean executable" },
+    targetVersion: { type: "string", description: "Exact Lean version, e.g. 4.35.0 or 4.36.0-rc1" },
+    moduleRoots: { type: "array", maxItems: 32, items: { type: "string" }, description: "Explicitly admitted absolute module directories; replaces inherited LEAN_PATH" },
+  },
+  required: ["compilerPath", "targetVersion", "moduleRoots"],
+} as const;
+
+export function validateLeanContext(value: unknown): LeanContext {
+  const fail = (reason: string): never => { throw new Error(`Invalid Lean context: ${reason}`); };
+  if (!value || typeof value !== "object" || Array.isArray(value)) return fail("expected an object");
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).some((key) => !["compilerPath", "targetVersion", "moduleRoots"].includes(key))) {
+    return fail("only compilerPath, targetVersion and moduleRoots are admitted");
+  }
+  const absolutePath = (input: unknown): input is string =>
+    typeof input === "string" && input.length <= 4096 && !/[\0\r\n]/.test(input) && path.isAbsolute(input);
+  if (!absolutePath(record.compilerPath) || !/^lean(?:\.exe)?$/i.test(path.basename(record.compilerPath))) {
+    return fail("compilerPath must name an absolute lean executable");
+  }
+  if (typeof record.targetVersion !== "string" || !/^4\.\d+\.\d+(?:-[a-z]+\d+)?$/.test(record.targetVersion) || record.targetVersion.length > 64) {
+    return fail("targetVersion must be an exact Lean 4 version");
+  }
+  if (!Array.isArray(record.moduleRoots) || record.moduleRoots.length > 32 ||
+      record.moduleRoots.some((root) => !absolutePath(root) || root.includes(path.delimiter))) {
+    return fail("moduleRoots must be at most 32 absolute search-path-safe directories");
+  }
+  try {
+    if (!fs.statSync(record.compilerPath).isFile()) return fail("compilerPath is not a file");
+    fs.accessSync(record.compilerPath, fs.constants.X_OK);
+    const compilerPath = fs.realpathSync(record.compilerPath);
+    if (compilerPath !== path.resolve(record.compilerPath)) return fail("compiler symlink paths unsupported; admit a direct installed lean binary without argv0-dependent indirection");
+    const moduleRoots = record.moduleRoots.map((root: string) => {
+      if (!fs.statSync(root).isDirectory()) return fail("module root is not a directory");
+      const resolved = fs.realpathSync(root);
+      if (resolved.includes(path.delimiter)) return fail("canonical module root contains a search-path delimiter");
+      return resolved;
+    });
+    return Object.freeze({
+      compilerPath,
+      targetVersion: record.targetVersion,
+      moduleRoots: Object.freeze(moduleRoots),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("Invalid Lean context:")) throw error;
+    return fail("compiler or module root is unavailable; admit existing installed paths");
+  }
 }
 
 export interface LeanInvocation {
   command: string;
   args: string[];
   cwd: string;
-  /** "lake": `lake env lean ...` inside a Lake root; "bare": project-less `lean`. */
-  via: "lake" | "bare";
+  /** Explicit contexts use only the admitted compiler and module roots. */
+  via: "lake" | "bare" | "explicit";
+  context?: LeanContext;
+  env?: { LEAN_PATH: string };
 }
 
 /**
@@ -111,12 +193,34 @@ export interface LeanInvocation {
  * pinned toolchain, and project `leanOptions`. A bare `lean` only sees the
  * toolchain's own library, so `import Spec` fails with `unknown module prefix`.
  */
-export function planLeanInvocation(root: string, leanArgs: string[]): LeanInvocation {
+export function planLeanInvocation(root: string, leanArgs: string[], trustedContext?: LeanContext): LeanInvocation {
   const cwd = path.resolve(root);
+  if (trustedContext) {
+    const context = validateLeanContext(trustedContext);
+    return { command: context.compilerPath, args: leanArgs, cwd, via: "explicit", context,
+      env: { LEAN_PATH: context.moduleRoots.join(path.delimiter) } };
+  }
   if (isLakeRoot(cwd)) {
     return { command: "lake", args: ["env", "lean", ...leanArgs], cwd, via: "lake" };
   }
   return { command: "lean", args: leanArgs, cwd, via: "bare" };
+}
+
+/** Fixed selection overrides only; no caller-supplied arbitrary environment. */
+export function leanInvocationEnv(invocation: LeanInvocation, inherited: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  if (!invocation.context) return inherited;
+  const env: NodeJS.ProcessEnv = { ...inherited, ...invocation.env };
+  delete env.LEAN_SYSROOT;
+  delete env.LEAN_SRC_PATH;
+  delete env.ELAN_TOOLCHAIN;
+  return env;
+}
+
+/** Version evidence is a separate environment verdict, never a source verdict. */
+export function explainLeanVersion(output: string, context: LeanContext): string {
+  const observed = /\bversion\s+(4\.\d+\.\d+(?:-[a-z]+\d+)?)(?=[,\s)]|$)/.exec(output)?.[1];
+  return observed === context.targetVersion ? ""
+    : `environment_unavailable: declared Lean ${context.targetVersion}, observed ${observed || "unrecognized version"}; select the exact installed compiler before checking source`;
 }
 
 const MODULE_PREFIX_RE = /unknown module prefix '([^']+)'/;
@@ -136,10 +240,14 @@ export function explainLeanFailure(output: string, invocation: LeanInvocation): 
       "",
       `[hint] module '${prefixed[1]}' is not on the search path of this invocation.`,
       `       ran: ${invocation.command} ${invocation.args.join(" ")} (cwd ${invocation.cwd}, via ${invocation.via}).`,
-      invocation.via === "lake"
+      invocation.via === "explicit"
+        ? `       Check the module name and compatible .olean files in the explicitly admitted module roots: ${invocation.context!.moduleRoots.join(", ") || "(none)"}.`
+        : invocation.via === "lake"
         ? "       The root is a Lake project, so check the module name and that `lake build` has produced its .olean."
-        : "       No lakefile.lean / lakefile.toml / lake-manifest.json found in the root: project modules cannot be imported.",
-      "       Set LEAN_PROJECT_ROOT to the Lake project root (the dir holding lakefile.lean or lakefile.toml).",
+        : "       No lakefile.lean / lakefile.toml / lake-manifest.json found in the root: project modules cannot be imported without an explicit admitted context.",
+      invocation.via === "explicit"
+        ? "       This is a search-path/artifact failure, not proof that the source is invalid for another target."
+        : "       Set LEAN_PROJECT_ROOT to the Lake project root (the dir holding lakefile.lean or lakefile.toml), or supply a trusted exact Lean context.",
     ].join("\n");
   }
   const pkg = UNKNOWN_PACKAGE_RE.exec(output);
