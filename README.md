@@ -57,6 +57,8 @@ If your IDE launches MCP servers from outside your Lean repository, set `"LEAN_P
 
 ## Adapt to Your Use Case (Customer Journeys)
 
+![How lean4-lsp-mcp Replaces Slow lake build Loops With Instant Proof Feedback](docs/assets/mechanics.png)
+
 <details open>
 <summary><b>1. Interactive Theorem Proving -- Inspect Goals & Fix Errors Without Rebuilding</b></summary>
 
