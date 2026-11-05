@@ -1,114 +1,29 @@
-# lean-lsp-mcp: Standalone Lean 4 & C FFI Model Context Protocol Server
+# `lean4-lsp-mcp`
 
-`lean-lsp-mcp` is an open-source, standalone Model Context Protocol (MCP) server
-providing AI coding agents (Claude Code, Cursor, Windsurf, Zed, Antigravity) with
-high-performance tools for Lean 4 formal verification, offline navigation, and C FFI
-inspection.
+**Give AI coding agents instant Lean 4 proof goals, sub-5ms symbol navigation, and automatic counterexample checks without waiting on full project rebuilds.**
 
-NB! Still pre-alpha!
+`lean4-lsp-mcp` (published on npm as `lean4-lsp-mcp` / `lean-lsp-mcp`) is a standalone *Model Context Protocol (MCP)*[^mcp] server that connects AI coding agents (Claude Code, Cursor, Windsurf, Zed, and Antigravity) directly to your Lean 4 proof environment and C FFI headers.
 
----
-
-## Install
-
-From npm (published bin `lean-lsp-mcp` / `lean4-lsp-mcp`):
-
-```bash
-npx lean4-lsp-mcp
-# or
-npm install -g lean4-lsp-mcp
-lean-lsp-mcp
-```
-
-From a clone:
-
-```bash
-git clone https://github.com/r-irbe/lean4-lsp-mcp.git
-cd lean4-lsp-mcp
-npm install
-npm run build
-node dist/index.js
-```
-
-The server speaks MCP over stdio. Point your Lean 4 project at the process
-working directory (or set `LEAN_PROJECT_ROOT`); `elan` / `lake` should be on `PATH`.
+![lean4-lsp-mcp Architecture and Customer Journeys](docs/assets/overview.png)
 
 ---
 
-## 1. Key Capabilities (21 MCP Tools)
+## Why Use `lean4-lsp-mcp`? (What Problem Does It Solve?)
 
-1. **Interactive Proof State & AltProof Advisor (`lean_goal`)**: Queries `$/lean/plainGoal` (`target: "tactic"` or `"filtered"`), `$/lean/plainTermGoal` (`target: "term"`), or the static/hybrid AltProof tactic & route advisor (`target: "altproof"`) via persistent `lake serve` broker sessions.
-2. **Live Diagnostics & Abstract Interpretation (`lean_diagnostics`)**: Streams compiler elaboration errors, warnings, unsolved goals, and static abstract-interpretation certificates (`NatSubTruncation` on `a - b` without `b <= a`, `NatDivModByZero` on `/ d` without `0 < d`).
-3. **Counterexample-First Proving (`lean_counterexample_search`)**: Synthesizes and runs an isolated Plausible property test outside the project root using Galois-pruned interval domains (`a <= 100`, `0 < d`, `a + b <= 100`) and AST threshold constants (`strategy: "slice" | "dense"`).
-4. **Sub-5ms Offline `.ilean` Navigation (`lean_lookup_symbol`, `lean_decl_references`, `lean_module_hierarchy`, `lean_dependency_subgraph`)**: Direct binary/JSON parsing of `.lake/build/lib/**/*.ilean` files for instant jump-to-definition, declaration reference graphs (`uses` / `usedBy`), and module import/dependent DAGs without starting `lake serve`.
-5. **Unified Multi-Source Search & Librarian Concordance (`lean_search`, `lean_book_index_lookup`, `lean_cross_itp_concordance`)**: Local ripgrep declaration search, Loogle, LeanSearch, Reservoir, arXiv, Kuzu knowledge graph, 65+ author-curated textbook indexes, and cross-prover tactic concordance (`lean4`, `coq`, `isabelle`, `hol_light`, `agda`).
-6. **Metrics, Axiom Closure, Blueprints & C FFI (`lean_metrics`, `lean_module_census`, `lean_axiom_closure`, `lean_blueprint`, `lean_blueprint_scaffold`, `lean_proof_skeleton`, `lean_ffi`, `lean_exec`, `lean_resync`, `lean_server_status`)**: Project censuses, Milner Place-Link bigraph projections, `#print axioms` trust checks, PlasTeX Blueprint scaffolding, and C FFI sysroot inspection.
+When AI coding agents try to write or fix Lean 4 proofs using standard shell commands, they get stuck in a slow, expensive loop:
 
----
-
-## 2. Architecture
-
-```text
-+-----------------------------------------------------------------------------+
-|                          lean-lsp-mcp ARCHITECTURE                          |
-+-----------------------------------------------------------------------------+
-|                                                                             |
-|  [ AI Host ] (Antigravity / Claude Code / Cursor / Windsurf / Copilot)      |
-|       |                                                                     |
-|  stdio JSON-RPC (MCP Protocol)                                              |
-|       v                                                                     |
-|  [ lean-lsp-mcp Server ]                                                    |
-|    |-- Request Dispatcher, Alias Normalizer & LRU Search Cache              |
-|    |-- .ilean Zero-Latency Indexer (Sub-5ms symbol & reference lookup)      |
-|    |-- Abstract Interpreter (Interval/Zone/Octagon + AltProof Advisor)      |
-|    |-- Plausible Counterexample Harness (Galois-pruned scratch runner)      |
-|    |-- Lake Serve Broker Client (Multiplexed persistent FileWorkers)        |
-|    |-- Clangd C FFI Sysroot Bridge (Injects `lean --print-prefix` headers)  |
-|       |                                                                     |
-|       +---> Lean 4 Toolchain (`lake serve` broker / `lake env lean`)        |
-|       +---> Project Filesystem (`.lake/build/lib/**/*.ilean`, `.olean`)     |
-|                                                                             |
-+-----------------------------------------------------------------------------+
-```
+1. **Running `lake build` after every edit takes minutes**: Standard agents edit a `.lean` file, insert `trace_state`, and recompile the whole module just to see the current proof goal. `lean4-lsp-mcp` keeps a shared `lake serve` session warm and returns the exact tactic goal at any line and column in milliseconds (`lean_goal`).
+2. **Agents waste hours trying to prove false lemmas**: If a helper lemma has a subtle boundary bug (like a natural number subtraction underflow), an agent will burn hundreds of tactic attempts trying to prove the impossible. `lean_counterexample_search` tests candidate theorems with *Plausible*[^plausible] first so false claims are caught in seconds.
+3. **Searching large Mathlib or multi-file projects is slow**: Starting a full language server just to find where a theorem is defined or used eats RAM and time. `lean4-lsp-mcp` reads compiled `.ilean` index files directly from disk in **under 5 milliseconds** (`lean_lookup_symbol`, `lean_decl_references`, `lean_module_hierarchy`).
 
 ---
 
-## 3. Tool Specifications & Agent Quick Reference
+## Start in 2 Minutes
 
-See [`instructions.md`](./instructions.md) for full copy-paste examples and parameter pitfall notes.
+### 1. Run via `npx` (Zero Manual Build Required)
 
-| Tool Name | Required Parameters | Key Optional Parameters |
-| :--- | :--- | :--- |
-| `lean_goal` | `filePath`, `line` (1-indexed) | `col` (1-indexed), `target` (`"tactic" \| "term" \| "filtered" \| "altproof"`), `hideTypeclasses`, `hideInaccessible`, `onlyTarget`, `goal`, `proof` |
-| `lean_diagnostics` | `filePath` | `maxWaitMs` (default `4000`) |
-| `lean_counterexample_search` | `filePath`, `theoremName` | `strategy` (`"slice" \| "dense"`), `samples` (default `100`), `budgetMs` (default `60000`), `imports` |
-| `lean_exec` | `code` | `timeoutMs` (default `15000`) |
-| `lean_run_code` | `code` | `timeoutMs` (default `15000`; alias of `lean_exec`) |
-| `lean_resync` | `filePath` | *(none)* |
-| `lean_server_status` | *(none)* | *(none)* |
-| `lean_lookup_symbol` | `symbol` | *(none)* |
-| `lean_decl_references` | `symbol` | `direction` (`"uses" \| "usedBy" \| "both"`), `limit` (default `50`) |
-| `lean_module_hierarchy` | `moduleName` | `direction` (`"imports" \| "importedBy" \| "both"`), `transitive` (bool), `maxDepth` |
-| `lean_dependency_subgraph` | `moduleName` | `maxDepth` (default `5`), `format` (`"mermaid" \| "dot" \| "json"`) |
-| `lean_search` | `query` | `source` (`"code" \| "loogle" \| "ontology" \| "arxiv" \| "datasets" \| "reservoir" \| "book" \| "handbook" \| "concordance" \| "symbol" \| "graph"`), `limit`, `prover`, `book` |
-| `lean_book_index_lookup` | `term` (alias `query`) | `book` (corpus substring), `prover` (`"lean4" \| "coq" \| "isabelle" \| "hol_light"`) |
-| `lean_cross_itp_concordance` | `concept` (alias `query`) | `source_prover`, `target_prover` |
-| `lean_metrics` | `target` | `action` (`"census" \| "hierarchy" \| "subgraph" \| "bigraph" \| "axiom_audit" \| "altproof"`), `format`, `goal`, `proof` |
-| `lean_module_census` | `targetPath` (alias `target`) | `format` (`"markdown" \| "json" \| "summary"`) |
-| `lean_axiom_closure` | `symbol` | `module` (declaring module to import first) |
-| `lean_blueprint` | *(none)* | `action` (`"status" \| "scaffold" \| "zettel" \| "skeleton" \| "walkthrough" \| "graph_neighborhood"`), `symbol`, `filePath`, `formalizationDir`, `blueprintDir` |
-| `lean_blueprint_scaffold` | `symbol` | `filePath`, `line` |
-| `lean_proof_skeleton` | `filePath` or `symbol` | *(none)* |
-| `lean_ffi` | *(none)* | `action` (`"inspect_env" \| "resolve_symbol" \| "verify_headers" \| "sysroot"`), `externName`, `cHeaderPath` |
+Add `lean-lsp` to your coding agent's MCP configuration (`.mcp.json`, `~/.claude/claude_desktop_config.json`, or `.cursor/mcp.json`):
 
----
-
-## 4. Configuration Across Agent Hosts
-
-Prefer the published bin. After a local clone and `npm run build`, you can
-also use `node dist/index.js`.
-
-### Claude Code (`~/.claude/claude_desktop_config.json` or project `.mcp.json`)
 ```json
 {
   "mcpServers": {
@@ -123,54 +38,80 @@ also use `node dist/index.js`.
 }
 ```
 
-### Choosing the project root
+<details>
+<summary><b>Alternative: Install globally or build from source</b></summary>
 
-The server serves the project it is launched in. Root resolution is: the
-`LEAN_PROJECT_ROOT` directory when set, else the launch directory when it holds
-a Lake marker, else the nearest Lake root above it, else the launch directory
-unchanged (never another project). Lake markers are `lakefile.lean`,
-`lakefile.toml`, `lake-manifest.json`, and `packages/`; a directory with only
-`lean-toolchain` is used as a last resort.
+```bash
+# Global npm install
+npm install -g lean4-lsp-mcp
 
-Pin the root explicitly when your host starts MCP servers from an unrelated
-working directory:
-
-```json
-{
-  "mcpServers": {
-    "lean-lsp": {
-      "command": "lean-lsp-mcp",
-      "env": { "LEAN_PROJECT_ROOT": "/path/to/your/lake/project" }
-    }
-  }
-}
+# Or build from a local clone
+git clone https://github.com/r-irbe/lean4-lsp-mcp.git
+cd lean4-lsp-mcp && npm install && npm run build
 ```
 
-`lakefile.toml` projects are fully supported (`lake env lean` is used for every
-Lean invocation, so project modules are on `LEAN_PATH`). `lean_server_status`
-reports the resolved root, how it was found, and the exact stdin invocation in
-use.
+If your IDE launches MCP servers from outside your Lean repository, set `"LEAN_PROJECT_ROOT": "/path/to/your/lake/project"` in the `env` block.
+</details>
 
-### Cursor & Windsurf (`.cursor/mcp.json`)
-```json
-{
-  "mcpServers": {
-    "lean-lsp": {
-      "command": "lean-lsp-mcp"
-    }
-  }
-}
-```
+---
 
-From a clone, after `npm run build`:
+## Adapt to Your Use Case (Customer Journeys)
 
-```json
-{
-  "mcpServers": {
-    "lean-lsp": {
-      "command": "node",
-      "args": ["dist/index.js"]
-    }
-  }
-}
-```
+<details open>
+<summary><b>1. Interactive Theorem Proving -- Inspect Goals & Fix Errors Without Rebuilding</b></summary>
+
+- **Who this is for**: Researchers, engineers, and AI agents actively closing `sorry` placeholders in Lean 4.
+- **How to use it**:
+  - Call `lean_goal` with `{"filePath": "MyProj/Basic.lean", "line": 42, "col": 4, "target": "tactic"}` to see the exact proof state at the cursor, or `"target": "altproof"` for ranked tactic suggestions.
+  - Call `lean_diagnostics` with `{"filePath": "MyProj/Basic.lean"}` to get live compiler errors plus automatic warnings for natural-number truncation (`a - b` without `b <= a`) and division by zero.
+</details>
+
+<details>
+<summary><b>2. Counterexample-First Proving -- Test a Claim Before Spending Proof Budget</b></summary>
+
+- **Who this is for**: Teams writing new formal specifications where edge cases (`0`, empty lists, off-by-one bounds) are easy to miss.
+- **How to use it**: Call `lean_counterexample_search` with `{"filePath": "MyProj/Spec.lean", "theoremName": "my_lemma", "strategy": "dense"}`. It runs an isolated property check in a scratch directory and returns a concrete counterexample if the lemma is false.
+</details>
+
+<details>
+<summary><b>3. Large-Corpus Navigation, Cross-Prover Porting & C FFI Audits</b></summary>
+
+- **Who this is for**: Maintainers of large Lean 4 repositories, teams porting proofs from Rocq/Coq or Isabelle, and systems engineers binding Lean 4 `@[extern]` functions to C.
+- **How to use it**:
+  - **Sub-5ms Offline Navigation**: `lean_lookup_symbol`, `lean_decl_references`, and `lean_module_hierarchy` query `.lake/build/lib/**/*.ilean` directly without booting `lake serve`.
+  - **Multi-Source Search**: `lean_search`, `lean_book_index_lookup` (65+ math/CS textbooks), and `lean_cross_itp_concordance` (Coq/Isabelle/HOL Light -> Lean 4 tactic equivalents).
+  - **Trust & FFI Verification**: `lean_axiom_closure` verifies a theorem depends only on standard axioms (`propext`, `Classical.choice`, `Quot.sound`), and `lean_ffi` checks `@[extern]` C symbols against your C headers.
+</details>
+
+---
+
+## Complete 21-Tool Reference
+
+See [`instructions.md`](./instructions.md) for copy-paste JSON payloads and agent prompting guidelines.
+
+<details>
+<summary><b>View all 21 MCP tools and parameters</b></summary>
+
+| Tool Name | Required Parameters | What It Does |
+| :--- | :--- | :--- |
+| `lean_goal` | `filePath`, `line` | Returns tactic goal, term goal, filtered goal, or `altproof` tactic advice at `(line, col)`. |
+| `lean_diagnostics` | `filePath` | Live elaboration errors, unsolved goals, and static `Nat` truncation/div-by-zero checks. |
+| `lean_counterexample_search` | `filePath`, `theoremName` | Runs Plausible property testing in an isolated scratch dir to falsify broken theorems. |
+| `lean_lookup_symbol` | `symbol` | Instant offline `.ilean` jump-to-definition and type signature lookup (<5ms). |
+| `lean_decl_references` | `symbol` | Finds declarations that `uses` or are `usedBy` the target symbol (<5ms). |
+| `lean_module_hierarchy` | `moduleName` | Returns module `imports` or `importedBy` dependency trees. |
+| `lean_dependency_subgraph` | `moduleName` | Exports bounded module dependency subgraphs (`mermaid`, `dot`, or `json`). |
+| `lean_search` | `query` | Unified search across local code, Loogle, LeanSearch, Reservoir, arXiv, books, and graph. |
+| `lean_book_index_lookup` | `term` | Looks up concepts across 65+ curated theorem-proving and math textbook indexes. |
+| `lean_cross_itp_concordance` | `concept` | Maps tactics and concepts across Coq/Rocq, Isabelle, HOL Light, Agda, and Lean 4. |
+| `lean_axiom_closure` | `symbol` | Runs `#print axioms` to verify a theorem uses no `sorryAx` or custom axioms. |
+| `lean_metrics` / `lean_module_census` | `target` | Computes declaration counts, complexity metrics, and corpus censuses. |
+| `lean_blueprint` / `lean_blueprint_scaffold` | *(optional)* | Scaffolds and inspects Lean Blueprint LaTeX/dependency nodes and Zettelkasten links. |
+| `lean_proof_skeleton` | `filePath` or `symbol` | Extracts the high-level `have`/`suffices` skeleton of a proof. |
+| `lean_ffi` | *(optional)* | Inspects Lean C FFI sysroot headers and verifies `@[extern]` C symbol bindings. |
+| `lean_exec` / `lean_run_code` | `code` | Executes a standalone Lean 4 snippet (`#check`, `#eval`) via `lake env lean`. |
+| `lean_resync` / `lean_server_status` | `filePath` / *(none)* | Refreshes a file worker or reports the resolved Lake project root and server health. |
+</details>
+
+[^mcp]: **Model Context Protocol (MCP)**: An open standard that lets AI coding assistants call external tools and language servers over stdio JSON-RPC.
+[^plausible]: **Plausible**: Lean 4's property-based testing library (similar to QuickCheck) that generates test inputs to find counterexamples to a theorem statement.
