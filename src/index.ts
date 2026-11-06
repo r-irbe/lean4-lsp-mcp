@@ -1109,10 +1109,12 @@ export class Lean4IleanIndex {
   private scannedFiles = 0;
   /** Files refused under an admitted context, by reason; surfaced, never silent. */
   private skipped = { overFileCap: 0, oversized: 0, escaped: 0 };
-  /** Caps bound sync read+JSON.parse on the server event loop; env-tunable (positive ints). */
+  /** Caps bound sync read+JSON.parse on the server event loop; env-tunable (positive ints).
+   *  Default 65536 files: Mathlib+deps measured 9028, the Lean toolchain 2546 (~11.6k
+   *  together), so ~5.6x headroom. Per-file 16 MiB: largest observed .ilean is < 4 MiB. */
   static maxIleanFiles(): number {
     const n = Number(process.env.LEAN_ILEAN_MAX_FILES);
-    return Number.isInteger(n) && n > 0 ? n : 2048;
+    return Number.isInteger(n) && n > 0 ? n : 65536;
   }
   static maxIleanFileBytes(): number {
     const n = Number(process.env.LEAN_ILEAN_MAX_FILE_BYTES);

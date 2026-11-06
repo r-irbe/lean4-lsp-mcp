@@ -168,3 +168,10 @@ test("hardlinked elan shim (what elan really installs) resolves, or is refused w
     /elan shim cannot be admitted/,
   );
 });
+
+test("default file cap covers the largest known Lean trees (Mathlib+deps+toolchain ~11.6k)", () => {
+  delete process.env.LEAN_ILEAN_MAX_FILES;
+  assert.ok(Lean4IleanIndex.maxIleanFiles() >= 4 * 11_600);
+  process.env.LEAN_ILEAN_MAX_FILES = "garbage";
+  try { assert.equal(Lean4IleanIndex.maxIleanFiles(), 65536); } finally { delete process.env.LEAN_ILEAN_MAX_FILES; }
+});
