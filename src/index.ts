@@ -1725,6 +1725,13 @@ export class LeanSysrootBridge {
       }
     };
     scanFiles(projectRoot);
+    // Admitted module roots are part of the admitted source universe; Dirent
+    // walks never follow symlinks, so a link cannot escape them.
+    if (context) {
+      for (const moduleRoot of context.moduleRoots) {
+        if (moduleRoot !== projectRoot && !moduleRoot.startsWith(projectRoot + path.sep)) scanFiles(moduleRoot);
+      }
+    }
 
     const prefix = this.getPrefix(projectRoot, context);
     if (prefix) {
@@ -7124,9 +7131,26 @@ export class McpServer {
       let done = false;
       let killedForBudget = false;
       let child: ChildProcess;
+      // An admitted context must never fall back to ambient `lake env lean`:
+      // the harness runs the exact admitted compiler against admitted roots.
+      let command = "lake";
+      let argv = ["env", "lean", scratchPath];
+      let env: NodeJS.ProcessEnv | undefined;
+      if (this.leanContext) {
+        const invocation = planLeanInvocation(this.projectRoot, [scratchPath], this.leanContext);
+        const unavailable = leanContextUnavailable(invocation);
+        if (unavailable) {
+          resolve({ killedForBudget: false, exitCode: null, output: unavailable, elapsedMs: Date.now() - started });
+          return;
+        }
+        command = invocation.command;
+        argv = invocation.args;
+        env = leanInvocationEnv(invocation);
+      }
       try {
-        child = spawn("lake", ["env", "lean", scratchPath], {
+        child = spawn(command, argv, {
           cwd: this.projectRoot,
+          ...(env ? { env } : {}),
           stdio: ["ignore", "pipe", "pipe"],
           // Own process group: the budget kill must reach the `lean`
           // grandchild too, not just the `lake` shim (bench 2026-10-16:

@@ -60,3 +60,38 @@ test("compiler replacement and manifest edits change the fingerprint; symlinks f
   fs.symlinkSync(lean, link);
   assert.equal(isLeanCompilerIdentityCurrent(link, captureLeanCompilerIdentity(link)), false);
 });
+
+// ---- item 3: runBoundedLean and resolveSymbol honour the admitted context ----
+import { McpServer, LeanSysrootBridge } from "../src/index.ts";
+
+test("runBoundedLean executes the admitted compiler with admitted LEAN_PATH, never ambient lake", async () => {
+  const root = path.join(base, "bounded-root");
+  fs.mkdirSync(root, { recursive: true });
+  fs.writeFileSync(path.join(root, "lakefile.toml"), "");
+  const prefix = path.join(base, "bounded-prefix", "bin");
+  fs.mkdirSync(prefix, { recursive: true });
+  const fake = path.join(prefix, "lean");
+  fs.writeFileSync(fake, '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "Lean (version 4.35.0, x86_64)"; exit 0; fi\necho "RAN:$LEAN_PATH"\n', { mode: 0o755 });
+  const bctx = { compilerPath: fake, targetVersion: "4.35.0", moduleRoots: [fs.realpathSync(admitted)] };
+  const server = new McpServer(root, bctx);
+  const run = await server.runBoundedLean(path.join(root, "x.lean"), 5000);
+  assert.equal(run.exitCode, 0, run.output);
+  assert.match(run.output, new RegExp("RAN:" + fs.realpathSync(admitted)));
+  // wrong declared version fails closed before any source executes
+  const wrong = new McpServer(root, { ...bctx, targetVersion: "4.36.0" });
+  const bad = await wrong.runBoundedLean(path.join(root, "x.lean"), 5000);
+  assert.equal(bad.exitCode, null);
+  assert.match(bad.output, /environment_unavailable/);
+});
+
+test("resolveSymbol scans admitted module roots outside the project", () => {
+  const roots = path.join(base, "ffi-proj");
+  fs.mkdirSync(roots, { recursive: true });
+  const mod = path.join(base, "ffi-mods");
+  fs.mkdirSync(mod, { recursive: true });
+  fs.writeFileSync(path.join(mod, "Ext.lean"), '@[extern "my_c_sym"] opaque f : Nat\n');
+  const fctx = { compilerPath: lean, targetVersion: "4.35.0", moduleRoots: [fs.realpathSync(mod)] };
+  const withCtx = LeanSysrootBridge.resolveSymbol(roots, "my_c_sym", fctx);
+  assert.equal(withCtx.leanToC.length, 1);
+  assert.equal(LeanSysrootBridge.resolveSymbol(roots, "my_c_sym").leanToC.length, 0);
+});
