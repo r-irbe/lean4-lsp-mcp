@@ -1107,8 +1107,21 @@ export class Lean4IleanIndex {
 
   private context?: LeanContext;
   private scannedFiles = 0;
-  static readonly MAX_ILEAN_FILE_BYTES = 16 * 1024 * 1024;
-  static readonly MAX_ILEAN_FILES_SCANNED = 2048;
+  /** Files refused under an admitted context, by reason; surfaced, never silent. */
+  private skipped = { overFileCap: 0, oversized: 0, escaped: 0 };
+  /** Caps bound sync read+JSON.parse on the server event loop; env-tunable (positive ints). */
+  static maxIleanFiles(): number {
+    const n = Number(process.env.LEAN_ILEAN_MAX_FILES);
+    return Number.isInteger(n) && n > 0 ? n : 2048;
+  }
+  static maxIleanFileBytes(): number {
+    const n = Number(process.env.LEAN_ILEAN_MAX_FILE_BYTES);
+    return Number.isInteger(n) && n > 0 ? n : 16 * 1024 * 1024;
+  }
+
+  public getScanReport(): { scannedFiles: number; skipped: { overFileCap: number; oversized: number; escaped: number } } {
+    return { scannedFiles: this.scannedFiles, skipped: { ...this.skipped } };
+  }
 
   constructor(projectRoot: string, context?: LeanContext) {
     this.projectRoot = projectRoot;
@@ -1142,6 +1155,7 @@ export class Lean4IleanIndex {
     this.declToRefs.clear();
     this.refToDecls.clear();
     this.scannedFiles = 0;
+    this.skipped = { overFileCap: 0, oversized: 0, escaped: 0 };
 
     if (this.context) {
       const seen = new Set<string>();
@@ -1309,7 +1323,10 @@ export class Lean4IleanIndex {
         if (entry.isDirectory()) {
           this.scanDir(fullPath);
         } else if (entry.isFile() && entry.name.endsWith(".ilean")) {
-          if (this.context && this.scannedFiles >= Lean4IleanIndex.MAX_ILEAN_FILES_SCANNED) return;
+          if (this.context && this.scannedFiles >= Lean4IleanIndex.maxIleanFiles()) {
+            this.skipped.overFileCap++;
+            continue;
+          }
           this.loadIlean(fullPath);
         }
       }
@@ -1323,8 +1340,8 @@ export class Lean4IleanIndex {
       if (this.context) {
         // Fail closed: symlinked/escaping or oversized .ilean files are refused.
         const real = fs.realpathSync(filePath);
-        if (!this.insideAdmittedRoot(real)) return;
-        if (fs.statSync(real).size > Lean4IleanIndex.MAX_ILEAN_FILE_BYTES) return;
+        if (!this.insideAdmittedRoot(real)) { this.skipped.escaped++; return; }
+        if (fs.statSync(real).size > Lean4IleanIndex.maxIleanFileBytes()) { this.skipped.oversized++; return; }
         this.scannedFiles++;
       }
       const raw = fs.readFileSync(filePath, "utf-8");

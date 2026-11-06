@@ -95,3 +95,76 @@ test("resolveSymbol scans admitted module roots outside the project", () => {
   assert.equal(withCtx.leanToC.length, 1);
   assert.equal(LeanSysrootBridge.resolveSymbol(roots, "my_c_sym").leanToC.length, 0);
 });
+
+// ---- elan shim support and cap reporting ----
+import { validateLeanContext, resolveElanShim } from "../src/project_root.ts";
+
+function fakeElan(name) {
+  const home = path.join(base, name);
+  fs.mkdirSync(path.join(home, "bin"), { recursive: true });
+  fs.writeFileSync(path.join(home, "bin", "elan"), "elan-multiplexer", { mode: 0o755 });
+  fs.symlinkSync(path.join(home, "bin", "elan"), path.join(home, "bin", "lean"));
+  const tcBin = path.join(home, "toolchains", "leanprover--lean4---v4.35.0", "bin");
+  fs.mkdirSync(tcBin, { recursive: true });
+  fs.writeFileSync(path.join(tcBin, "lean"), "real-lean", { mode: 0o755 });
+  return { home, shim: path.join(home, "bin", "lean"), real: fs.realpathSync(path.join(tcBin, "lean")) };
+}
+
+test("elan shim resolves to the exact direct toolchain binary for targetVersion", () => {
+  const e = fakeElan("elan-a");
+  const admittedCtx = validateLeanContext({ compilerPath: e.shim, targetVersion: "4.35.0", moduleRoots: [admitted] });
+  assert.equal(admittedCtx.compilerPath, e.real);
+  // idempotent: the resolved context re-admits unchanged
+  assert.deepEqual(validateLeanContext(admittedCtx), admittedCtx);
+});
+
+test("shim for a version with no installed toolchain, or a non-elan symlink, stays refused", () => {
+  const e = fakeElan("elan-b");
+  assert.equal(resolveElanShim(e.shim, "4.99.0"), undefined);
+  assert.throws(() => validateLeanContext({ compilerPath: e.shim, targetVersion: "4.99.0", moduleRoots: [admitted] }), /unavailable|symlink|elan shim cannot be admitted/);
+  const plain = path.join(base, "plain-target");
+  fs.writeFileSync(plain, "x", { mode: 0o755 });
+  const link = path.join(base, "plain-link", "lean");
+  fs.mkdirSync(path.dirname(link), { recursive: true });
+  fs.symlinkSync(plain, link);
+  assert.equal(resolveElanShim(link, "4.35.0"), undefined);
+  assert.throws(() => validateLeanContext({ compilerPath: link, targetVersion: "4.35.0", moduleRoots: [admitted] }), /symlink.*unsupported/);
+});
+
+test("a symlinked toolchain binary behind the shim is refused (no swap via toolchain symlink)", () => {
+  const e = fakeElan("elan-c");
+  const tc = path.join(e.home, "toolchains", "leanprover--lean4---v4.35.0", "bin", "lean");
+  fs.rmSync(tc);
+  fs.symlinkSync(path.join(base, "plain-target"), tc);
+  assert.equal(resolveElanShim(e.shim, "4.35.0"), undefined);
+});
+
+test("file cap is env-tunable and skips are reported, not silent", () => {
+  const dir = path.join(base, "many");
+  for (let i = 0; i < 5; i++) writeIlean(dir, `M${i}`, `sym${i}`);
+  const mctx = { compilerPath: lean, targetVersion: "4.35.0", moduleRoots: [fs.realpathSync(dir)] };
+  process.env.LEAN_ILEAN_MAX_FILES = "2";
+  try {
+    const idx = new Lean4IleanIndex(project, mctx);
+    idx.refresh();
+    const report = idx.getScanReport();
+    assert.equal(report.scannedFiles, 2);
+    assert.equal(report.skipped.overFileCap, 3);
+  } finally { delete process.env.LEAN_ILEAN_MAX_FILES; }
+  const full = new Lean4IleanIndex(project, mctx);
+  full.refresh();
+  assert.equal(full.getScanReport().scannedFiles, 5);
+});
+
+test("hardlinked elan shim (what elan really installs) resolves, or is refused when the toolchain is absent", () => {
+  const e = fakeElan("elan-hard");
+  fs.rmSync(e.shim);
+  fs.linkSync(path.join(e.home, "bin", "elan"), e.shim); // same dev+ino as elan
+  const ctx1 = validateLeanContext({ compilerPath: e.shim, targetVersion: "4.35.0", moduleRoots: [admitted] });
+  assert.equal(ctx1.compilerPath, e.real);
+  // must NOT silently admit the shim itself as a "direct" compiler
+  assert.throws(
+    () => validateLeanContext({ compilerPath: e.shim, targetVersion: "4.99.0", moduleRoots: [admitted] }),
+    /elan shim cannot be admitted/,
+  );
+});

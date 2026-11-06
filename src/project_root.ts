@@ -151,6 +151,51 @@ export function leanEnvironmentFingerprint(
   })).digest("hex");
 }
 
+/**
+ * Elan shim support. `~/.elan/bin/lean` is a symlink to the `elan` multiplexer,
+ * which picks a toolchain from argv0/env/the nearest lean-toolchain, so it can
+ * never be admitted as-is. Instead of trusting that dispatch, resolve the shim
+ * to the exact direct binary for the declared `targetVersion`:
+ *   <elanHome>/toolchains/leanprover--lean4---v<targetVersion>/bin/lean
+ * The result is then admitted like any direct compiler (non-symlink, version
+ * checked at use). Only a symlink whose real target is a file named `elan`
+ * qualifies; any other symlink stays refused. Returns undefined otherwise.
+ */
+export function elanShimBinDir(compilerPath: string): string | undefined {
+  try {
+    const abs = path.resolve(compilerPath);
+    // A shim is either a symlink to a file named `elan`, or (what elan itself
+    // installs on Linux) a hardlink/copy sharing dev+ino with the sibling `elan`.
+    if (fs.lstatSync(abs).isSymbolicLink()) {
+      const shimTarget = fs.realpathSync(abs);
+      return path.basename(shimTarget).replace(/\.exe$/i, "") === "elan" ? path.dirname(shimTarget) : undefined;
+    }
+    if (path.basename(abs).replace(/\.exe$/i, "") === "elan") return undefined;
+    const sibling = path.join(path.dirname(abs), path.basename(abs).toLowerCase().endsWith(".exe") ? "elan.exe" : "elan");
+    const a = fs.statSync(abs, { bigint: true });
+    const b = fs.statSync(sibling, { bigint: true });
+    return a.dev === b.dev && a.ino === b.ino ? path.dirname(abs) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function resolveElanShim(compilerPath: string, targetVersion: string): string | undefined {
+  try {
+    const abs = path.resolve(compilerPath);
+    const binDir = elanShimBinDir(abs);
+    if (!binDir) return undefined;
+    const elanHome = path.dirname(binDir);
+    const toolchains = path.join(elanHome, "toolchains");
+    const direct = path.join(toolchains, `leanprover--lean4---v${targetVersion}`, "bin", path.basename(abs));
+    if (fs.lstatSync(direct).isSymbolicLink()) return undefined;
+    const real = fs.realpathSync(direct);
+    return real === path.resolve(direct) && real.startsWith(fs.realpathSync(toolchains) + path.sep) ? real : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Explicit host/exec-caller admission, never loaded implicitly from a project. */
 export interface LeanContext {
   readonly compilerPath: string;
@@ -189,10 +234,15 @@ export function validateLeanContext(value: unknown): LeanContext {
     return fail("moduleRoots must be at most 32 absolute search-path-safe directories");
   }
   try {
-    if (!fs.statSync(record.compilerPath).isFile()) return fail("compilerPath is not a file");
-    fs.accessSync(record.compilerPath, fs.constants.X_OK);
-    const compilerPath = fs.realpathSync(record.compilerPath);
-    if (compilerPath !== path.resolve(record.compilerPath)) return fail("compiler symlink paths unsupported; admit a direct installed lean binary without argv0-dependent indirection");
+    const resolvedShim = resolveElanShim(record.compilerPath, record.targetVersion);
+    if (!resolvedShim && elanShimBinDir(record.compilerPath)) {
+      return fail(`elan shim cannot be admitted: toolchain leanprover--lean4---v${record.targetVersion} is not installed as a direct binary; install it or admit the toolchain's own bin/lean`);
+    }
+    const requested = resolvedShim ?? record.compilerPath;
+    if (!fs.statSync(requested).isFile()) return fail("compilerPath is not a file");
+    fs.accessSync(requested, fs.constants.X_OK);
+    const compilerPath = fs.realpathSync(requested);
+    if (compilerPath !== path.resolve(requested)) return fail("compiler symlink paths unsupported; admit a direct installed lean binary without argv0-dependent indirection");
     const moduleRoots = record.moduleRoots.map((root: string) => {
       if (!fs.statSync(root).isDirectory()) return fail("module root is not a directory");
       const resolved = fs.realpathSync(root);
