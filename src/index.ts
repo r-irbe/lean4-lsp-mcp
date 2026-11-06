@@ -1105,8 +1105,34 @@ export class Lean4IleanIndex {
   private refToDecls: Map<string, Set<string>> = new Map();
   private lastScanTime: number = 0;
 
-  constructor(projectRoot: string) {
+  private context?: LeanContext;
+  private scannedFiles = 0;
+  static readonly MAX_ILEAN_FILE_BYTES = 16 * 1024 * 1024;
+  static readonly MAX_ILEAN_FILES_SCANNED = 2048;
+
+  constructor(projectRoot: string, context?: LeanContext) {
     this.projectRoot = projectRoot;
+    this.context = context;
+  }
+
+  /** Re-bind the admitted context; callers must refresh() afterwards. */
+  public setLeanContext(context?: LeanContext): void {
+    this.context = context;
+  }
+
+  /** Admitted contexts confine discovery to moduleRoots (and their Lake build dirs). */
+  private admittedIleanRoots(): string[] {
+    const roots: string[] = [];
+    for (const moduleRoot of this.context!.moduleRoots) {
+      roots.push(moduleRoot);
+      roots.push(path.join(moduleRoot, ".lake", "build", "lib", "lean"));
+      roots.push(path.join(moduleRoot, "lib", "lean"));
+    }
+    return roots;
+  }
+
+  private insideAdmittedRoot(real: string): boolean {
+    return this.context!.moduleRoots.some((r) => real === r || real.startsWith(r + path.sep));
   }
 
   public refresh(): void {
@@ -1115,6 +1141,19 @@ export class Lean4IleanIndex {
     this.moduleImportsMap.clear();
     this.declToRefs.clear();
     this.refToDecls.clear();
+    this.scannedFiles = 0;
+
+    if (this.context) {
+      const seen = new Set<string>();
+      for (const root of this.admittedIleanRoots()) {
+        if (seen.has(root) || !fs.existsSync(root)) continue;
+        seen.add(root);
+        this.scanDir(root);
+      }
+      this.dagIndex.build(this.moduleImportsMap);
+      this.lastScanTime = Date.now();
+      return;
+    }
 
     // Resolve workspace root if projectRoot is inside a subpackage
     let wsRoot = this.projectRoot;
@@ -1216,6 +1255,11 @@ export class Lean4IleanIndex {
   }
 
   public hasNewerBuilds(): boolean {
+    if (this.context) {
+      return this.admittedIleanRoots().some((r) => {
+        try { return fs.existsSync(r) && fs.statSync(r).mtimeMs > this.lastScanTime; } catch { return false; }
+      });
+    }
     const checkRoots = [
       path.join(this.projectRoot, ".lake", "build", "lib", "lean"),
     ];
@@ -1265,6 +1309,7 @@ export class Lean4IleanIndex {
         if (entry.isDirectory()) {
           this.scanDir(fullPath);
         } else if (entry.isFile() && entry.name.endsWith(".ilean")) {
+          if (this.context && this.scannedFiles >= Lean4IleanIndex.MAX_ILEAN_FILES_SCANNED) return;
           this.loadIlean(fullPath);
         }
       }
@@ -1275,6 +1320,13 @@ export class Lean4IleanIndex {
 
   private loadIlean(filePath: string): void {
     try {
+      if (this.context) {
+        // Fail closed: symlinked/escaping or oversized .ilean files are refused.
+        const real = fs.realpathSync(filePath);
+        if (!this.insideAdmittedRoot(real)) return;
+        if (fs.statSync(real).size > Lean4IleanIndex.MAX_ILEAN_FILE_BYTES) return;
+        this.scannedFiles++;
+      }
       const raw = fs.readFileSync(filePath, "utf-8");
       const parsed: IleanFile = JSON.parse(raw);
       this.cache.set(filePath, parsed);
@@ -1283,7 +1335,21 @@ export class Lean4IleanIndex {
 
       // Derive source file path
       let sourceFile = "";
-      if (moduleName) {
+      if (this.context) {
+        // Only sources under admitted module roots may be named.
+        if (moduleName) {
+          const relLean = moduleName.replace(/\./g, "/") + ".lean";
+          for (const r of this.context.moduleRoots) {
+            const cand = path.join(r, relLean);
+            try {
+              if (fs.existsSync(cand) && this.insideAdmittedRoot(fs.realpathSync(cand))) {
+                sourceFile = path.relative(this.projectRoot, cand);
+                break;
+              }
+            } catch { /* unreadable candidate */ }
+          }
+        }
+      } else if (moduleName) {
         const relLean = moduleName.replace(/\./g, "/") + ".lean";
         const candidate = path.join(this.projectRoot, relLean);
         if (fs.existsSync(candidate)) {
@@ -4220,7 +4286,7 @@ export class McpServer {
   constructor(projectRoot: string = process.cwd(), context?: LeanContext) {
     this.projectRoot = projectRoot;
     this.leanContext = context === undefined ? undefined : validateLeanContext(context);
-    this.ileanIndex = new Lean4IleanIndex(projectRoot);
+    this.ileanIndex = new Lean4IleanIndex(projectRoot, this.leanContext);
     this.ileanIndex.refresh();
     this.lakeManager = new LakeServerManager(projectRoot, this.leanContext);
     this.kuzuGraph = new KuzuKnowledgeGraph(undefined, { workspaceRoot: projectRoot });

@@ -95,6 +95,36 @@ export function resolveProjectRoot(
   return { root: start, source: "none", marker: "" };
 }
 
+/** Stat identity of an admitted compiler; in-place replacement changes ino/size/ctime. */
+export interface LeanCompilerIdentity {
+  readonly realpath: string;
+  readonly symlink: boolean;
+  readonly dev: string;
+  readonly ino: string;
+  readonly size: string;
+  readonly mtimeNs: string;
+  readonly ctimeNs: string;
+}
+
+export function captureLeanCompilerIdentity(compilerPath: string): LeanCompilerIdentity {
+  const lst = fs.lstatSync(compilerPath, { bigint: true });
+  const st = fs.statSync(compilerPath, { bigint: true });
+  return {
+    realpath: fs.realpathSync(compilerPath),
+    symlink: lst.isSymbolicLink(),
+    dev: st.dev.toString(), ino: st.ino.toString(), size: st.size.toString(),
+    mtimeNs: st.mtimeNs.toString(), ctimeNs: st.ctimeNs.toString(),
+  };
+}
+
+/** True only when the compiler is still the same non-symlink file that was admitted. */
+export function isLeanCompilerIdentityCurrent(compilerPath: string, expected: LeanCompilerIdentity): boolean {
+  try {
+    const now = captureLeanCompilerIdentity(compilerPath);
+    return !now.symlink && JSON.stringify(now) === JSON.stringify(expected);
+  } catch { return false; }
+}
+
 /** Worker identity includes the pin's contents, not just its directory/name. */
 export function leanEnvironmentFingerprint(
   root: string,
@@ -107,9 +137,13 @@ export function leanEnvironmentFingerprint(
   let toolchain = "";
   try { toolchain = pin ? fs.readFileSync(path.join(pin.dir, pin.marker), "utf8") : ""; }
   catch { toolchain = "unreadable"; }
+  let manifest = "";
+  try {
+    manifest = createHash("sha256").update(fs.readFileSync(path.join(path.resolve(root), "lake-manifest.json"))).digest("hex");
+  } catch { manifest = ""; }
   return createHash("sha256").update(JSON.stringify({
-    root: path.resolve(root), command, args, pin: pin?.dir, toolchain, context,
-    compiler: context ? fs.statSync(context.compilerPath, { bigint: true }).mtimeNs.toString() : undefined,
+    root: path.resolve(root), command, args, pin: pin?.dir, toolchain, context, manifest,
+    compiler: context ? captureLeanCompilerIdentity(context.compilerPath) : undefined,
     // Implicit invocations still depend on these inherited selection inputs.
     path: context ? undefined : env.PATH,
     elan: context ? undefined : env.ELAN_TOOLCHAIN,
