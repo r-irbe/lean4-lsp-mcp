@@ -7634,7 +7634,11 @@ export class McpServer {
   }
 }
 
+let mainStarted = false;
+
 export function main(): void {
+  if (mainStarted) return;
+  mainStarted = true;
   const resolution = resolveProjectRoot(process.cwd());
   const server = new McpServer(resolution.root);
   server.setProjectRootResolution(resolution);

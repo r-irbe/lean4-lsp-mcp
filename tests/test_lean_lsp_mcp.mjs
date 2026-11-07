@@ -549,6 +549,50 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     console.log("  - AltProof Hybrid Integration (LeanAbstractInterpreter + McpServer): PASS");
 }
 
+// 11. bin/lean-lsp-mcp.js stdio entrypoint starts main() even when dist/index.js is fresh
+{
+    const { spawn: spawnChild } = await import("node:child_process");
+    const binPath = path.resolve(import.meta.dirname, "../bin/lean-lsp-mcp.js");
+    const distIndex = path.resolve(import.meta.dirname, "../dist/index.js");
+    const srcIndex = path.resolve(import.meta.dirname, "../src/index.ts");
+    if (fs.existsSync(distIndex) && fs.existsSync(srcIndex)) {
+        const future = new Date(Date.now() + 2000);
+        fs.utimesSync(distIndex, future, future);
+    }
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "bin-entry-"));
+    try {
+        const child = spawnChild(process.execPath, [binPath], {
+            cwd: tmp,
+            env: { ...process.env, LEAN_SHM_PATH: path.join(tmp, "bin.shm"), NODE_NO_WARNINGS: "1" },
+            stdio: ["pipe", "pipe", "pipe"]
+        });
+        const reply = await new Promise((resolve, reject) => {
+            const t = setTimeout(() => reject(new Error("bin/lean-lsp-mcp.js timed out on initialize")), 5000);
+            let outBuf = "";
+            child.stdout.setEncoding("utf-8");
+            child.stdout.on("data", (chunk) => {
+                outBuf += chunk;
+                const nl = outBuf.indexOf("\n");
+                if (nl !== -1) {
+                    clearTimeout(t);
+                    resolve(JSON.parse(outBuf.slice(0, nl)));
+                }
+            });
+            child.on("exit", (code) => {
+                clearTimeout(t);
+                reject(new Error(`bin/lean-lsp-mcp.js exited early with code ${code}`));
+            });
+            child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }) + "\n");
+        });
+        assert.strictEqual(reply.result.serverInfo.version, "0.7.0", "bin/lean-lsp-mcp.js starts stdio server via dist/index.js");
+        child.stdin.end();
+        child.kill("SIGTERM");
+        console.log("  - bin/lean-lsp-mcp.js stdio entrypoint (fresh dist/index.js): PASS");
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+}
+
 console.log("=== All lean4-lsp-mcp Tests Passed ===");
 
 

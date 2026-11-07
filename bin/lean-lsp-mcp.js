@@ -52,7 +52,10 @@ const srcNewerThanDist =
   (!fs.existsSync(distEntry) || fs.statSync(srcEntry).mtimeMs > fs.statSync(distEntry).mtimeMs);
 
 if (fs.existsSync(distEntry) && !(supportsStripTypes && srcNewerThanDist)) {
-  await import(pathToFileURL(distEntry).href);
+  const mod = await import(pathToFileURL(distEntry).href);
+  if (typeof mod.main === "function") {
+    mod.main();
+  }
 } else {
   const child = spawn(
     process.execPath,
