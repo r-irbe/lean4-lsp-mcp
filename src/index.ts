@@ -1171,6 +1171,19 @@ export class Lean4IleanIndex {
     this.refresh();
   }
 
+  /** Invalidate cached .ilean state and bump generation on whole-server reset/dispose (NavigationLifecycle NavBeforeReset). */
+  public invalidate(): void {
+    this.generation++;
+    this.cache.clear();
+    this.symbolIndex.clear();
+    this.moduleImportsMap.clear();
+    this.declToRefs.clear();
+    this.refToDecls.clear();
+    this.dagIndex.build(this.moduleImportsMap);
+    this.scannedFiles = 0;
+    this.skipped = { overFileCap: 0, oversized: 0, escaped: 0 };
+  }
+
   /** Bumped by every refresh; a result built under generation n must not be served under n+1. */
   private generation = 0;
   public getGeneration(): number {
@@ -2706,6 +2719,24 @@ export class FileWorkerManager {
     }
   }
 
+  /**
+   * Wait until the server reports the document fully processed (`$/lean/fileProgress`
+   * with no pending regions, reported at/after `sinceMs`). A real Lean server answers
+   * `null` to document queries until elaboration reaches them, so an early answer is
+   * NOT evidence of "no result".
+   */
+  private async waitForAnalysis(session: FileWorkerSession, uri: string, sinceMs: number, maxWaitMs: number): Promise<boolean> {
+    const done = () => {
+      const p = session.progress?.get(uri);
+      return p !== undefined && p.pending === 0 && p.ts >= sinceMs;
+    };
+    const deadline = Date.now() + Math.max(0, maxWaitMs);
+    while (this.sessions.get(session.leanRoot) === session && !done() && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return done();
+  }
+
   /** Admission currency: compiler stat identity + toolchain pin + lake-manifest pin. Spawn-free. */
   private assertAdmissionCurrent(op: string, location: string): void {
     if (!this.leanContext) return;
@@ -2763,8 +2794,8 @@ export class FileWorkerManager {
       leanRoot = session.leanRoot;
     }
 
-    const envelope = (route: "live" | "offline", result: unknown) =>
-      JSON.stringify({ operation: op, mode, contextCertified: mode === "exact", route, result }, null, 2);
+    const envelope = (route: "live" | "offline", result: unknown, empty = false) =>
+      JSON.stringify({ operation: op, mode, contextCertified: mode === "exact", route, empty, result }, null, 2);
     const gateGeneration = ileanIndex?.getGeneration() ?? 0;
 
 
@@ -2796,7 +2827,16 @@ export class FileWorkerManager {
     };
     try {
       session = session ?? (await this.ensureSession(leanRoot));
-      const uri = absPath && cls === "lean-targeted" && !args.callHierarchyItem ? this.syncDocument(session, absPath) : undefined;
+      let uri: string | undefined;
+      let analysisReady = true; // workspace/call-hierarchy requests carry no document to wait for
+      if (absPath && cls === "lean-targeted" && !args.callHierarchyItem) {
+        const prevVersion = session.openFiles.get(absPath)?.version;
+        const syncedAt = Date.now();
+        uri = this.syncDocument(session, absPath);
+        const changed = session.openFiles.get(absPath)?.version !== prevVersion;
+        const readyMs = Number(process.env.LEAN_NAV_READY_MS);
+        analysisReady = await this.waitForAnalysis(session, uri, changed ? syncedAt : 0, Number.isInteger(readyMs) && readyMs >= 0 ? readyMs : 10000);
+      }
       const request = buildNavRequest(args, uri);
       let result = await this.sendRequest(session, request.method, request.params);
       if (this.sessions.get(session.leanRoot) !== session) {
@@ -2804,8 +2844,13 @@ export class FileWorkerManager {
       }
       if (op === "codeAction") result = sanitizeAdvertisedActions(result);
       if (op === "findSymbol") result = narrowFindSymbol(result, args.query!);
+      const empty = result === null || result === undefined || (Array.isArray(result) && result.length === 0);
+      if (empty && !analysisReady) {
+        // Never report "no result" for a document the server has not finished.
+        throw new Error(`analysis_incomplete: ${op} at ${location} returned nothing before the server finished processing the document; this is NOT an empty result - retry, or raise LEAN_NAV_READY_MS`);
+      }
       if (result === null || result === undefined) result = [];
-      return envelope("live", boundNavResult(op, result));
+      return envelope("live", boundNavResult(op, result), empty);
     } catch (err: any) {
       if (err instanceof NavRefusal) throw err;
       if (err instanceof ContentLimitError) throw new NavRefusal("bounds-exceeded", op, `${err.message} (${location})`);
@@ -4538,7 +4583,7 @@ export class McpServer {
   // only a never-settling child can trip it (the M10 guard shape).
   private counterexampleFlight = createSingleFlight<string>({ settleBudgetMs: 125000 });
 
-  private readonly leanContext?: LeanContext;
+  private leanContext?: LeanContext;
 
   constructor(projectRoot: string = process.cwd(), context?: LeanContext, options: { requireExactNavigation?: boolean } = {}) {
     this.projectRoot = projectRoot;
@@ -4547,6 +4592,14 @@ export class McpServer {
     this.ileanIndex.refresh();
     this.lakeManager = new LakeServerManager(projectRoot, this.leanContext, options);
     this.kuzuGraph = new KuzuKnowledgeGraph(undefined, { workspaceRoot: projectRoot });
+  }
+
+  /** Atomically re-bind admitted context across both live LSP sessions and the .ilean index (NavigationLifecycle ReAdmitContext). */
+  public setLeanContext(context?: LeanContext): void {
+    const next = context === undefined ? undefined : validateLeanContext(context);
+    this.leanContext = next;
+    this.lakeManager.setLeanContext(next);
+    this.ileanIndex.setLeanContext(next);
   }
 
   /** Inspection cannot grant the executable-selection privilege of lean_exec. */
@@ -4681,7 +4734,7 @@ export class McpServer {
               },
               serverInfo: {
                 name: "lean-lsp-mcp",
-                version: "0.2.0",
+                version: "0.7.0",
               },
             },
           };
@@ -7577,6 +7630,7 @@ export class McpServer {
 
   public dispose(): void {
     this.lakeManager.dispose();
+    this.ileanIndex.invalidate();
   }
 }
 

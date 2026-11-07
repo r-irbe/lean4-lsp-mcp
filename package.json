@@ -1,6 +1,6 @@
 {
   "name": "lean4-lsp-mcp",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Model Context Protocol (MCP) server for Lean 4 theorem proving, zero-latency .ilean navigation, and C FFI cross-language inspection",
   "main": "dist/index.js",
   "type": "module",
@@ -15,7 +15,7 @@
     "build": "tsc",
     "watch": "tsc --watch",
     "start": "node dist/index.js",
-    "test": "node --test tests/test_rules_fixtures.mjs tests/test_architecture.mjs && node --test tests/test_harvest.mjs && node --experimental-strip-types tests/test_lean_lsp_mcp.mjs && node --experimental-strip-types tests/test_file_worker_manager.mjs && node --experimental-strip-types tests/test_counterexample_verb.mjs && node --experimental-strip-types tests/test_project_root.mjs && node --experimental-strip-types tests/test_lean_context.mjs && node --experimental-strip-types tests/test_ilean_confinement.mjs && node --experimental-strip-types tests/test_index_binding.mjs && node --experimental-strip-types tests/test_nav_gate.mjs && node --experimental-strip-types tests/test_nav_operations.mjs && node --experimental-strip-types tests/test_ffi_admission.mjs && node --experimental-strip-types tests/test_lean_environment.mjs && node --experimental-strip-types tests/test_diagnostics_ready.mjs && node --experimental-strip-types tests/test_decl_references.mjs && node --experimental-strip-types tests/test_abstract_interpreter.mjs && node --experimental-strip-types tests/test_tranche1_modules.mjs && node --experimental-strip-types --test tests/test_proof_fidelity_audit.mjs && node --experimental-strip-types tests/test_sota_upgrades.mjs && node --experimental-strip-types tests/test_handbook_tables.mjs && node tests/test_wasm_integration.mjs",
+    "test": "node --test tests/test_rules_fixtures.mjs tests/test_architecture.mjs tests/test_tla_navigation_lifecycle.mjs && node --test tests/test_harvest.mjs && node --experimental-strip-types tests/test_lean_lsp_mcp.mjs && node --experimental-strip-types tests/test_file_worker_manager.mjs && node --experimental-strip-types tests/test_counterexample_verb.mjs && node --experimental-strip-types tests/test_project_root.mjs && node --experimental-strip-types tests/test_lean_context.mjs && node --experimental-strip-types tests/test_ilean_confinement.mjs && node --experimental-strip-types tests/test_index_binding.mjs && node --experimental-strip-types tests/test_nav_gate.mjs && node --experimental-strip-types tests/test_nav_operations.mjs && node --experimental-strip-types tests/test_ffi_admission.mjs && node --experimental-strip-types tests/test_lean_environment.mjs && node --experimental-strip-types tests/test_diagnostics_ready.mjs && node --experimental-strip-types tests/test_decl_references.mjs && node --experimental-strip-types tests/test_abstract_interpreter.mjs && node --experimental-strip-types tests/test_tranche1_modules.mjs && node --experimental-strip-types --test tests/test_proof_fidelity_audit.mjs && node --experimental-strip-types tests/test_sota_upgrades.mjs && node --experimental-strip-types tests/test_handbook_tables.mjs && node tests/test_wasm_integration.mjs",
     "bench": "node bench/driver.mjs"
   },
   "engines": {
@@ -182,6 +182,13 @@
       {
         "name": "lean_theorem_preflight",
         "description": "Composite Phase-0 theorem preflight: counterexample search, WASM proof_fidelity/SAIR audit, AltProof, and similar_proofs",
+        "access": "read",
+        "scope": "workspace",
+        "network": false
+      },
+      {
+        "name": "lean_navigate",
+        "description": "Admitted-context-gated live LSP navigation (hover, definition, typeDefinition, declaration, implementation, references, documentSymbol, workspaceSymbol, findSymbol, call hierarchy, advertise-only codeAction) and offline moduleImports/moduleImportedBy",
         "access": "read",
         "scope": "workspace",
         "network": false

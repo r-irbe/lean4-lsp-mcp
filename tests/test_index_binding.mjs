@@ -4,7 +4,7 @@ import { test } from "node:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { Lean4IleanIndex } from "../src/index.ts";
+import { Lean4IleanIndex, McpServer } from "../src/index.ts";
 
 const base = fs.mkdtempSync(path.join(os.tmpdir(), "idx-bind-"));
 const lean = path.join(base, "lean");
@@ -73,4 +73,21 @@ test("hasModule distinguishes an unknown module from one with no imports", () =>
   idx.refresh();
   assert.equal(idx.hasModule("ModA"), true);
   assert.equal(idx.hasModule("Nope"), false);
+});
+
+test("McpServer.setLeanContext and dispose atomically bump ilean generation (NavBeforeReset)", () => {
+  const prevShm = process.env.LEAN_SHM_PATH;
+  process.env.LEAN_SHM_PATH = path.join(base, "idx-bind.shm");
+  try {
+    const srv = new McpServer(project);
+    const idx = srv.getIleanIndex();
+    const g0 = idx.getGeneration();
+    idx.invalidate();
+    assert.equal(idx.getGeneration(), g0 + 1);
+    srv.dispose();
+    assert.equal(idx.getGeneration(), g0 + 2);
+  } finally {
+    if (prevShm === undefined) delete process.env.LEAN_SHM_PATH;
+    else process.env.LEAN_SHM_PATH = prevShm;
+  }
 });

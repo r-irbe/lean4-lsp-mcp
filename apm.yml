@@ -1,5 +1,5 @@
 name: lean-lsp-mcp
-version: 0.3.0
+version: 0.7.0
 description: Standalone Lean 4 + C FFI Model Context Protocol server
 dependencies:
     apm: []

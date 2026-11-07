@@ -135,6 +135,35 @@ try {
     fs.writeFileSync(path.join(root, "C.lean"), "def c := 0\n"); // exists, but no .ilean in the admitted roots
     await assert.rejects(nav({ operation: "moduleImports", filePath: "C.lean" }), /artifact-unavailable: moduleImports: module C has no \.ilean record/);
   });
+
+  await test("cold-open readiness: unfinished document returning null/[] raises analysis_incomplete, while finished [] returns empty:true", async () => {
+    fs.writeFileSync(path.join(root, "D.lean"), "def d := 42\n");
+    const prevReady = process.env.LEAN_NAV_READY_MS;
+    process.env.LEAN_NAV_READY_MS = "40";
+    behavior.__neverFinish = true;
+    behavior["textDocument/hover"] = () => null;
+    try {
+      await assert.rejects(
+        nav({ operation: "hover", filePath: "D.lean", line: 1, col: 5 }),
+        /analysis_incomplete: hover at D\.lean:1:5/,
+      );
+    } finally {
+      delete behavior.__neverFinish;
+      delete behavior["textDocument/hover"];
+      if (prevReady === undefined) delete process.env.LEAN_NAV_READY_MS;
+      else process.env.LEAN_NAV_READY_MS = prevReady;
+    }
+    // Now rewrite D.lean so syncDocument bumps version and emits processing:[]; empty codeAction is legitimately empty:true
+    fs.writeFileSync(path.join(root, "D.lean"), "def d := 43\n");
+    behavior["textDocument/codeAction"] = () => [];
+    try {
+      const out = await nav({ operation: "codeAction", filePath: "D.lean", line: 1, col: 5 });
+      assert.equal(out.empty, true);
+      assert.deepEqual(out.result, []);
+    } finally {
+      delete behavior["textDocument/codeAction"];
+    }
+  });
 } finally {
   s.dispose();
   mock.restoreAll(); syncBuiltinESMExports();

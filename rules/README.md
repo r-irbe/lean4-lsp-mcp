@@ -1,6 +1,6 @@
 # Declarative Lean 4 AST-Grep & Lint Rules
 
-This directory holds the 16 reusable declarative AST-grep / regex lint rules for Lean 4 formal verification projects. Use `lean-rules` (bundled with `lean4-lsp-mcp`) to scan `.lean` source files or directories against this rule catalog.
+This directory holds the 22 reusable declarative lint rules for Lean 4 formal verification projects (consolidated under O6). Use `lean-rules` (bundled with `lean4-lsp-mcp`) to scan `.lean` source files or directories against this rule catalog.
 
 ## Code vs prose (`scope`)
 
@@ -68,3 +68,21 @@ wording, set `scope: any`; otherwise leave it out.
 
 16. `rule-lean-pedagogical-docstring-quality`:
     - Flags vacuous docstrings that merely restate the declaration name without mathematical explanation.
+
+17. `rule-lean-no-native-decide`:
+    - Flags `native_decide`, `decide!`, and `decide +native` (`Lean.ofReduceBool`), enforcing kernel-checked reduction (`decide`, `decide +kernel`, `rfl`, `omega`).
+
+18. `rule-lean-classical-leak`:
+    - Flags unscoped module-root `open Classical` or `attribute [instance] Classical.propDecidable` outside `section ... end` or `open scoped Classical in`.
+
+19. `rule-lean-proof-length`:
+    - Flags monolithic `by` proof scripts exceeding 500 lines to encourage intermediate lemma decomposition.
+
+20. `rule-lean-public-docstring-mandate` (`severity: info`, `scope: any`):
+    - Opt-in (`--min-severity info`) check that non-`private` `def`/`theorem`/`lemma` declarations carry a preceding `/-- ... -/` docstring.
+
+21. `rule-lean-simp-unbundle-hazard`:
+    - Flags `@[simp]` on `*_apply` or `*_symm_apply` equivalence projection lemmas to prevent simp expansion loops.
+
+22. `rule-lean-undergeneral-universe`:
+    - Flags polymorphic declarations (`.{u, ...}`) that bind parameters to bare `Type` (`Type 0`) instead of `Type u`.

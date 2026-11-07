@@ -20,6 +20,12 @@ export function makeFakeLsp(log, behavior = {}) {
       child.stdout.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
     };
     const handle = (msg) => {
+      // Like real Lean: opening/changing a document starts processing, then reports it done.
+      if (msg.id === undefined && (msg.method === "textDocument/didOpen" || msg.method === "textDocument/didChange")) {
+        const uri = msg.params?.textDocument?.uri;
+        if (behavior.__neverFinish) return;
+        return setImmediate(() => send({ jsonrpc: "2.0", method: "$/lean/fileProgress", params: { textDocument: { uri }, processing: [] } }));
+      }
       if (msg.id === undefined || !msg.method) return; // notification
       log.requests.push({ session: id, method: msg.method, params: msg.params });
       setImmediate(() => {
