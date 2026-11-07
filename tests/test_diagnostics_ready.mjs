@@ -22,6 +22,12 @@ import { leanEnvironmentFingerprint } from "../src/project_root.ts";
 
 console.log("=== Testing lean_diagnostics readiness ===");
 
+// Pin direct mode AND populate LEAN_SERVE_BROKER_SCRIPT with an existing file so standalone
+// checkouts exercise the exact same broker-present condition as submodule checkouts
+// (e.g. proof-skills/tools/lean-lsp-mcp beside tools/lean-serve-broker).
+process.env.LEAN_SERVE_DIRECT = "1";
+process.env.LEAN_SERVE_BROKER_SCRIPT = path.resolve(import.meta.dirname, "../package.json");
+
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "lean-diag-"));
 fs.writeFileSync(path.join(root, "lakefile.toml"), 'name = "diag"\n');
 
