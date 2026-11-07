@@ -27,6 +27,20 @@ import {
   LAKE_ROOT_MARKERS,
   type ProjectRootResolution,
 } from "./project_root.ts";
+import {
+  NavRefusal,
+  validateNavArgs,
+  classifyOperation,
+  buildNavRequest,
+  sanitizeAdvertisedActions,
+  narrowFindSymbol,
+  boundNavResult,
+  resolveNavMode,
+  NAV_CAPABILITIES,
+  NAV_OPERATIONS,
+  type NavArgs,
+  type NavMode,
+} from "./navigation.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -394,6 +408,27 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         module: { type: "string", description: "Module to import first (the declaring module or a root re-export module), e.g. MyProject" },
       },
       required: ["symbol"],
+    },
+    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "lean_navigate",
+    description: "Live Lean LSP navigation behind the admitted-context gate: hover, definition/typeDefinition/declaration/implementation, references, documentSymbol, workspaceSymbol/findSymbol (need exactly one warm session or a filePath), call hierarchy, advertise-only codeAction, and offline moduleImports/moduleImportedBy. With an admitted Lean context requests run in `exact` mode with no ambient fallback; without one, Lake projects run in `ambient` mode (results carry contextCertified:false) and everything else is refused. Refusals read `environment_unavailable: <admission-missing|context-changed|live-identity-unavailable|ambiguous-warm-route|artifact-unavailable|bounds-exceeded>: <operation>: <detail>` and never return an empty success. Mutations (rename, executeCommand, codeAction apply) are not exposed. Use operation=capabilities to introspect without starting a session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        operation: { type: "string", enum: [...NAV_OPERATIONS], description: "Closed operation set" },
+        filePath: { type: "string", description: "Lean source file (absolute or project-relative); required for document-scoped operations" },
+        line: { type: "integer", description: "1-based line for position operations" },
+        col: { type: "integer", description: "1-based column for position operations" },
+        query: { type: "string", description: "Name query for workspaceSymbol/findSymbol (max 256 chars)" },
+        symbol: { type: "string", description: "Optional Lean name enabling the offline .ilean fallback for definition/references" },
+        includeDeclaration: { type: "boolean", description: "references only (default true)" },
+        callHierarchyItem: { type: "object", description: "Item returned by prepareCallHierarchy; required for incomingCalls/outgoingCalls" },
+      },
+      required: ["operation"],
     },
     annotations: {
       readOnlyHint: true,
@@ -1130,9 +1165,31 @@ export class Lean4IleanIndex {
     this.context = context;
   }
 
-  /** Re-bind the admitted context; callers must refresh() afterwards. */
+  /** Re-bind the admitted context and rebuild atomically (P1 §7.2): a stale index can never outlive its context. */
   public setLeanContext(context?: LeanContext): void {
     this.context = context;
+    this.refresh();
+  }
+
+  /** Bumped by every refresh; a result built under generation n must not be served under n+1. */
+  private generation = 0;
+  public getGeneration(): number {
+    return this.generation;
+  }
+  private lastCurrencyCheckMs = 0;
+  /** Hit-path currency interval (P1 §7.3); env-tunable for tests. */
+  static currencyIntervalMs(): number {
+    const n = Number(process.env.LEAN_ILEAN_CURRENCY_MS);
+    return Number.isInteger(n) && n >= 0 ? n : 5000;
+  }
+  /** Rebuild if a build landed since the last scan, checked at most once per interval. */
+  private refreshIfStale(): boolean {
+    const now = Date.now();
+    if (now - this.lastCurrencyCheckMs < Lean4IleanIndex.currencyIntervalMs()) return false;
+    this.lastCurrencyCheckMs = now;
+    if (!this.hasNewerBuilds()) return false;
+    this.refresh();
+    return true;
   }
 
   /** Admitted contexts confine discovery to moduleRoots (and their Lake build dirs). */
@@ -1151,6 +1208,7 @@ export class Lean4IleanIndex {
   }
 
   public refresh(): void {
+    this.generation++;
     this.cache.clear();
     this.symbolIndex.clear();
     this.moduleImportsMap.clear();
@@ -1521,6 +1579,9 @@ export class Lean4IleanIndex {
   public lookupSymbol(symbol: string): IleanSymbolEntry | null {
     if (this.symbolIndex.size === 0) {
       this.refresh();
+    } else {
+      // A positive hit must not be served indefinitely after `lake build`.
+      this.refreshIfStale();
     }
     let exact = this.symbolIndex.get(symbol);
     if (exact) return exact;
@@ -1605,6 +1666,12 @@ export class Lean4IleanIndex {
       );
     }
     return { direction, lines, total, resolved };
+  }
+
+  /** True when the index has a module record (distinguishes "no imports" from "unknown module"). */
+  public hasModule(moduleName: string): boolean {
+    if (this.moduleImportsMap.size === 0) this.refresh();
+    return this.moduleImportsMap.has(moduleName);
   }
 
   public getModuleImports(moduleName: string): string[] {
@@ -2599,17 +2666,181 @@ export class FileWorkerManager {
   private readonly memoryCeilingKb: number = 1048576; // 1 GB RSS ceiling
 
   private leanContext?: LeanContext;
+  /** Fingerprint of the admitted environment, captured at admission (P1 gate step 3). */
+  private navAdmissionFingerprint?: string;
+  /** Strict switch (P1 D2): constructor flag; `LEAN_NAV_REQUIRE_EXACT=1` also enables it. */
+  private requireExactNavigation = false;
+
+  private computeAdmissionFingerprint(context: LeanContext): string {
+    // stat + file reads only (compiler identity, toolchain pin, lake-manifest pin): zero spawn.
+    return leanEnvironmentFingerprint(this.projectRoot, "lean-nav-admission", [], {}, context);
+  }
 
   /** Only trusted hosts may admit context; never derive it from project files. */
   public setLeanContext(context?: LeanContext): void {
-    this.leanContext = context === undefined ? undefined : validateLeanContext(context);
+    const next = context === undefined ? undefined : validateLeanContext(context);
+    const nextFingerprint = next ? this.computeAdmissionFingerprint(next) : undefined;
+    const changed = nextFingerprint !== this.navAdmissionFingerprint;
+    this.leanContext = next;
+    this.navAdmissionFingerprint = nextFingerprint;
+    // A context change retires every live child: late replies must not land (P1 §7.1).
+    if (changed) for (const root of [...this.sessions.keys()]) this.disposeSession(root);
   }
 
-  constructor(projectRoot: string, context?: LeanContext) {
+  constructor(projectRoot: string, context?: LeanContext, options: { requireExactNavigation?: boolean } = {}) {
     this.projectRoot = path.resolve(projectRoot);
+    this.requireExactNavigation = options.requireExactNavigation === true;
     this.setLeanContext(context);
     this.startLifecycleReaper();
     this.initShmRing();
+  }
+
+  /** True when a live session was started under exactly the current admission. */
+  private sessionMatchesAdmission(session: FileWorkerSession): boolean {
+    if (!this.leanContext) return true;
+    try {
+      const explicit = planLeanInvocation(session.leanRoot, ["--server"], this.leanContext);
+      return leanEnvironmentFingerprint(session.leanRoot, explicit.command, explicit.args, process.env, explicit.context) === session.environmentFingerprint;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Admission currency: compiler stat identity + toolchain pin + lake-manifest pin. Spawn-free. */
+  private assertAdmissionCurrent(op: string, location: string): void {
+    if (!this.leanContext) return;
+    let current: string | undefined;
+    try { current = this.computeAdmissionFingerprint(this.leanContext); } catch { current = undefined; }
+    if (current === undefined || current !== this.navAdmissionFingerprint) {
+      throw new NavRefusal("context-changed", op, `the admitted compiler, toolchain pin or lake-manifest changed since admission (${location})`);
+    }
+  }
+
+  private navLocation(args: NavArgs): string {
+    return `${args.filePath ?? args.query ?? "<pathless>"}${args.line ? `:${args.line}:${args.col ?? 1}` : ""}`;
+  }
+
+  /**
+   * `lean_navigate` (P1). Gate order, with zero side effects before the verdict:
+   * validate -> resolve mode -> admission currency -> warm-route binding -> ensureSession.
+   */
+  public async navigate(raw: any, ileanIndex?: Lean4IleanIndex): Promise<string> {
+    const args = validateNavArgs(raw);
+    const op = args.operation;
+    if (op === "capabilities") return JSON.stringify(NAV_CAPABILITIES, null, 2);
+    const cls = classifyOperation(op);
+    const location = this.navLocation(args);
+
+    // 1. Where does this request land? (still no side effects)
+    let absPath: string | undefined;
+    let leanRoot: string = this.projectRoot;
+    if (args.filePath) {
+      absPath = this.resolveTargetPath(args.filePath);
+      if (!fs.existsSync(absPath)) throw new Error(`File not found: ${args.filePath}`);
+      leanRoot = this.findLeanRoot(absPath);
+    }
+
+    // 2. Mode.
+    const requireExact = this.requireExactNavigation || process.env.LEAN_NAV_REQUIRE_EXACT === "1";
+    const mode: NavMode = resolveNavMode({
+      operation: op, admitted: !!this.leanContext, requireExact, isLakeRoot: isLakeRoot(leanRoot), location,
+    });
+
+    // 3. Admission currency (compiler identity + manifest + toolchain pin), before any spawn.
+    this.assertAdmissionCurrent(op, location);
+
+    // 4. Warm-route binding.
+    let session: FileWorkerSession | undefined;
+    if (cls === "pathless" && !absPath) {
+      const live = [...this.sessions.values()].filter((s) => s.child?.exitCode === null && this.sessionMatchesAdmission(s));
+      if (live.length === 0) {
+        throw new NavRefusal("live-identity-unavailable", op, `no warm Lean session matches the current admission; run a path-scoped operation first (${location})`);
+      }
+      if (live.length > 1) {
+        throw new NavRefusal("ambiguous-warm-route", op, `${live.length} warm Lean sessions match; pass 'filePath' to select one (${location})`);
+      }
+      session = live[0];
+      leanRoot = session.leanRoot;
+    }
+
+    const envelope = (route: "live" | "offline", result: unknown) =>
+      JSON.stringify({ operation: op, mode, contextCertified: mode === "exact", route, result }, null, 2);
+    const gateGeneration = ileanIndex?.getGeneration() ?? 0;
+
+
+    // Offline module graph.
+    if (cls === "offline-module") {
+      if (!ileanIndex) throw new NavRefusal("artifact-unavailable", op, `no .ilean index is available (${location})`);
+      const moduleName = this.moduleNameFor(absPath!);
+      if (!moduleName) throw new NavRefusal("artifact-unavailable", op, `cannot derive a module name under the admitted roots (${location})`);
+      if (!ileanIndex.hasModule(moduleName)) {
+        throw new NavRefusal("artifact-unavailable", op, `module ${moduleName} has no .ilean record in the ${mode === "exact" ? "admitted module roots" : "project build"}; run a build (${location})`);
+      }
+      const result = op === "moduleImports" ? ileanIndex.getModuleImports(moduleName) : ileanIndex.getModuleImportedBy(moduleName);
+      return envelope("offline", { module: moduleName, modules: boundNavResult(op, result) });
+    }
+    // Call-hierarchy items must stay inside the project or admitted roots.
+    if (args.callHierarchyItem) {
+      this.assertUriInsideAdmittedRoots(args.callHierarchyItem.uri, op, location);
+    }
+
+    // 5. Only now: the session.
+    const offline = () => {
+      if (!ileanIndex || !args.symbol || (op !== "definition" && op !== "references")) return undefined;
+      // The live attempt awaited; the admission may have changed meanwhile. A same-context
+      // rebuild is fine (the lookup refreshes itself), a different context is not.
+      this.assertAdmissionCurrent(op, location);
+      const result = op === "definition" ? ileanIndex.lookupSymbol(args.symbol) : ileanIndex.lookupReferences(args.symbol, "usedBy");
+      const resolved = op === "definition" ? result !== null : (result as { resolved: boolean }).resolved;
+      return resolved ? envelope("offline", boundNavResult(op, result)) : undefined;
+    };
+    try {
+      session = session ?? (await this.ensureSession(leanRoot));
+      const uri = absPath && cls === "lean-targeted" && !args.callHierarchyItem ? this.syncDocument(session, absPath) : undefined;
+      const request = buildNavRequest(args, uri);
+      let result = await this.sendRequest(session, request.method, request.params);
+      if (this.sessions.get(session.leanRoot) !== session) {
+        throw new NavRefusal("context-changed", op, `the Lean session was replaced during the request (${location})`);
+      }
+      if (op === "codeAction") result = sanitizeAdvertisedActions(result);
+      if (op === "findSymbol") result = narrowFindSymbol(result, args.query!);
+      if (result === null || result === undefined) result = [];
+      return envelope("live", boundNavResult(op, result));
+    } catch (err: any) {
+      if (err instanceof NavRefusal) throw err;
+      if (err instanceof ContentLimitError) throw new NavRefusal("bounds-exceeded", op, `${err.message} (${location})`);
+      const message = String(err?.message || err);
+      const fallback = offline();
+      if (fallback) return fallback;
+      if (message.startsWith("environment_unavailable")) {
+        throw new NavRefusal("live-identity-unavailable", op, `${message.replace(/^environment_unavailable:\s*/, "")} (${location})`);
+      }
+      throw new Error(`lean_navigate ${op} failed: ${message}`);
+    }
+  }
+
+  /** Module name for a file under the project root or an admitted module root. */
+  private moduleNameFor(absPath: string): string | undefined {
+    const roots = [this.projectRoot, ...(this.leanContext?.moduleRoots ?? [])];
+    for (const root of roots) {
+      const rel = path.relative(root, absPath);
+      if (rel && !rel.startsWith("..") && !path.isAbsolute(rel) && rel.endsWith(".lean")) {
+        return rel.slice(0, -".lean".length).split(path.sep).join(".");
+      }
+    }
+    return undefined;
+  }
+
+  private assertUriInsideAdmittedRoots(uri: string, op: string, location: string): void {
+    let file: string;
+    try { file = fileURLToPath(uri); } catch {
+      throw new NavRefusal("admission-missing", op, `callHierarchyItem.uri is not a file URI (${location})`);
+    }
+    const roots = [this.projectRoot, ...(this.leanContext?.moduleRoots ?? [])];
+    let real = file;
+    try { real = fs.realpathSync(file); } catch { /* unresolved: judged lexically below */ }
+    const inside = roots.some((r) => real === r || real.startsWith(r + path.sep));
+    if (!inside) throw new NavRefusal("admission-missing", op, `callHierarchyItem.uri is outside the project and admitted module roots (${location})`);
   }
 
   public findLeanRoot(targetFile: string): string {
@@ -4309,12 +4540,12 @@ export class McpServer {
 
   private readonly leanContext?: LeanContext;
 
-  constructor(projectRoot: string = process.cwd(), context?: LeanContext) {
+  constructor(projectRoot: string = process.cwd(), context?: LeanContext, options: { requireExactNavigation?: boolean } = {}) {
     this.projectRoot = projectRoot;
     this.leanContext = context === undefined ? undefined : validateLeanContext(context);
     this.ileanIndex = new Lean4IleanIndex(projectRoot, this.leanContext);
     this.ileanIndex.refresh();
-    this.lakeManager = new LakeServerManager(projectRoot, this.leanContext);
+    this.lakeManager = new LakeServerManager(projectRoot, this.leanContext, options);
     this.kuzuGraph = new KuzuKnowledgeGraph(undefined, { workspaceRoot: projectRoot });
   }
 
@@ -4642,6 +4873,9 @@ export class McpServer {
         };
         return await this.lakeManager.getGoal(filePath, line, col, opts);
       }
+
+      case "lean_navigate":
+        return await this.lakeManager.navigate(args, this.ileanIndex);
 
       case "lean_term_goal":
       case "lean_plain_term_goal": {
