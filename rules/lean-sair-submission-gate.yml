@@ -1,0 +1,24 @@
+id: rule-lean-sair-submission-gate
+language: Lean
+profiles:
+  - sair
+severity: error
+message: "SAIR contest-forbidden construct detected (bv_decide, partial, unsafe, @[implemented_by], or @[extern])"
+note: |
+  SAIR scored implementations and proofs must remain total, kernel-reducible, and free of
+  compiler-trusting or Lean.ofReduceBool axioms. Do not use bv_decide, partial, unsafe,
+  @[implemented_by ...], or @[extern ...] on a scored or proof path; prefer total definitions,
+  kernel-checked tactics (omega, grind, simp, decide, decide +kernel), and proof-carrying @[csimp] twins.
+rule:
+  any:
+    - regex: "\\bbv_decide\\b"
+    - regex: "@\\[[^\\]]*\\b(?:implemented_by|extern)\\b[^\\]]*\\]"
+    - regex: "(?m)^\\s*(?:@\\[[^\\]]*\\]\\s*)*(?:(?:public|protected|private|noncomputable|scoped|local)\\s+)*(?:partial|unsafe)\\s+(?:(?:public|protected|private|noncomputable|partial|unsafe|scoped|local)\\s+)*(?:def|abbrev|inductive|structure|class|instance|opaque|theorem|lemma)\\b"
+fix: ""
+metadata:
+  category: correctness
+  weight: 100
+tags:
+  - lean
+  - sair
+  - tcb

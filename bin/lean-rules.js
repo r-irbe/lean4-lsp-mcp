@@ -10,35 +10,98 @@
 // RULE_COMPILE_WARNING, never a crash.
 //
 // Usage:
-//   lean-rules [files-or-dirs...] [--rules <dir>]... [--config lean-project.toml] [--json] [--min-severity warning|error]
-//   (with no positional targets, scans the current directory recursively
-//    for *.lean)
+//   lean-rules [files-or-dirs...] [--profile default|sair|all] [--rules <dir>]... [--config lean-project.toml] [--json] [--min-severity warning|error]
+//   (both `--flag value` and `--flag=value` forms are accepted; with no
+//    positional targets, scans the current directory recursively for *.lean)
 // Exit codes: 0 = no findings at or above the severity floor, 1 = findings,
 // 2 = usage error.
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
 import { parseToml, findConfig, checkArchitecture } from "./lean-architecture.mjs";
 
 const SEVERITY_ORDER = { hint: 0, info: 1, warning: 2, error: 3 };
+const VALID_PROFILES = new Set(["default", "sair", "all"]);
+const DEFAULT_RULES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "rules");
+const USAGE_LINE =
+  "usage: lean-rules [files-or-dirs...] [--profile default|sair|all] [--rules <dir>]... [--config lean-project.toml] [--json] [--min-severity warning|error]";
 
-function parseArgs(argv) {
-  const opts = { targets: [], rulesDirs: [], json: false, minSeverity: "warning" };
+export class CliUsageError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "CliUsageError";
+  }
+}
+
+export function parseArgs(argv) {
+  const opts = {
+    targets: [],
+    rulesDirs: [],
+    json: false,
+    minSeverity: "warning",
+    profile: "default",
+    help: false,
+  };
+  let positionalOnly = false;
+  const takeValue = (flag, inlineVal, nextIdx) => {
+    if (inlineVal !== undefined) {
+      if (inlineVal.length === 0) throw new CliUsageError(`missing value for ${flag}`);
+      return { value: inlineVal, nextIdx };
+    }
+    if (nextIdx + 1 >= argv.length) throw new CliUsageError(`missing value for ${flag}`);
+    return { value: argv[nextIdx + 1], nextIdx: nextIdx + 1 };
+  };
+
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--rules") opts.rulesDirs.push(argv[++i]);
-    else if (a === "--config") opts.config = argv[++i];
-    else if (a === "--json") opts.json = true;
-    else if (a === "--min-severity") opts.minSeverity = argv[++i];
-    else if (a === "--help" || a === "-h") {
-      console.log("usage: lean-rules [files-or-dirs...] [--rules <dir>]... [--config lean-project.toml] [--json] [--min-severity warning|error]");
-      process.exit(0);
-    } else opts.targets.push(a);
+    if (positionalOnly) {
+      opts.targets.push(a);
+      continue;
+    }
+    if (a === "--") {
+      positionalOnly = true;
+      continue;
+    }
+    if (a === "--help" || a === "-h") {
+      opts.help = true;
+      continue;
+    }
+    if (a === "--json") {
+      opts.json = true;
+      continue;
+    }
+    const eqIdx = a.startsWith("--") ? a.indexOf("=") : -1;
+    const flag = eqIdx >= 0 ? a.slice(0, eqIdx) : a;
+    const inlineVal = eqIdx >= 0 ? a.slice(eqIdx + 1) : undefined;
+    if (flag === "--rules") {
+      const { value, nextIdx } = takeValue(flag, inlineVal, i);
+      opts.rulesDirs.push(value);
+      i = nextIdx;
+    } else if (flag === "--config") {
+      const { value, nextIdx } = takeValue(flag, inlineVal, i);
+      opts.config = value;
+      i = nextIdx;
+    } else if (flag === "--min-severity") {
+      const { value, nextIdx } = takeValue(flag, inlineVal, i);
+      opts.minSeverity = value;
+      i = nextIdx;
+    } else if (flag === "--profile") {
+      const { value, nextIdx } = takeValue(flag, inlineVal, i);
+      opts.profile = value.toLowerCase();
+      i = nextIdx;
+    } else if (a.startsWith("-")) {
+      throw new CliUsageError(`unknown option: ${a}`);
+    } else {
+      opts.targets.push(a);
+    }
   }
   if (!(opts.minSeverity in SEVERITY_ORDER)) {
-    console.error(`unknown severity: ${opts.minSeverity}`);
-    process.exit(2);
+    throw new CliUsageError(`unknown severity: ${opts.minSeverity}`);
+  }
+  if (!VALID_PROFILES.has(opts.profile)) {
+    throw new CliUsageError(`unknown profile: ${opts.profile} (expected default|sair|all)`);
   }
   return opts;
 }
@@ -177,13 +240,32 @@ function walkLean(targets) {
   return files;
 }
 
-export function runScan({ rulesDir, rulesDirs, targets, minSeverity = "warning", config = null }) {
-  const dirs = rulesDirs ?? (rulesDir ? [rulesDir] : []);
+function ruleMatchesProfile(rule, profile) {
+  if (profile === "all") return true;
+  if (!Array.isArray(rule.profiles) || rule.profiles.length === 0) return true;
+  return rule.profiles.map((p) => String(p).toLowerCase()).includes(profile);
+}
+
+export function runScan({
+  rulesDir,
+  rulesDirs,
+  targets,
+  minSeverity = "warning",
+  config = null,
+  profile = "default",
+}) {
+  const normalizedProfile = String(profile || "default").toLowerCase();
+  if (!VALID_PROFILES.has(normalizedProfile)) {
+    throw new CliUsageError(`unknown profile: ${profile} (expected default|sair|all)`);
+  }
+  const dirs =
+    rulesDirs ??
+    (rulesDir ? [rulesDir] : fs.existsSync(DEFAULT_RULES_DIR) ? [DEFAULT_RULES_DIR] : []);
   const rules = [];
   const warnings = [];
   for (const d of dirs) {
     const r = loadRules(d);
-    rules.push(...r.rules);
+    rules.push(...r.rules.filter((rule) => ruleMatchesProfile(rule, normalizedProfile)));
     warnings.push(...r.warnings);
   }
   const cfgPath = config ?? findConfig(targets[0] ?? ".");
@@ -191,7 +273,11 @@ export function runScan({ rulesDir, rulesDirs, targets, minSeverity = "warning",
   const cfgDir = cfgPath ? path.dirname(cfgPath) : ".";
   if (cfg) for (const d of cfg.rules?.extra_dirs ?? []) {
     const full = path.resolve(cfgDir, d);
-    if (fs.existsSync(full)) { const r = loadRules(full); rules.push(...r.rules); warnings.push(...r.warnings); }
+    if (fs.existsSync(full)) {
+      const r = loadRules(full);
+      rules.push(...r.rules.filter((rule) => ruleMatchesProfile(rule, normalizedProfile)));
+      warnings.push(...r.warnings);
+    }
   }
   const compileCache = new Map();
   const compiled = (pattern) => {
@@ -261,12 +347,32 @@ export function runScan({ rulesDir, rulesDirs, targets, minSeverity = "warning",
     }
   }
   findings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.ruleId.localeCompare(b.ruleId));
-  return { findings, warnings, compileWarnRules, ruleCount: rules.length, fileCount: files.length };
+  return {
+    profile: normalizedProfile,
+    findings,
+    warnings,
+    compileWarnRules,
+    ruleCount: rules.length,
+    fileCount: files.length,
+  };
 }
 
 function main() {
-  const opts = parseArgs(process.argv.slice(2));
-  const rulesDirs = opts.rulesDirs.length > 0 ? opts.rulesDirs : [path.join(path.dirname(new URL(import.meta.url).pathname), "..", "rules")];
+  let opts;
+  try {
+    opts = parseArgs(process.argv.slice(2));
+  } catch (err) {
+    if (err instanceof CliUsageError) {
+      console.error(err.message);
+      process.exit(2);
+    }
+    throw err;
+  }
+  if (opts.help) {
+    console.log(USAGE_LINE);
+    process.exit(0);
+  }
+  const rulesDirs = opts.rulesDirs.length > 0 ? opts.rulesDirs : [DEFAULT_RULES_DIR];
   for (const rulesDir of rulesDirs) if (!fs.existsSync(rulesDir)) {
     console.error(`rules directory not found: ${rulesDir}`);
     process.exit(2);
@@ -278,22 +384,26 @@ function main() {
       process.exit(2);
     }
   }
-  const { findings, warnings, compileWarnRules, ruleCount, fileCount } = runScan({
-    rulesDirs, targets, minSeverity: opts.minSeverity, config: opts.config,
+  const { profile, findings, warnings, compileWarnRules, ruleCount, fileCount } = runScan({
+    rulesDirs,
+    targets,
+    minSeverity: opts.minSeverity,
+    config: opts.config,
+    profile: opts.profile,
   });
   if (opts.json) {
-    console.log(JSON.stringify({ ruleCount, fileCount, findings, warnings, compileWarnRules }, null, 2));
+    console.log(JSON.stringify({ profile, ruleCount, fileCount, findings, warnings, compileWarnRules }, null, 2));
   } else {
     for (const f of findings) {
       console.log(`${f.file}:${f.line} ${f.severity} [${f.ruleId}] ${f.message.split("\n")[0]}`);
     }
-    console.error(`lean-rules: ${ruleCount} rules over ${fileCount} file(s); ${findings.length} finding(s)`);
+    console.error(`lean-rules (${profile}): ${ruleCount} rules over ${fileCount} file(s); ${findings.length} finding(s)`);
     for (const w of warnings) console.error(`  warning: ${w.rule}: ${w.reason}`);
     for (const r of compileWarnRules) console.error(`  RULE_COMPILE_WARNING: ${r} (pattern not JS-compatible)`);
   }
   process.exit(findings.length > 0 ? 1 : 0);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) {
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
   main();
 }

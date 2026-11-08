@@ -1,6 +1,10 @@
 # Declarative Lean 4 AST-Grep & Lint Rules
 
-This directory holds the 22 reusable declarative lint rules for Lean 4 formal verification projects (consolidated under O6). Use `lean-rules` (bundled with `lean4-lsp-mcp`) to scan `.lean` source files or directories against this rule catalog.
+This directory holds the 22 default reusable declarative lint rules for Lean 4 formal verification projects (consolidated under O6), plus profile-scoped opt-in rules (`--profile=sair`). Use `lean-rules` (bundled with `lean4-lsp-mcp`) to scan `.lean` source files or directories against this rule catalog:
+
+```bash
+lean-rules [files-or-dirs...] [--profile=default|sair|all] [--min-severity=warning|error|info|hint] [--json]
+```
 
 ## Code vs prose (`scope`)
 
@@ -86,3 +90,8 @@ wording, set `scope: any`; otherwise leave it out.
 
 22. `rule-lean-undergeneral-universe`:
     - Flags polymorphic declarations (`.{u, ...}`) that bind parameters to bare `Type` (`Type 0`) instead of `Type u`.
+
+## Profile-Scoped Rules (`--profile=sair`)
+
+23. `rule-lean-sair-submission-gate` (`profiles: [sair]`, `severity: error`):
+    - Enforces SAIR contest submission gates beyond universal `sorry`/`axiom`/`native_decide` checks by flagging `bv_decide` (`Lean.ofReduceBool`), `partial` or `unsafe` declarations, `@[implemented_by ...]`, and `@[extern ...]`.

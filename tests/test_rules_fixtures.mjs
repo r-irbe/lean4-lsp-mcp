@@ -4,14 +4,16 @@
 // must match its target rule with zero regex compilation warnings.
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
-import { runScan } from "../bin/lean-rules.js";
+import { CliUsageError, parseArgs, runScan } from "../bin/lean-rules.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const cliPath = path.join(here, "..", "bin", "lean-rules.js");
 const rulesDir = path.join(here, "..", "rules");
 const violation = path.join(here, "fixtures", "rules", "violation.leanfix");
 const clean = path.join(here, "fixtures", "rules", "clean.leanfix");
@@ -102,6 +104,101 @@ test("all 7 O6 rule-test YAML suites pass valid and invalid cases (plus 500+ lin
       findings.some((f) => f.ruleId === "rule-lean-proof-length"),
       "expected rule-lean-proof-length to fire on >500-line proof",
     );
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("parseArgs accepts inline --flag=value, space-separated --profile sair, and rejects unknown flags", () => {
+  const inline = parseArgs([
+    "--profile=sair",
+    "--min-severity=error",
+    "--rules=/tmp/r1",
+    "--config=/tmp/lean-project.toml",
+    "--json",
+    "Foo.lean",
+  ]);
+  assert.equal(inline.profile, "sair");
+  assert.equal(inline.minSeverity, "error");
+  assert.deepEqual(inline.rulesDirs, ["/tmp/r1"]);
+  assert.equal(inline.config, "/tmp/lean-project.toml");
+  assert.equal(inline.json, true);
+  assert.deepEqual(inline.targets, ["Foo.lean"]);
+
+  const spaced = parseArgs(["--profile", "all", "--", "--literal-file.lean"]);
+  assert.equal(spaced.profile, "all");
+  assert.deepEqual(spaced.targets, ["--literal-file.lean"]);
+
+  assert.throws(() => parseArgs(["--unknown-flag"]), CliUsageError);
+  assert.throws(() => parseArgs(["--profile=bogus"]), CliUsageError);
+  assert.throws(() => parseArgs(["--profile="]), CliUsageError);
+  assert.throws(() => parseArgs(["--min-severity"]), CliUsageError);
+});
+
+test("sair profile activates rule-lean-sair-submission-gate via runScan and CLI --profile=sair while default stays clean", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lean-sair-profile-"));
+  try {
+    const cleanSair = path.join(tmp, "CleanSair.leanfix");
+    fs.writeFileSync(
+      cleanSair,
+      [
+        "def impl (n : Nat) : Nat := n + 1",
+        "theorem impl_correct (n : Nat) : impl n = n + 1 := by",
+        "  omega",
+      ].join("\n"),
+    );
+
+    const sairCases = [
+      ["bv_decide.leanfix", "theorem bad_bv (x : BitVec 8) : x = x := by\n  bv_decide\n"],
+      ["partial_def.leanfix", "partial def loop (n : Nat) : Nat := loop n\n"],
+      ["unsafe_def.leanfix", "unsafe def rawCast (n : Nat) : Nat := n\n"],
+      ["implemented_by.leanfix", "def fast (n : Nat) : Nat := n\n@[implemented_by fast]\ndef slow (n : Nat) : Nat := n\n"],
+      ["extern_attr.leanfix", '@[extern "c_fn"]\nopaque extFn : Nat -> Nat\n'],
+    ];
+
+    // Auto-resolved bundled rulesDir when omitted in runScan:
+    const defaultClean = runScan({ targets: [cleanSair] });
+    assert.equal(defaultClean.profile, "default");
+    assert.equal(defaultClean.ruleCount, 22);
+    assert.equal(defaultClean.findings.length, 0);
+
+    const sairCleanCli = spawnSync(process.execPath, [cliPath, "--profile=sair", "--json", cleanSair], {
+      encoding: "utf-8",
+    });
+    assert.equal(sairCleanCli.status, 0, sairCleanCli.stderr);
+    const sairCleanJson = JSON.parse(sairCleanCli.stdout);
+    assert.equal(sairCleanJson.profile, "sair");
+    assert.equal(sairCleanJson.ruleCount, 23);
+    assert.equal(sairCleanJson.findings.length, 0);
+
+    for (const [name, source] of sairCases) {
+      const fp = path.join(tmp, name);
+      fs.writeFileSync(fp, source);
+
+      // Default profile leaves SAIR-only constructs unflagged:
+      const defRes = runScan({ targets: [fp], profile: "default" });
+      assert.equal(
+        defRes.findings.filter((f) => f.ruleId === "rule-lean-sair-submission-gate").length,
+        0,
+        `${name} unexpectedly flagged under default profile`,
+      );
+
+      // SAIR profile flags every forbidden construct via CLI `--profile=sair`:
+      const cliRes = spawnSync(process.execPath, [cliPath, "--profile=sair", "--json", fp], {
+        encoding: "utf-8",
+      });
+      assert.equal(cliRes.status, 1, `expected exit 1 for ${name}, got ${cliRes.status}: ${cliRes.stderr}`);
+      const parsed = JSON.parse(cliRes.stdout);
+      assert.ok(
+        parsed.findings.some((f) => f.ruleId === "rule-lean-sair-submission-gate"),
+        `${name} failed to trip rule-lean-sair-submission-gate under --profile=sair`,
+      );
+    }
+
+    const badFlagCli = spawnSync(process.execPath, [cliPath, "--profile=bogus", cleanSair], {
+      encoding: "utf-8",
+    });
+    assert.equal(badFlagCli.status, 2);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
