@@ -1,6 +1,6 @@
 // packages/lean-analysis/tests/test_wasm_integration.mjs
 // Verifies real WASM engine integration with packages/lean-analysis
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -17,7 +17,7 @@ const wasmPath = path.resolve(__dirname, "../data/lean_analyzer.wasm");
 assert.ok(fs.existsSync(wasmPath), `WASM binary missing at ${wasmPath}`);
 
 const wasmBytes = fs.readFileSync(wasmPath);
-assert.ok(wasmBytes.length > 100, "WASM binary too small");
+assert.ok(wasmBytes.length > 0 && wasmBytes.length <= 131072, `WASM binary size ${wasmBytes.length} outside (0, 131072]`);
 console.log(`  [INFO] Loaded lean_analyzer.wasm (${wasmBytes.length} bytes)`);
 
 const interp = new LeanAbstractInterpreter();
@@ -141,7 +141,37 @@ const fullBufDiags = diagnoseLeanSourceWasm(
 );
 assert.ok(fullBufDiags.some((d) => d.code === "SAIR-LAW-14"), "Expected SAIR-LAW-14 from diagnoseLeanSourceWasm");
 assert.ok(fullBufDiags.some((d) => d.code === "FIDELITY-02"), "Expected FIDELITY-02 from diagnoseLeanSourceWasm");
+const reflDiag = fullBufDiags.find((d) => d.code === "FIDELITY-02");
+assert.ok(reflDiag, "Expected FIDELITY-02 diagnostic");
+assert.ok(!reflDiag.hint.includes("eval_nat%"), "Default profile must not recommend custom eval_nat% macro");
+assert.ok(!reflDiag.hint.includes("fast_decide"), "Default profile must not recommend custom fast_decide tactic");
+
+const sairDiags = diagnoseLeanSourceWasm(
+  "def step (x : Nat) : Nat := by\n  let y := x + 1\n  exact y\ndef nextDef : Nat := 1\n",
+  1
+);
+assert.ok(sairDiags.some((d) => d.code === "SAIR-LAW-03"), "Expected SAIR-LAW-03 for let inside by-block followed by top-level def");
 console.log("  [PASS] WASM Full-Buffer UTF-8 Source Diagnostics (lean_analyzer_diagnose_utf8)");
+
+// Test KnownBits64 transfer function in WASM
+assert.equal(typeof exports.lean_analyzer_known_bits64_add, "function");
+const kbMemory = exports.memory;
+const kbScratch = exports.lean_analyzer_get_scratch_ptr();
+const kbOutZero = kbScratch + 64;
+const kbOutOne = kbScratch + 72;
+const kbRc = exports.lean_analyzer_known_bits64_add(
+  BigInt.asUintN(64, ~10n),
+  10n,
+  BigInt.asUintN(64, ~5n),
+  5n,
+  kbOutZero,
+  kbOutOne
+);
+assert.equal(kbRc, 1);
+const kbView = new BigUint64Array(kbMemory.buffer, kbOutZero, 2);
+assert.equal(kbView[0], BigInt.asUintN(64, ~15n), "Expected exact KnownBits64 known_zero for 10 + 5 = 15");
+assert.equal(kbView[1], 15n, "Expected exact KnownBits64 sum 10 + 5 = 15");
+console.log("  [PASS] WASM KnownBits64 Abstract Domain Transfer (lean_analyzer_known_bits64_add)");
 
 console.log("All Real Lean WASM Engine Integration tests passed 100% cleanly!");
 

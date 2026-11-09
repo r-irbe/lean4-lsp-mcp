@@ -1,6 +1,6 @@
 // tests/test_diagnostics_ready.mjs
 // Regression tests for lean_diagnostics readiness (FileWorkerManager.getDiagnostics).
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 //
 // Regression origin: Lean publishes an EMPTY textDocument/publishDiagnostics when
 // analysis STARTS. getDiagnostics latched that first snapshot, so the first call

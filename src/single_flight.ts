@@ -21,7 +21,7 @@
  * still settles through its own finally, which must not evict a
  * post-budget replacement (the #1674 ordering rule).
  *
- * Strict 7-bit ASCII only (INV-001).
+ * Scoped Unicode policy (INV-001; typographic-free by default).
  */
 
 export class FlightBudgetError extends Error {

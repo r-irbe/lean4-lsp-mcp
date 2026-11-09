@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // bin/lean-lsp-mcp.js
 // Executable entrypoint for lean-lsp-mcp stdio server.
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -43,6 +43,18 @@ if (!fs.existsSync(sdkPath) && fs.existsSync(pkgJsonPath)) {
 
 const distEntry = path.resolve(pkgRoot, "dist/index.js");
 const srcEntry = path.resolve(pkgRoot, "src/index.ts");
+
+// Forward --lake-roots CLI flag into LEAN_LAKE_ROOTS for both dist and strip-types entrypoints.
+const cliArgs = process.argv.slice(2);
+for (let i = 0; i < cliArgs.length; i++) {
+  const arg = cliArgs[i];
+  if (arg === "--lake-roots" && cliArgs[i + 1]) {
+    process.env.LEAN_LAKE_ROOTS = cliArgs[i + 1];
+    i++;
+  } else if (arg.startsWith("--lake-roots=")) {
+    process.env.LEAN_LAKE_ROOTS = arg.slice("--lake-roots=".length);
+  }
+}
 
 const nodeMajor = Number.parseInt(process.versions.node.split(".")[0] || "0", 10);
 const nodeMinor = Number.parseInt(process.versions.node.split(".")[1] || "0", 10);

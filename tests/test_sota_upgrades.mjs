@@ -6,7 +6,7 @@
 //   - Question 7 (Proposal 5): WASM single-source proof_fidelity_audit (OVER_CONCRETE_FIXED_ARITY, UNANNOTATED_COLLECTION_LITERAL, HAVE_SUBGOAL_NAT_TRUNCATION, SAIR) + lean_minimal_hypotheses + lean_profile_proof
 //   - Question 8 (Proposal 6): lean_search (similar_proofs BM25 + lean-explore dep boost, workspace_symbols RRF, detail='summary')
 //   - Questions 4a, 10, 12b: lean_skill_dispatch, lean_theorem_preflight, and Multi-Prover Router (.v / .thy)
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 
 import assert from "node:assert";
 import * as fs from "node:fs";

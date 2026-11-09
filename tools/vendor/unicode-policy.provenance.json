@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repository": "r-irbe/pi-harness-bridge",
+    "revision": "beeb64468bfd82e381c7c684b56f4429b9d01413",
+    "path": "src/safety/unicode.ts",
+    "sha256": "24b039b418ca78365262398b4b8cbf6ec2cf23c8e84cc47e34f5f359a530ad2a"
+  },
+  "generator": {
+    "name": "node:module.stripTypeScriptTypes",
+    "mode": "strip",
+    "node": "v26.5.1"
+  },
+  "files": {
+    "unicode-policy.source.txt": "24b039b418ca78365262398b4b8cbf6ec2cf23c8e84cc47e34f5f359a530ad2a",
+    "unicode-policy.mjs": "1a3648ee41688fdbabae60070a794aaba9da94de181475b5b08d21df9f14b98f",
+    "UNICODE-ENGINE-LICENSE.txt": "e395c397aeb212f57cd14d33a5f75a96e3f02aaacb71f6412669b65329e3e216"
+  },
+  "license": "Apache-2.0"
+}

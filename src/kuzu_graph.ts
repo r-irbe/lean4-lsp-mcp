@@ -5,16 +5,101 @@
  * Directly indexes and queries the canonical 29-book, 1,759-section
  * ITP / Lean formalization knowledge base (`lean-knowledge.kz` / `prover_knowledge.kz`).
  *
- * Strict 7-bit ASCII only (INV-001).
+ * Scoped Unicode policy (INV-001; typographic-free by default).
  */
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import * as zlib from "node:zlib";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+/**
+ * Pure-Node ZIP Central Directory reader using node:zlib.
+ * Eliminates external `unzip` subprocess dependencies when loading .kz archives.
+ */
+export function readZipEntries(zipBuffer: Buffer, wantedNames?: Set<string>): Map<string, Buffer> {
+  const entries = new Map<string, Buffer>();
+  if (zipBuffer.length < 22) {
+    throw new Error("Invalid ZIP archive: buffer shorter than EOCD record");
+  }
+
+  let eocdPos = -1;
+  const minEocd = Math.max(0, zipBuffer.length - 65557);
+  for (let pos = zipBuffer.length - 22; pos >= minEocd; pos--) {
+    if (zipBuffer.readUInt32LE(pos) === 0x06054b50) {
+      const commentLen = zipBuffer.readUInt16LE(pos + 20);
+      if (pos + 22 + commentLen <= zipBuffer.length) {
+        eocdPos = pos;
+        break;
+      }
+    }
+  }
+  if (eocdPos < 0) {
+    throw new Error("Invalid ZIP archive: End of Central Directory signature not found");
+  }
+
+  const totalEntries = zipBuffer.readUInt16LE(eocdPos + 10);
+  const cdSize = zipBuffer.readUInt32LE(eocdPos + 12);
+  const cdOffset = zipBuffer.readUInt32LE(eocdPos + 16);
+  if (cdOffset + cdSize > zipBuffer.length) {
+    throw new Error("Invalid ZIP archive: Central Directory out of bounds");
+  }
+
+  let cdPos = cdOffset;
+  for (let i = 0; i < totalEntries && cdPos + 46 <= cdOffset + cdSize; i++) {
+    if (zipBuffer.readUInt32LE(cdPos) !== 0x02014b50) {
+      throw new Error("Invalid ZIP archive: malformed Central Directory file header");
+    }
+    const method = zipBuffer.readUInt16LE(cdPos + 10);
+    const compressedSize = zipBuffer.readUInt32LE(cdPos + 20);
+    const nameLen = zipBuffer.readUInt16LE(cdPos + 28);
+    const extraLen = zipBuffer.readUInt16LE(cdPos + 30);
+    const commentLen = zipBuffer.readUInt16LE(cdPos + 32);
+    const localHeaderOffset = zipBuffer.readUInt32LE(cdPos + 42);
+
+    const rawName = zipBuffer.subarray(cdPos + 46, cdPos + 46 + nameLen).toString("utf-8");
+    const baseName = path.posix.basename(rawName.replace(/\\/g, "/"));
+    cdPos += 46 + nameLen + extraLen + commentLen;
+
+    if (rawName.endsWith("/")) continue;
+    const matchKey =
+      !wantedNames
+        ? rawName
+        : wantedNames.has(rawName)
+          ? rawName
+          : wantedNames.has(baseName)
+            ? baseName
+            : "";
+    if (!matchKey) continue;
+
+    if (localHeaderOffset + 30 > zipBuffer.length || zipBuffer.readUInt32LE(localHeaderOffset) !== 0x04034b50) {
+      throw new Error(`Invalid ZIP archive: malformed local header for ${rawName}`);
+    }
+    const localNameLen = zipBuffer.readUInt16LE(localHeaderOffset + 26);
+    const localExtraLen = zipBuffer.readUInt16LE(localHeaderOffset + 28);
+    const dataStart = localHeaderOffset + 30 + localNameLen + localExtraLen;
+    const dataEnd = dataStart + compressedSize;
+    if (dataEnd > zipBuffer.length) {
+      throw new Error(`Invalid ZIP archive: truncated entry payload for ${rawName}`);
+    }
+    const compressedSlice = zipBuffer.subarray(dataStart, dataEnd);
+    let payload: Buffer;
+    if (method === 0) {
+      payload = Buffer.from(compressedSlice);
+    } else if (method === 8) {
+      payload = zlib.inflateRawSync(compressedSlice);
+    } else {
+      throw new Error(`Unsupported ZIP compression method ${method} for ${rawName}`);
+    }
+    entries.set(matchKey, payload);
+  }
+
+  return entries;
+}
 
 export interface BookRecord {
   key: string;
@@ -299,11 +384,17 @@ export class KuzuKnowledgeGraph {
     }
 
     try {
-      // Read Book.csv from zip
-      const bookCsv = execFileSync("unzip", ["-p", this.kzPath, "Book.csv"], {
-        encoding: "utf-8",
-        maxBuffer: 10 * 1024 * 1024,
-      });
+      const zipBuffer = fs.readFileSync(this.kzPath);
+      const wanted = new Set(["Book.csv", "Section.csv", "Concept.csv", "Zettel.csv", "Concordance.csv"]);
+      const zipEntries = readZipEntries(zipBuffer, wanted);
+      const bookBuf = zipEntries.get("Book.csv");
+      const sectionBuf = zipEntries.get("Section.csv");
+      if (!bookBuf || !sectionBuf) {
+        return false;
+      }
+
+      // Parse Book.csv from zip
+      const bookCsv = bookBuf.toString("utf-8");
       for (const line of bookCsv.split("\n")) {
         const trimmed = line.trim();
         if (!trimmed) continue;
@@ -321,11 +412,8 @@ export class KuzuKnowledgeGraph {
         }
       }
 
-      // Read Section.csv from zip
-      const sectionCsv = execFileSync("unzip", ["-p", this.kzPath, "Section.csv"], {
-        encoding: "utf-8",
-        maxBuffer: 25 * 1024 * 1024,
-      });
+      // Parse Section.csv from zip
+      const sectionCsv = sectionBuf.toString("utf-8");
       for (const line of sectionCsv.split("\n")) {
         const trimmed = line.trim();
         if (!trimmed) continue;
@@ -348,13 +436,10 @@ export class KuzuKnowledgeGraph {
         }
       }
 
-      // Try reading Concept.csv from zip if present
-      try {
-        const conceptCsv = execFileSync("unzip", ["-p", this.kzPath, "Concept.csv"], {
-          encoding: "utf-8",
-          maxBuffer: 10 * 1024 * 1024,
-          stdio: ["ignore", "pipe", "ignore"],
-        });
+      // Parse Concept.csv from zip if present
+      const conceptBuf = zipEntries.get("Concept.csv");
+      if (conceptBuf) {
+        const conceptCsv = conceptBuf.toString("utf-8");
         for (const line of conceptCsv.split("\n")) {
           const trimmed = line.trim();
           if (!trimmed) continue;
@@ -369,17 +454,12 @@ export class KuzuKnowledgeGraph {
             });
           }
         }
-      } catch {
-        // Concept.csv optional
       }
 
-      // Try reading Zettel.csv from zip if present
-      try {
-        const zettelCsv = execFileSync("unzip", ["-p", this.kzPath, "Zettel.csv"], {
-          encoding: "utf-8",
-          maxBuffer: 20 * 1024 * 1024,
-          stdio: ["ignore", "pipe", "ignore"],
-        });
+      // Parse Zettel.csv from zip if present
+      const zettelBuf = zipEntries.get("Zettel.csv");
+      if (zettelBuf) {
+        const zettelCsv = zettelBuf.toString("utf-8");
         for (const line of zettelCsv.split("\n")) {
           const trimmed = line.trim();
           if (!trimmed) continue;
@@ -398,17 +478,12 @@ export class KuzuKnowledgeGraph {
             });
           }
         }
-      } catch {
-        // Zettel.csv optional
       }
 
-      // Try reading Concordance.csv from zip if present
-      try {
-        const concCsv = execFileSync("unzip", ["-p", this.kzPath, "Concordance.csv"], {
-          encoding: "utf-8",
-          maxBuffer: 10 * 1024 * 1024,
-          stdio: ["ignore", "pipe", "ignore"],
-        });
+      // Parse Concordance.csv from zip if present
+      const concBuf = zipEntries.get("Concordance.csv");
+      if (concBuf) {
+        const concCsv = concBuf.toString("utf-8");
         for (const line of concCsv.split("\n")) {
           const trimmed = line.trim();
           if (!trimmed) continue;
@@ -422,8 +497,6 @@ export class KuzuKnowledgeGraph {
             });
           }
         }
-      } catch {
-        // Concordance.csv optional
       }
 
       this.loaded = true;

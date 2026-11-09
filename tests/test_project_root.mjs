@@ -1,6 +1,6 @@
 // tests/test_project_root.mjs
 // Unit tests for src/project_root.ts and the root-scoped LakeBuildGuard check.
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 //
 // Regression origin: serving a `lakefile.toml`-only project (every sair contest
 // lane) fell through the old `lakefile.lean`-only detector and was redirected to

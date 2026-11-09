@@ -18,10 +18,11 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Install dependencies
         run: npm ci || npm install
+      - name: Scoped Unicode policy (INV-001)
+        run: node tools/check-unicode.mjs
+      - name: WASM binary size gate (<= 131072 B)
+        run: node tools/check-wasm-size.mjs
       - name: Build (tsc)
         run: npm run build
       - name: Test suite
         run: npm test
-      - name: ASCII invariant (INV-001)
-        run: |
-          ! grep -rPn "[^\x00-\x7F]" src/ bin/ tests/ README.md USER_GUIDE.md

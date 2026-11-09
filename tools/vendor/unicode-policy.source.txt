@@ -1,0 +1,589 @@
+/**
+ * Unicode policy: what non-ASCII is allowed, where, and what is never allowed.
+ *
+ * INV-001 as written ("strict 7-bit ASCII") is unenforceable in this workspace:
+ * a repo-wide scan finds 72 million non-ASCII characters, almost all of them in
+ * Lean 4 sources where mathematical notation is the language's syntax. Emoji,
+ * non-Latin scripts, and mathematics are content; the thing worth banning is the
+ * *typographic substitution* set (em dashes, curly quotes, ellipsis) that the
+ * anti-slop rules actually target, plus the invisible and control characters
+ * that carry instructions a reader cannot see.
+ *
+ * So the invariant becomes scoped and categorical rather than blanket:
+ *
+ *   scope mode          what it means
+ *   ascii               strict 7-bit ASCII (manifests, machine-read files)
+ *   typographic-free    ASCII plus allowed scripts, math, and emoji; the
+ *                       substitution set and every invisible character banned
+ *   unrestricted        nothing enforced (generated bundles, vendored trees)
+ *
+ * Threats this models, from the sources cited in docs/UNICODE-AND-INJECTION.md:
+ * Unicode tag blocks U+E0000-U+E007F and orphaned surrogates (AWS Security,
+ * "Unicode character smuggling"), bidi control characters (Trojan Source),
+ * zero-width and format characters, and invisible whitespace variants. Those are
+ * banned in every scope, including `typographic-free`, because they are
+ * instruction carriers rather than content.
+ */
+
+export type UnicodeScopeMode = "ascii" | "typographic-free" | "unrestricted";
+
+export interface UnicodeScope {
+  glob: string;
+  mode: UnicodeScopeMode;
+  reason: string;
+}
+
+/** A code point range, inclusive at both ends. */
+export interface CodePointRange {
+  from: number;
+  to: number;
+}
+
+import type { WorktreeMode } from "../util/worktrees.ts";
+
+export interface IgnoreEntry {
+  glob: string;
+  reason: string;
+}
+
+export interface UnicodePolicy {
+  enabled: boolean;
+  /**
+   * Paths the scan does not read, each with the reason it is exempt. Reported
+   * with the count, so an exemption is visible rather than silent.
+   */
+  ignore: IgnoreEntry[];
+  /**
+   * Also skip whatever git ignores: scratch output that is not part of the
+   * repository at all. Note that a gitignored directory can hold a worktree,
+   * which is why `worktrees` is a separate decision.
+   */
+  respectGitignore: boolean;
+  /**
+   * "current" scans the checkout the scan started from and names every other
+   * worktree it left out, with its branch and whether that branch is merged;
+   * "all" scans those worktrees too, overruling the ignore rule that hides them.
+   */
+  worktrees: WorktreeMode;
+  /** Applied when no scope matches. */
+  defaultMode: UnicodeScopeMode;
+  scopes: UnicodeScope[];
+  /**
+   * Characters that are never allowed: invisible carriers and the typographic
+   * substitutions that make text look machine-written.
+   */
+  bannedCharacters: number[];
+  bannedRanges: CodePointRange[];
+  /**
+   * Allowed in `typographic-free` mode: scripts, symbols, and emoji. Anything
+   * non-ASCII outside these ranges is a violation there.
+   */
+  allowedRanges: CodePointRange[];
+  /** A file may not exceed this share of non-ASCII code points. */
+  maxNonAsciiRatio: number;
+  /**
+   * The ratio only applies above this size. A Chinese title, a Cyrillic heading,
+   * or a one-line emoji commit message is 100% non-ASCII and perfectly fine; the
+   * cap exists for a page that is nothing but non-ASCII filler.
+   */
+  minCodePointsForRatio: number;
+  /** A single line may not exceed this many non-ASCII code points. */
+  maxNonAsciiPerLine: number;
+}
+
+/**
+ * Typographic substitutions: characters whose only job is to replace an ASCII
+ * character that a keyboard produces.
+ *
+ * Deliberately NOT in this list: mathematics and arrows. `<=`, `>=`, `->` and
+ * `forall` have ASCII spellings in prose, but in Lean, LaTeX, and mathematical
+ * writing the symbol IS the notation, and banning it would ban the language.
+ * The substitution set is about how prose is punctuated, not about symbols.
+ */
+export const TYPOGRAPHIC_SUBSTITUTES: number[] = [
+  0x2018, // left single quotation mark
+  0x2019, // right single quotation mark
+  0x201c, // left double quotation mark
+  0x201d, // right double quotation mark
+  0x2013, // en dash
+  0x2014, // em dash
+  0x2026, // horizontal ellipsis
+  0x00a0, // no-break space (a plain space that is not a plain space)
+  0x202f, // narrow no-break space
+  0x2007, // figure space
+  0x2009, // thin space
+  0x2001, // em quad
+  0x2002, // en space
+  0x2003, // em space
+];
+
+/**
+ * Invisible instruction carriers. Banned everywhere: text a reader cannot see is
+ * text a reviewer cannot review.
+ */
+/**
+ * The ASCII equivalent of each typographic substitute.
+ *
+ * Only the characters a keyboard can produce, and only the ones this rule bans:
+ * the fixer never touches mathematics, arrows, scripts or emoji, because those are
+ * content. An em dash becomes a hyphen rather than a rewritten sentence: the
+ * policy's job is to remove the substituted character, and the author's is to
+ * decide whether the sentence wanted a comma, a colon or a full stop.
+ */
+export const TYPOGRAPHIC_REPLACEMENTS: ReadonlyMap<number, string> = new Map([
+  [0x2018, "'"], // left single quotation mark
+  [0x2019, "'"], // right single quotation mark
+  [0x201c, '"'], // left double quotation mark
+  [0x201d, '"'], // right double quotation mark
+  [0x2013, "-"], // en dash
+  [0x2014, "-"], // em dash
+  [0x2026, "..."], // horizontal ellipsis
+  [0x00a0, " "], // no-break space
+  [0x202f, " "], // narrow no-break space
+  [0x2007, " "], // figure space
+  [0x2009, " "], // thin space
+  [0x2001, " "], // em quad
+  [0x2002, " "], // en space
+  [0x2003, " "], // em space
+]);
+
+export interface TypographicFix {
+  text: string;
+  replaced: { codePoint: number; count: number }[];
+}
+
+/**
+ * Replace the banned substitutes, one code point at a time.
+ *
+ * Idempotent by construction: the replacements are ASCII, so a second pass finds
+ * nothing. Unrestricted scopes are left exactly as they are -- vendored trees are
+ * not ours to rewrite -- and the invisible carriers are deliberately *not* handled
+ * here: a file that carries tag-block characters is evidence first and a cleanup
+ * second, so the fixer reports and leaves them.
+ */
+/**
+ * Extensions whose quotes are string delimitation, not punctuation.
+ *
+ * In a source file a curly apostrophe usually sits inside a quoted literal, and
+ * rewriting it to a straight quote ends the literal: `'don\u2019t'` becomes
+ * `'don't'`, which is a syntax error, not a typographic improvement. Quotes in code
+ * are the author's to resolve, so the fixer reports them and rewrites only the
+ * dashes, ellipses and space characters around them.
+ */
+const CODE_EXTENSIONS = new Set([
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".ts",
+  ".tsx",
+  ".jsx",
+  ".py",
+  ".sh",
+  ".bash",
+  ".html",
+  ".htm",
+  ".css",
+  ".json",
+  ".yml",
+  ".yaml",
+]);
+
+const QUOTE_CODE_POINTS = new Set([0x2018, 0x2019, 0x201c, 0x201d]);
+
+export function fixTypographicSubstitutes(
+  text: string,
+  mode: UnicodeScopeMode,
+  path = "",
+): TypographicFix {
+  const isCode = [...CODE_EXTENSIONS].some((extension) => path.toLowerCase().endsWith(extension));
+  if (mode === "unrestricted") return { text, replaced: [] };
+  const counts = new Map<number, number>();
+  let out = "";
+  for (const char of text) {
+    const codePoint = char.codePointAt(0);
+    const replacement =
+      codePoint === undefined || (isCode && QUOTE_CODE_POINTS.has(codePoint))
+        ? undefined
+        : TYPOGRAPHIC_REPLACEMENTS.get(codePoint);
+    if (replacement === undefined || codePoint === undefined) {
+      out += char;
+      continue;
+    }
+    counts.set(codePoint, (counts.get(codePoint) ?? 0) + 1);
+    out += replacement;
+  }
+  return {
+    text: out,
+    replaced: [...counts.entries()].map(([codePoint, count]) => ({ codePoint, count })),
+  };
+}
+
+/**
+ * Where an emoji presentation selector is a rendering hint rather than a carrier.
+ *
+ * U+FE0F after an emoji asks the renderer for the colour glyph; it is in every
+ * chat message and status table ever written, and treating it as an attack vector
+ * reports the UI, not a threat. After anything else it is exactly what the rule
+ * says: a character nobody can see.
+ */
+export const EMOJI_BASE_RANGES: CodePointRange[] = [
+  { from: 0x2190, to: 0x2bff }, // arrows, misc symbols, dingbats
+  { from: 0x1f000, to: 0x1faff }, // emoji blocks
+  { from: 0x203c, to: 0x203c }, // double exclamation
+  { from: 0x2049, to: 0x2049 }, // exclamation question mark
+  { from: 0x3030, to: 0x3030 }, // wavy dash
+  { from: 0x303d, to: 0x303d }, // part alternation mark
+  { from: 0x3297, to: 0x3299 }, // circled ideographs
+];
+
+/**
+ * Is this code point a variation selector acting as a rendering hint?
+ *
+ * U+FE0F after an emoji asks for the colour glyph and is a hint; after anything
+ * else it is a character nobody can see. Both the file scan and the injection
+ * scan ask this question, so the answer lives in one place: a detector that
+ * disagreed with the report next to it would flag the emoji it had just excused.
+ */
+export function isEmojiPresentationSelector(code: number, previousCode: number): boolean {
+  return code === 0xfe0f && inRanges(previousCode, EMOJI_BASE_RANGES);
+}
+
+export const INVISIBLE_CARRIER_RANGES: CodePointRange[] = [
+  { from: 0xe0000, to: 0xe007f }, // tag block (AWS: smuggling vector)
+  { from: 0xd800, to: 0xdfff }, // orphaned surrogates
+  { from: 0x200b, to: 0x200f }, // zero width space .. RLM
+  { from: 0x2060, to: 0x2064 }, // word joiner, invisible operators
+  { from: 0x202a, to: 0x202e }, // bidi embeddings and overrides (Trojan Source)
+  { from: 0x2066, to: 0x2069 }, // bidi isolates
+  { from: 0xfeff, to: 0xfeff }, // zero width no-break space / BOM
+  { from: 0x180e, to: 0x180e }, // Mongolian vowel separator
+  { from: 0xe0100, to: 0xe01ef }, // variation selectors supplement
+  { from: 0xfe00, to: 0xfe0f }, // variation selectors (hide in plain sight)
+];
+
+/** Content ranges: mathematics, symbols, emoji, and the world's scripts. */
+export const CONTENT_RANGES: CodePointRange[] = [
+  { from: 0x00a1, to: 0x024f }, // Latin-1 supplement letters, Latin extended
+  { from: 0x0300, to: 0x036f }, // combining marks: Lean identifiers like x-hat are names, not decoration
+  { from: 0x02b0, to: 0x02ff }, // spacing modifier letters: phonetic notation
+  { from: 0x1d2c, to: 0x1d6a }, // superscript and subscript letters (i-sub, o-sup)
+  { from: 0x2c60, to: 0x2c7f }, // Latin extended-C: the subscript j of a Lean index
+  { from: 0x2100, to: 0x214f }, // letterlike symbols: the real, complex and natural numbers
+  { from: 0x1d400, to: 0x1d7ff }, // mathematical alphanumeric symbols: bold and script letters
+  { from: 0x2500, to: 0x257f }, // box drawing: the shape of a tree diagram is its content
+  { from: 0x2580, to: 0x259f }, // block elements, for the same reason bars and blocks exist
+  { from: 0x2705, to: 0x27bf }, // dingbats: check marks in status tables
+  { from: 0x0370, to: 0x03ff }, // Greek
+  { from: 0x0400, to: 0x04ff }, // Cyrillic
+  { from: 0x0530, to: 0x058f }, // Armenian
+  { from: 0x0590, to: 0x05ff }, // Hebrew
+  { from: 0x0600, to: 0x06ff }, // Arabic
+  { from: 0x0900, to: 0x097f }, // Devanagari
+  { from: 0x0e00, to: 0x0e7f }, // Thai
+  { from: 0x1e00, to: 0x1eff }, // Latin extended additional (Vietnamese)
+  { from: 0x2000, to: 0x206f }, // general punctuation (minus the banned set above)
+  { from: 0x2070, to: 0x209f }, // super/subscripts
+  { from: 0x20a0, to: 0x20cf }, // currency symbols
+  { from: 0x2100, to: 0x214f }, // letterlike symbols (script capitals)
+  { from: 0x2150, to: 0x218f }, // number forms (fractions, roman numerals)
+  { from: 0x2190, to: 0x21ff }, // arrows (allowed here, banned as substitutes above)
+  { from: 0x2200, to: 0x22ff }, // mathematical operators
+  { from: 0x2300, to: 0x23ff }, // misc technical
+  { from: 0x2460, to: 0x24ff }, // enclosed alphanumerics
+  { from: 0x25a0, to: 0x25ff }, // geometric shapes
+  { from: 0x2600, to: 0x27bf }, // misc symbols and dingbats (includes emoji)
+  { from: 0x27c0, to: 0x27ef }, // misc mathematical symbols-A
+  { from: 0x2900, to: 0x297f }, // supplemental arrows-B
+  { from: 0x2980, to: 0x29ff }, // misc mathematical symbols-B
+  { from: 0x2a00, to: 0x2aff }, // supplemental mathematical operators
+  { from: 0x3000, to: 0x30ff }, // CJK punctuation, hiragana, katakana
+  { from: 0x3400, to: 0x4dbf }, // CJK unified ideographs extension A
+  { from: 0x4e00, to: 0x9fff }, // CJK unified ideographs
+  { from: 0xac00, to: 0xd7af }, // Hangul syllables
+  { from: 0xf900, to: 0xfaff }, // CJK compatibility ideographs
+  { from: 0xfb00, to: 0xfb4f }, // ligatures and Hebrew presentation forms
+  { from: 0x1d400, to: 0x1d7ff }, // mathematical alphanumeric symbols
+  { from: 0x1f300, to: 0x1faff }, // emoji and pictographs
+  { from: 0x1f1e6, to: 0x1f1ff }, // regional indicators (flags)
+];
+
+export const DEFAULT_UNICODE_POLICY: UnicodePolicy = {
+  enabled: true,
+  ignore: [],
+  respectGitignore: false,
+  worktrees: "current",
+  defaultMode: "typographic-free",
+  scopes: [
+    { glob: "**/*.lean", mode: "typographic-free", reason: "Lean 4 notation is the language's syntax." },
+    { glob: "**/lakefile.lean", mode: "typographic-free", reason: "Lean build file." },
+    { glob: "**/lake-manifest.json", mode: "ascii", reason: "Machine-read manifest." },
+    { glob: "**/package.json", mode: "ascii", reason: "Machine-read manifest." },
+    { glob: "**/*.lock", mode: "ascii", reason: "Machine-read lockfile." },
+    { glob: "**/package-lock.json", mode: "ascii", reason: "Machine-read lockfile." },
+    { glob: "**/*.json", mode: "typographic-free", reason: "Config and data, read by both people and parsers." },
+    { glob: "**/*.py", mode: "typographic-free", reason: "Source of a tool; typographic substitutes are slop here, math in comments may be legitimate." },
+    { glob: "**/*.ts", mode: "typographic-free", reason: "Source of a tool." },
+    { glob: "**/*.sh", mode: "ascii", reason: "Shell scripts must be ASCII." },
+    { glob: "**/node_modules/**", mode: "unrestricted", reason: "Vendored dependencies are not ours to police." },
+    { glob: "**/vendor/**", mode: "unrestricted", reason: "Vendored copies (mermaid, fonts) are not ours to rewrite." },
+    { glob: "**/*.min.js", mode: "unrestricted", reason: "Minified output: rewriting it would break it." },
+    { glob: "**/dist/**", mode: "unrestricted", reason: "Build output." },
+    { glob: "**/.lake/**", mode: "unrestricted", reason: "Lean build cache." },
+    { glob: "packages/*/StochasticCCV/**", mode: "unrestricted", reason: "Tensor network sources mirror upstream notation." },
+    { glob: "docs/**", mode: "typographic-free", reason: "Prose and reports: substitutions are the thing being prevented." },
+    { glob: "**/*.md", mode: "typographic-free", reason: "Markdown prose." },
+    { glob: "**/*.tex", mode: "typographic-free", reason: "LaTeX: math and quotes are semantic there." },
+  ],
+  bannedCharacters: TYPOGRAPHIC_SUBSTITUTES,
+  bannedRanges: INVISIBLE_CARRIER_RANGES,
+  allowedRanges: CONTENT_RANGES,
+  maxNonAsciiRatio: 0.35,
+  minCodePointsForRatio: 500,
+  maxNonAsciiPerLine: 120,
+};
+
+export type UnicodeFindingKind =
+  | "banned-character"
+  | "invisible-carrier"
+  | "outside-allowed-ranges"
+  | "ratio-exceeded"
+  | "line-exceeded";
+
+export interface UnicodeFinding {
+  kind: UnicodeFindingKind;
+  line: number;
+  column: number;
+  codePoint: number;
+  /** The character's name, when the runtime can name it. */
+  detail: string;
+}
+
+export interface UnicodeScanResult {
+  mode: UnicodeScopeMode;
+  /** Capped at maxReportedPerFile; `total` is the true count. */
+  findings: UnicodeFinding[];
+  total: number;
+  nonAscii: number;
+  codePoints: number;
+  line: number;
+}
+
+export function inRanges(code: number, ranges: CodePointRange[]): boolean {
+  return ranges.some((range) => code >= range.from && code <= range.to);
+}
+
+/**
+ * The mode for a path: the most specific matching glob wins.
+ *
+ * Specificity is the count of literal characters in the glob, so a rule naming
+ * package.json beats one matching every .json file, regardless of the order they
+ * were written in, and a broad rule cannot accidentally override a narrow
+ * exception. Ties go to the later entry, so an explicit exception can still be
+ * placed last.
+ *
+ * (Note for edits: never write a glob with a leading double star inside a block
+ * comment. Its first three characters end the comment, and the rest of the
+ * docstring becomes code.)
+ */
+export function globSpecificity(glob: string): number {
+  return glob.replace(/[*?]/g, "").length;
+}
+
+export function modeForPath(policy: UnicodePolicy, path: string, matches: (path: string, glob: string) => boolean): UnicodeScopeMode {
+  let best: { mode: UnicodeScopeMode; score: number } | null = null;
+  for (const scope of policy.scopes) {
+    if (!matches(path, scope.glob)) continue;
+    const score = globSpecificity(scope.glob);
+    if (!best || score >= best.score) best = { mode: scope.mode, score };
+  }
+  return best ? best.mode : policy.defaultMode;
+}
+
+/** Scan one text under a mode. Findings carry line and column, so a report can point. */
+export const MAX_FINDINGS_PER_FILE = 200;
+
+export function scanUnicode(
+  text: string,
+  mode: UnicodeScopeMode,
+  policy: UnicodePolicy,
+  maxFindings = MAX_FINDINGS_PER_FILE,
+): UnicodeScanResult {
+  const result: UnicodeScanResult = {
+    mode,
+    findings: [],
+    total: 0,
+    nonAscii: 0,
+    // Counted in code points, not UTF-16 units: a tag-block character is one
+    // character to a reader, and a ratio computed over halves is a ratio of the
+    // wrong denominator.
+    codePoints: [...text].length,
+    line: 1,
+  };
+  const record = (finding: UnicodeFinding): void => {
+    result.total += 1;
+    if (result.findings.length < maxFindings) result.findings.push(finding);
+  };
+  if (mode === "unrestricted") return result;
+
+  // Columns are 1-based and point AT the offending character. Counting them by
+  // incrementing before the check reported the position after it, which is the
+  // kind of off-by-one that makes a report hard to trust.
+  let lineStart = 0;
+  let lineNonAscii = 0;
+  let lineIndex = 1;
+  let i = 0;
+  let previousCode = 0;
+  while (i < text.length) {
+    const start = i;
+    const code = text.codePointAt(i) ?? 0;
+    const emojiSelector = isEmojiPresentationSelector(code, previousCode);
+    // Stored here, not at the end of the loop: half a dozen branches continue
+    // before the end, and a stale previous value would excuse a selector that
+    // follows an ASCII character.
+    previousCode = code;
+    // Advance before the branches: every one of them is per-character, and a
+    // continue that skipped the low surrogate would report an astral character as
+    // its two halves.
+    i += code > 0xffff ? 2 : 1;
+    if (code === 10) {
+      if (lineNonAscii > policy.maxNonAsciiPerLine) {
+        record({
+          kind: "line-exceeded",
+          line: lineIndex,
+          column: 1,
+          codePoint: 0,
+          detail: `${lineNonAscii} non-ASCII characters on one line (limit ${policy.maxNonAsciiPerLine})`,
+        });
+      }
+      result.line = (result.line ?? 1) + 1;
+      lineIndex += 1;
+      lineStart = i;
+      lineNonAscii = 0;
+      continue;
+    }
+    if (code < 128) continue;
+    const column = start - lineStart + 1;
+    result.nonAscii += 1;
+    lineNonAscii += 1;
+
+    if (inRanges(code, policy.bannedRanges) && !emojiSelector) {
+      record({
+        kind: "invisible-carrier",
+        line: lineIndex,
+        column,
+        codePoint: code,
+        detail: "invisible or control character: it can carry an instruction a reader cannot see",
+      });
+      continue;
+    }
+    if (policy.bannedCharacters.includes(code)) {
+      record({
+        kind: "banned-character",
+        line: lineIndex,
+        column,
+        codePoint: code,
+        detail: "typographic substitution: write the ASCII equivalent",
+      });
+      continue;
+    }
+    if (mode === "ascii") {
+      record({
+        kind: "outside-allowed-ranges",
+        line: lineIndex,
+        column,
+        codePoint: code,
+        detail: "strict ASCII is required in this scope",
+      });
+      continue;
+    }
+    if (!emojiSelector && !inRanges(code, policy.allowedRanges)) {
+      record({
+        kind: "outside-allowed-ranges",
+        line: lineIndex,
+        column,
+        codePoint: code,
+        detail: "outside the allowed content ranges",
+      });
+    }
+  }
+
+  if (
+    result.codePoints >= policy.minCodePointsForRatio &&
+    result.nonAscii / result.codePoints > policy.maxNonAsciiRatio
+  ) {
+    record({
+      kind: "ratio-exceeded",
+      line: 0,
+      column: 0,
+      codePoint: 0,
+      detail:
+        `${(result.nonAscii / result.codePoints * 100).toFixed(1)}% of the file is non-ASCII ` +
+        `(limit ${(policy.maxNonAsciiRatio * 100).toFixed(0)}%)`,
+    });
+  }
+  return result;
+}
+
+/**
+ * Strip the invisible carriers, for text that is about to be injected into a
+ * prompt.
+ *
+ * Iterated to a fixed point on purpose: a single pass over surrogate pairs can
+ * join two orphans into a valid tag character, which is the bypass AWS documents.
+ * Removing one layer can expose another, so the pass repeats until the text stops
+ * changing.
+ */
+export function stripInvisibleCarriers(text: string, policy: UnicodePolicy): { text: string; removed: number } {
+  let current = text;
+  let removed = 0;
+  for (let pass = 0; pass < 8; pass += 1) {
+    let next = "";
+    for (const char of current) {
+      const code = char.codePointAt(0) ?? 0;
+      if (inRanges(code, policy.bannedRanges)) {
+        removed += 1;
+        continue;
+      }
+      next += char;
+    }
+    if (next === current) break;
+    current = next;
+  }
+  return { text: current, removed };
+}
+
+/**
+ * Strip the carriers the scan would flag, and only those.
+ *
+ * `stripInvisibleCarriers` above answers the injection question: remove everything
+ * invisible before this text reaches a model. This answers the file question, so it
+ * has to agree with the report it is cleaning up after: a variation selector after
+ * an emoji is a rendering hint the scan declines to flag, and a file rewrite that
+ * removed what the report excuses would be a diff nobody can justify. The predicate
+ * is the scan's, including its previous-character rule, and the pass repeats to a
+ * fixed point for the same reason the injection strip does: removing one layer of
+ * surrogates can join two orphans into a live tag character.
+ */
+export function stripUnflaggedCarriers(text: string, policy: UnicodePolicy): { text: string; removed: number } {
+  let current = text;
+  let removed = 0;
+  for (let pass = 0; pass < 8; pass += 1) {
+    let next = "";
+    let previousCode = 0;
+    let changed = false;
+    for (const char of current) {
+      const code = char.codePointAt(0) ?? 0;
+      const emojiSelector = isEmojiPresentationSelector(code, previousCode);
+      previousCode = code;
+      if (inRanges(code, policy.bannedRanges) && !emojiSelector) {
+        removed += 1;
+        changed = true;
+        continue;
+      }
+      next += char;
+    }
+    if (!changed) break;
+    current = next;
+  }
+  return { text: current, removed };
+}

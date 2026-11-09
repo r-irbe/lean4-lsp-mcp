@@ -1,6 +1,6 @@
 // tools/lean_lsp_mcp/tests/test_lean_lsp_mcp.mjs
 // Unit and integration test suite for lean-lsp-mcp standalone module
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 
 import assert from "node:assert";
 import * as path from "node:path";

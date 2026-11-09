@@ -1,7 +1,7 @@
 // packages/lean-analysis/src/abstract_interpreter.ts
 // High-Speed In-Process Abstract Interpreter & WASM Bridge for Lean 4
 // Provides offline dataflow analysis, expression lattice abstraction, and zero-process AST evaluation.
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 
 import * as fs from "node:fs";
 import * as path from "node:path";

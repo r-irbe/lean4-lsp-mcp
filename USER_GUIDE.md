@@ -113,6 +113,7 @@ When `.lake/build/lib/**/*.ilean` files exist, navigate the project without spaw
 ### 3.6 Audits, Blueprints, and C FFI
 
 - `lean_axiom_closure`: Run `#print axioms` on a declaration (`{"symbol": "MyProject.my_theorem"}`).
+- `lean_metrics` with `action: "axiom_audit"`: Scan source text for local axiom declarations and incomplete proofs. `clean` means only that the selected source scan found none; it does not check imported/transitive axioms or certify formal closure. Results are not eligible as a compiled axiom gate. Use `lean_axiom_closure` and the project's axiom policy separately.
 - `lean_module_census` / `lean_metrics`: Count declarations, theorems, definitions, and proof density across modules.
 - `lean_blueprint` / `lean_blueprint_scaffold` / `lean_proof_skeleton`: Generate PlasTeX Blueprint nodes, proof skeletons, and walkthroughs.
 - `lean_ffi`: Inspect `@[extern]` C FFI bindings and Lean sysroot headers.

@@ -2,7 +2,7 @@
 // Integration tests for lean_counterexample_search
 // (PLAN-LEAN-LSP-MCP-COUNTEREXAMPLE-VERB).
 // Auto-skips unless a Lean project with Plausible is reachable.
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 
 import assert from "node:assert";
 import * as fs from "node:fs";

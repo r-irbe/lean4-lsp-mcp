@@ -1,6 +1,6 @@
 // tools/lean_lsp_mcp/src/index.ts
 // Standalone Model Context Protocol (MCP) server for Lean 4 & C FFI.
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -277,7 +277,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "lean_metrics",
-    description: "Module and project metrics: static code census, module dependency hierarchy DAG, dependency subgraphs, dual Place-Link bigraph projection, certified axiom audit, WASM proof_fidelity/SAIR audit, and AltProof elegance/tactic analysis",
+    description: "Module and project metrics: static code census, module dependency hierarchy DAG, dependency subgraphs, dual Place-Link bigraph projection, axiom source scan, WASM proof_fidelity/SAIR audit, and AltProof elegance/tactic analysis",
     inputSchema: {
       type: "object",
       properties: {
@@ -451,8 +451,17 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "lean_server_status",
-    description: "Introspection: attach mode (broker vs direct), project root, open files, per-session and total server RSS, idle times. The recovery aid when results look stale.",
-    inputSchema: { type: "object", properties: {} },
+    description: "Introspection: attach mode (broker vs direct), project root, git/WASM/toolchain identity, multi-root Lake discovery, .ilean cache hit rates, open files, per-session and total server RSS, idle times. The recovery aid when results look stale.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        format: {
+          type: "string",
+          enum: ["text", "json"],
+          description: "Output format (default: text)",
+        },
+      },
+    },
     annotations: {
       readOnlyHint: true,
     },
@@ -1018,22 +1027,77 @@ export class BitsetDAGIndex {
         const u = queue[i];
         if (color[u] === 0) dfs(u);
       }
-      const dfsDepth = new Uint16Array(N);
-      for (let idx = postLen - 1; idx >= 0; idx--) {
-        const u = postOrder[idx];
-        const du = dfsDepth[u];
-        for (let k = off[u]; k < off[u + 1]; k++) {
-          const v = dst[k];
-          if ((visitedBits[v >>> 5] & (1 << (v & 31))) === 0) continue;
-          if (finishOrder[u] > finishOrder[v]) {
-            if (du + 1 <= maxDepth && du + 1 > dfsDepth[v]) {
-              dfsDepth[v] = du + 1;
-              if (dfsDepth[v] > maxLongestDepth) {
-                maxLongestDepth = dfsDepth[v];
+      if (maxDepth < tail) {
+        // Exact depth-bounded layered reachability along DAG forward edges (back-edges excluded).
+        let currFrontier = new Uint32Array([rootId]);
+        const stepSeen = new Uint32Array(W);
+        for (let step = 1; step <= maxDepth && currFrontier.length > 0; step++) {
+          stepSeen.fill(0);
+          const nextList: number[] = [];
+          for (let fi = 0; fi < currFrontier.length; fi++) {
+            const u = currFrontier[fi];
+            for (let k = off[u]; k < off[u + 1]; k++) {
+              const v = dst[k];
+              if ((visitedBits[v >>> 5] & (1 << (v & 31))) === 0) continue;
+              if (finishOrder[u] <= finishOrder[v]) continue;
+              const wIdx = v >>> 5;
+              const mask = 1 << (v & 31);
+              if ((stepSeen[wIdx] & mask) === 0) {
+                stepSeen[wIdx] |= mask;
+                nextList.push(v);
+              }
+            }
+          }
+          if (nextList.length > 0 && step > maxLongestDepth) {
+            maxLongestDepth = step;
+          }
+          currFrontier = new Uint32Array(nextList);
+        }
+      } else {
+        const dfsDepth = new Uint16Array(N);
+        for (let idx = postLen - 1; idx >= 0; idx--) {
+          const u = postOrder[idx];
+          const du = dfsDepth[u];
+          for (let k = off[u]; k < off[u + 1]; k++) {
+            const v = dst[k];
+            if ((visitedBits[v >>> 5] & (1 << (v & 31))) === 0) continue;
+            if (finishOrder[u] > finishOrder[v]) {
+              if (du + 1 <= maxDepth && du + 1 > dfsDepth[v]) {
+                dfsDepth[v] = du + 1;
+                if (dfsDepth[v] > maxLongestDepth) {
+                  maxLongestDepth = dfsDepth[v];
+                }
               }
             }
           }
         }
+      }
+    } else if (maxDepth < tail) {
+      // Exact depth-bounded layered reachability on the acyclic reachable subgraph.
+      // Avoids the Kahn DP saturation bug where an intermediate vertex with longestDepth[u] == maxDepth
+      // fails to propagate a shorter path (length < maxDepth) to a downstream neighbor v within maxDepth.
+      let currFrontier = new Uint32Array([rootId]);
+      const stepSeen = new Uint32Array(W);
+      for (let step = 1; step <= maxDepth && currFrontier.length > 0; step++) {
+        stepSeen.fill(0);
+        const nextList: number[] = [];
+        for (let fi = 0; fi < currFrontier.length; fi++) {
+          const u = currFrontier[fi];
+          for (let k = off[u]; k < off[u + 1]; k++) {
+            const v = dst[k];
+            if ((visitedBits[v >>> 5] & (1 << (v & 31))) === 0) continue;
+            const wIdx = v >>> 5;
+            const mask = 1 << (v & 31);
+            if ((stepSeen[wIdx] & mask) === 0) {
+              stepSeen[wIdx] |= mask;
+              nextList.push(v);
+            }
+          }
+        }
+        if (nextList.length > 0 && step > maxLongestDepth) {
+          maxLongestDepth = step;
+        }
+        currFrontier = new Uint32Array(nextList);
       }
     }
 
@@ -1131,6 +1195,12 @@ export function buildDeclReferenceGraph(source: string): Map<string, string[]> {
 export class Lean4IleanIndex {
   private projectRoot: string;
   private cache: Map<string, IleanFile> = new Map();
+  private parsedFileCache: Map<string, { mtimeMs: number; size: number; parsed: IleanFile }> = new Map();
+  private cacheHits = 0;
+  private cacheMisses = 0;
+  private visitedParseKeys: Set<string> = new Set();
+  private discoveredLakeRoots: string[] = [];
+  private extraLakeRoots: string[] = [];
   private symbolIndex: Map<string, IleanSymbolEntry> = new Map();
   private moduleImportsMap: Map<string, string[]> = new Map();
   private dagIndex: BitsetDAGIndex = new BitsetDAGIndex();
@@ -1156,18 +1226,42 @@ export class Lean4IleanIndex {
     return Number.isInteger(n) && n > 0 ? n : 16 * 1024 * 1024;
   }
 
-  public getScanReport(): { scannedFiles: number; skipped: { overFileCap: number; oversized: number; escaped: number } } {
-    return { scannedFiles: this.scannedFiles, skipped: { ...this.skipped } };
+  public getScanReport(): {
+    scannedFiles: number;
+    cacheHits: number;
+    cacheMisses: number;
+    lakeRoots: string[];
+    skipped: { overFileCap: number; oversized: number; escaped: number };
+  } {
+    return {
+      scannedFiles: this.scannedFiles,
+      cacheHits: this.cacheHits,
+      cacheMisses: this.cacheMisses,
+      lakeRoots: [...this.discoveredLakeRoots],
+      skipped: { ...this.skipped },
+    };
   }
 
-  constructor(projectRoot: string, context?: LeanContext) {
+  public getDiscoveredLakeRoots(): string[] {
+    return [...this.discoveredLakeRoots];
+  }
+
+  public setExtraLakeRoots(roots: string[]): void {
+    this.extraLakeRoots = roots.map((r) => path.resolve(r));
+  }
+
+  constructor(projectRoot: string, context?: LeanContext, extraLakeRoots?: string[]) {
     this.projectRoot = projectRoot;
     this.context = context;
+    if (extraLakeRoots) {
+      this.extraLakeRoots = extraLakeRoots.map((r) => path.resolve(r));
+    }
   }
 
   /** Re-bind the admitted context and rebuild atomically (P1 §7.2): a stale index can never outlive its context. */
   public setLeanContext(context?: LeanContext): void {
     this.context = context;
+    this.parsedFileCache.clear();
     this.refresh();
   }
 
@@ -1175,6 +1269,11 @@ export class Lean4IleanIndex {
   public invalidate(): void {
     this.generation++;
     this.cache.clear();
+    this.parsedFileCache.clear();
+    this.visitedParseKeys.clear();
+    this.discoveredLakeRoots = [];
+    this.cacheHits = 0;
+    this.cacheMisses = 0;
     this.symbolIndex.clear();
     this.moduleImportsMap.clear();
     this.declToRefs.clear();
@@ -1220,9 +1319,48 @@ export class Lean4IleanIndex {
     return this.context!.moduleRoots.some((r) => real === r || real.startsWith(r + path.sep));
   }
 
+  private static parseEnvLakeRoots(): string[] {
+    const raw = (process.env.LEAN_LAKE_ROOTS || "").trim();
+    if (!raw) return [];
+    const sep = raw.includes(path.delimiter) ? path.delimiter : ",";
+    return raw
+      .split(sep)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+      .map((s) => path.resolve(s));
+  }
+
+  private discoverSubprojectLakeRoots(baseDir: string, maxDepth: number): string[] {
+    const found: string[] = [];
+    const skipNames = new Set([".git", ".lake", "node_modules", "dist", "target", ".pi", ".gemini"]);
+    const walk = (dir: string, depth: number) => {
+      if (depth > maxDepth || !fs.existsSync(dir)) return;
+      try {
+        if (
+          fs.existsSync(path.join(dir, "lakefile.toml")) ||
+          fs.existsSync(path.join(dir, "lakefile.lean"))
+        ) {
+          found.push(path.resolve(dir));
+        }
+        if (depth === maxDepth) return;
+        for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+          if (!ent.isDirectory() || skipNames.has(ent.name) || ent.name.startsWith(".")) continue;
+          walk(path.join(dir, ent.name), depth + 1);
+        }
+      } catch {
+        // Ignore unreadable directories during subproject discovery
+      }
+    };
+    walk(baseDir, 0);
+    return found;
+  }
+
   public refresh(): void {
     this.generation++;
     this.cache.clear();
+    this.visitedParseKeys.clear();
+    this.cacheHits = 0;
+    this.cacheMisses = 0;
     this.symbolIndex.clear();
     this.moduleImportsMap.clear();
     this.declToRefs.clear();
@@ -1231,13 +1369,20 @@ export class Lean4IleanIndex {
     this.skipped = { overFileCap: 0, oversized: 0, escaped: 0 };
 
     if (this.context) {
+      this.discoveredLakeRoots = [...this.context.moduleRoots];
       const seen = new Set<string>();
       for (const root of this.admittedIleanRoots()) {
         if (seen.has(root) || !fs.existsSync(root)) continue;
         seen.add(root);
         this.scanDir(root);
       }
+      for (const k of Array.from(this.parsedFileCache.keys())) {
+        if (!this.visitedParseKeys.has(k)) this.parsedFileCache.delete(k);
+      }
       this.dagIndex.build(this.moduleImportsMap);
+      if (this.dagIndex.getNodeCount() <= 4096) {
+        this.dagIndex.precomputeClosureMatrix();
+      }
       this.lastScanTime = Date.now();
       return;
     }
@@ -1257,18 +1402,22 @@ export class Lean4IleanIndex {
       scanCurr = path.dirname(scanCurr);
     }
 
-    const candidateRoots = [
-      path.join(this.projectRoot, ".lake", "build", "lib", "lean"),
-      path.join(this.projectRoot, ".lake", "build", "ir"),
-      path.join(wsRoot, ".lake", "build", "lib", "lean"),
-      path.join(wsRoot, ".lake", "build", "ir"),
-    ];
+    const lakeRootSet = new Set<string>([
+      path.resolve(this.projectRoot),
+      path.resolve(wsRoot),
+      ...this.extraLakeRoots,
+      ...Lean4IleanIndex.parseEnvLakeRoots(),
+      ...this.discoverSubprojectLakeRoots(wsRoot, 3),
+    ]);
+    this.discoveredLakeRoots = Array.from(lakeRootSet).filter((r) => fs.existsSync(r));
 
-    // Discover .lake/packages for Mathlib and external libraries
-    const packageDirs = [
-      path.join(this.projectRoot, ".lake", "packages"),
-      path.join(wsRoot, ".lake", "packages"),
-    ];
+    const candidateRoots: string[] = [];
+    const packageDirs: string[] = [];
+    for (const lr of this.discoveredLakeRoots) {
+      candidateRoots.push(path.join(lr, ".lake", "build", "lib", "lean"));
+      candidateRoots.push(path.join(lr, ".lake", "build", "ir"));
+      packageDirs.push(path.join(lr, ".lake", "packages"));
+    }
 
     // Discover nested Lean projects under docs/*/lean if present
     const docsDir = path.join(wsRoot, "docs");
@@ -1336,20 +1485,41 @@ export class Lean4IleanIndex {
       }
     }
 
+    for (const k of Array.from(this.parsedFileCache.keys())) {
+      if (!this.visitedParseKeys.has(k)) this.parsedFileCache.delete(k);
+    }
+
     // Build high-performance Bitset and CSR/CSC index
     this.dagIndex.build(this.moduleImportsMap);
+    if (this.dagIndex.getNodeCount() <= 4096) {
+      this.dagIndex.precomputeClosureMatrix();
+    }
     this.lastScanTime = Date.now();
   }
 
+  private hasModifiedCachedFiles(): boolean {
+    for (const [key, entry] of this.parsedFileCache) {
+      try {
+        const st = fs.statSync(key);
+        if (st.mtimeMs !== entry.mtimeMs || st.size !== entry.size) return true;
+      } catch {
+        return true;
+      }
+    }
+    return false;
+  }
+
   public hasNewerBuilds(): boolean {
+    if (this.hasModifiedCachedFiles()) return true;
     if (this.context) {
       return this.admittedIleanRoots().some((r) => {
         try { return fs.existsSync(r) && fs.statSync(r).mtimeMs > this.lastScanTime; } catch { return false; }
       });
     }
-    const checkRoots = [
-      path.join(this.projectRoot, ".lake", "build", "lib", "lean"),
-    ];
+    const rootsToCheck = this.discoveredLakeRoots.length > 0
+      ? this.discoveredLakeRoots
+      : [this.projectRoot, ...this.extraLakeRoots, ...Lean4IleanIndex.parseEnvLakeRoots()];
+    const checkRoots = rootsToCheck.map((lr) => path.join(lr, ".lake", "build", "lib", "lean"));
     const docsDir = path.join(this.projectRoot, "docs");
     if (fs.existsSync(docsDir)) {
       try {
@@ -1410,15 +1580,34 @@ export class Lean4IleanIndex {
 
   private loadIlean(filePath: string): void {
     try {
+      let cacheKey = filePath;
+      let stat: fs.Stats;
       if (this.context) {
         // Fail closed: symlinked/escaping or oversized .ilean files are refused.
         const real = fs.realpathSync(filePath);
         if (!this.insideAdmittedRoot(real)) { this.skipped.escaped++; return; }
-        if (fs.statSync(real).size > Lean4IleanIndex.maxIleanFileBytes()) { this.skipped.oversized++; return; }
+        stat = fs.statSync(real);
+        if (stat.size > Lean4IleanIndex.maxIleanFileBytes()) { this.skipped.oversized++; return; }
+        cacheKey = real;
+        this.scannedFiles++;
+      } else {
+        stat = fs.statSync(filePath);
+        if (stat.size > Lean4IleanIndex.maxIleanFileBytes()) { this.skipped.oversized++; return; }
         this.scannedFiles++;
       }
-      const raw = fs.readFileSync(filePath, "utf-8");
-      const parsed: IleanFile = JSON.parse(raw);
+
+      this.visitedParseKeys.add(cacheKey);
+      let parsed: IleanFile;
+      const cached = this.parsedFileCache.get(cacheKey);
+      if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+        parsed = cached.parsed;
+        this.cacheHits++;
+      } else {
+        const raw = fs.readFileSync(cacheKey, "utf-8");
+        parsed = JSON.parse(raw);
+        this.parsedFileCache.set(cacheKey, { mtimeMs: stat.mtimeMs, size: stat.size, parsed });
+        this.cacheMisses++;
+      }
       this.cache.set(filePath, parsed);
 
       const moduleName = parsed.module || "";
@@ -1441,10 +1630,15 @@ export class Lean4IleanIndex {
         }
       } else if (moduleName) {
         const relLean = moduleName.replace(/\./g, "/") + ".lean";
-        const candidate = path.join(this.projectRoot, relLean);
-        if (fs.existsSync(candidate)) {
-          sourceFile = path.relative(this.projectRoot, candidate);
-        } else {
+        const searchRoots = [this.projectRoot, ...this.discoveredLakeRoots];
+        for (const sr of searchRoots) {
+          const candidate = path.join(sr, relLean);
+          if (fs.existsSync(candidate)) {
+            sourceFile = path.relative(this.projectRoot, candidate);
+            break;
+          }
+        }
+        if (!sourceFile) {
           const docsDir = path.join(this.projectRoot, "docs");
           if (fs.existsSync(docsDir)) {
             try {
@@ -3332,29 +3526,153 @@ export class FileWorkerManager {
     return this.forceResync(session, absPath);
   }
 
+  private static cachedMcpGitSha: string | null = null;
+  private static cachedWasmMeta: { mtimeMs: number; sizeBytes: number; sha256: string } | null = null;
+
+  private static getMcpGitSha(): string {
+    if (FileWorkerManager.cachedMcpGitSha !== null) return FileWorkerManager.cachedMcpGitSha;
+    try {
+      const mcpRepoRoot = path.resolve(__dirname, "..");
+      const out = execFileSync("git", ["rev-parse", "--short=12", "HEAD"], {
+        cwd: mcpRepoRoot,
+        encoding: "utf-8",
+        timeout: 1500,
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      FileWorkerManager.cachedMcpGitSha = out || "unknown";
+    } catch {
+      FileWorkerManager.cachedMcpGitSha = "unknown";
+    }
+    return FileWorkerManager.cachedMcpGitSha;
+  }
+
+  private static getWasmArtifactIdentity(): { sizeBytes: number; sha256: string } {
+    const wasmPath = path.resolve(__dirname, "..", "data", "lean_analyzer.wasm");
+    try {
+      const st = fs.statSync(wasmPath);
+      if (FileWorkerManager.cachedWasmMeta && FileWorkerManager.cachedWasmMeta.mtimeMs === st.mtimeMs) {
+        return {
+          sizeBytes: FileWorkerManager.cachedWasmMeta.sizeBytes,
+          sha256: FileWorkerManager.cachedWasmMeta.sha256,
+        };
+      }
+      const buf = fs.readFileSync(wasmPath);
+      const sha256 = createHash("sha256").update(buf).digest("hex");
+      FileWorkerManager.cachedWasmMeta = { mtimeMs: st.mtimeMs, sizeBytes: buf.length, sha256 };
+      return { sizeBytes: buf.length, sha256 };
+    } catch {
+      return { sizeBytes: 0, sha256: "missing" };
+    }
+  }
+
+  private resolveNearestToolchain(): string {
+    let curr = path.resolve(this.projectRoot);
+    while (true) {
+      const tcFile = path.join(curr, "lean-toolchain");
+      if (fs.existsSync(tcFile)) {
+        try {
+          const val = fs.readFileSync(tcFile, "utf-8").trim();
+          if (val) return val;
+        } catch {
+          // ignore unreadable toolchain file
+        }
+      }
+      const parent = path.dirname(curr);
+      if (parent === curr) break;
+      curr = parent;
+    }
+    return "none";
+  }
+
   /** Public entry for the lean_server_status tool: the introspection surface. */
-  serverStatus(): string {
+  serverStatus(ileanIndex?: Lean4IleanIndex, format?: string): string {
     const useDirect = process.env.LEAN_SERVE_DIRECT === "1";
+    const invocation = planLeanInvocation(this.projectRoot, ["--stdin"], this.leanContext);
+    const gitSha = FileWorkerManager.getMcpGitSha();
+    const wasmMeta = FileWorkerManager.getWasmArtifactIdentity();
+    const toolchain = this.resolveNearestToolchain();
+    const scanReport = ileanIndex?.getScanReport();
+    const lakeRoots = scanReport && scanReport.lakeRoots.length > 0 ? scanReport.lakeRoots : [this.projectRoot];
+
+    let openFiles = 0;
+    let totalRssKb = 0;
+    const sessionSummaries: Array<{
+      root: string;
+      openFiles: number;
+      rssKb: number;
+      idleSeconds: number;
+      environment: string;
+    }> = [];
+    for (const [root, session] of this.sessions) {
+      openFiles += session.openFiles.size;
+      const rss = this.getProcessRssKb(session.child.pid);
+      totalRssKb += rss;
+      sessionSummaries.push({
+        root,
+        openFiles: session.openFiles.size,
+        rssKb: rss,
+        idleSeconds: Math.round((Date.now() - session.lastActiveMs) / 1000),
+        environment: session.environmentFingerprint,
+      });
+    }
+
+    if (String(format || "").toLowerCase() === "json") {
+      return JSON.stringify(
+        {
+          projectRoot: this.projectRoot,
+          projectRootSource: this.projectRootResolution?.source ?? "explicit",
+          projectRootMarker: this.projectRootResolution?.marker ?? null,
+          mcpGitSha: gitSha,
+          wasmArtifact: wasmMeta,
+          toolchain,
+          lakeRoots,
+          ileanCache: scanReport
+            ? {
+                scannedFiles: scanReport.scannedFiles,
+                cacheHits: scanReport.cacheHits,
+                cacheMisses: scanReport.cacheMisses,
+                skipped: scanReport.skipped,
+              }
+            : null,
+          stdinInvocation: {
+            command: invocation.command,
+            args: invocation.args,
+            cwd: invocation.cwd,
+            via: invocation.via,
+          },
+          attachMode: useDirect ? "direct" : "broker",
+          sessions: sessionSummaries,
+          totalOpenFiles: openFiles,
+          totalServerRssKb: totalRssKb,
+        },
+        null,
+        2
+      );
+    }
+
     const lines: string[] = [];
     lines.push(`projectRoot: ${this.projectRoot}`);
     if (this.projectRootResolution) {
       const r = this.projectRootResolution;
       lines.push(`projectRoot source: ${r.source}${r.marker ? ` (marker ${r.marker})` : ""}`);
     }
-    const invocation = planLeanInvocation(this.projectRoot, ["--stdin"], this.leanContext);
+    lines.push(`mcp gitSha: ${gitSha}`);
+    lines.push(`wasm artifact: ${wasmMeta.sizeBytes} bytes (sha256:${wasmMeta.sha256.slice(0, 16)})`);
+    lines.push(`toolchain: ${toolchain}`);
+    lines.push(`lake roots (${lakeRoots.length}): ${lakeRoots.join(", ")}`);
+    if (scanReport) {
+      lines.push(
+        `ilean cache: ${scanReport.scannedFiles} file(s), ${scanReport.cacheHits} hit(s), ${scanReport.cacheMisses} miss(es)`
+      );
+    }
     lines.push(`stdin invocation: ${invocation.command} ${invocation.args.join(" ")} (cwd ${invocation.cwd}, via ${invocation.via})`);
     if (invocation.via === "bare") {
       lines.push(`root markers: none of ${LAKE_ROOT_MARKERS.join(", ")} found; set LEAN_PROJECT_ROOT to a Lake project root for project imports`);
     }
     lines.push(`attach mode: ${useDirect ? "direct (LEAN_SERVE_DIRECT=1)" : "broker (lean-serve-broker singleton)"}`);
     lines.push(`sessions: ${this.sessions.size}`);
-    let openFiles = 0;
-    let totalRssKb = 0;
-    for (const [root, session] of this.sessions) {
-      openFiles += session.openFiles.size;
-      const rss = this.getProcessRssKb(session.child.pid);
-      totalRssKb += rss;
-      lines.push(`  session ${root}: ${session.openFiles.size} open file(s), server RSS ${rss} kB, idle ${Math.round((Date.now() - session.lastActiveMs) / 1000)}s, environment: ${session.environmentFingerprint}`);
+    for (const s of sessionSummaries) {
+      lines.push(`  session ${s.root}: ${s.openFiles} open file(s), server RSS ${s.rssKb} kB, idle ${s.idleSeconds}s, environment: ${s.environment}`);
     }
     lines.push(`total open files: ${openFiles}`);
     lines.push(`total server RSS: ${totalRssKb} kB`);
@@ -4950,7 +5268,7 @@ export class McpServer {
       }
 
       case "lean_server_status": {
-        return this.lakeManager.serverStatus();
+        return this.lakeManager.serverStatus(this.ileanIndex, args.format);
       }
 
       case "lean_lookup_symbol":
@@ -5055,7 +5373,11 @@ export class McpServer {
       case "lean_run_code": {
         const code = args.code;
         if (!code) throw new Error("Missing required argument: 'code'");
-        return this.runLeanStdin(code, args.context === undefined ? this.leanContext : validateLeanContext(args.context));
+        return this.runLeanStdin(
+          code,
+          args.context === undefined ? this.leanContext : validateLeanContext(args.context),
+          args.timeoutMs
+        );
       }
 
       case "lean_axiom_closure": {
@@ -5315,7 +5637,18 @@ export class McpServer {
         } else if (source === "loogle") {
           return formatWithDetail(await this.executeTool("lean_loogle_search", { query }));
         } else if (source === "ontology") {
-          return formatWithDetail(await this.executeTool("lean_ontology_search", { query, prover: args.prover }));
+          const baseOntology = await this.executeTool("lean_ontology_search", { query, prover: args.prover });
+          const kgConcepts = this.kuzuGraph.searchConcepts(String(query), limit);
+          const kgZettels = this.kuzuGraph.searchZettels(String(query), limit);
+          const extraLines: string[] = [];
+          for (const c of kgConcepts) {
+            extraLines.push(`Concept: ${c.name} [${c.domainTheory || "general"}] (${c.id})${c.msc2020 ? ` MSC:${c.msc2020}` : ""}`);
+          }
+          for (const z of kgZettels) {
+            extraLines.push(`Zettel: ${z.title} [${z.status || "note"}] (${z.id})${z.filePath ? ` @ ${z.filePath}` : ""}`);
+          }
+          const combined = extraLines.length > 0 ? `${baseOntology}\n\n${extraLines.join("\n")}` : baseOntology;
+          return formatWithDetail(combined);
         } else if (source === "arxiv") {
           return formatWithDetail(await this.executeTool("lean_arxiv_search", { query, category: args.category, maxResults: limit }));
         } else if (source === "datasets" || source === "dataset") {
@@ -5338,9 +5671,27 @@ export class McpServer {
         } else if (source === "symbol") {
           return formatWithDetail(await this.executeTool("lean_lookup_symbol", { symbol: query }));
         } else if (source === "graph") {
-          const results = this.kuzuGraph.search(query, limit);
-          if (results.length === 0) return "No matching sections found in Kuzu knowledge graph.";
-          return formatWithDetail(results.map(r => `Section: ${r.sectionId} | Book: ${r.bookTitle} (${r.bookKey})\nTitle: ${r.sectionTitle}\nScore: ${r.score.toFixed(2)}\n`).join("\n"));
+          const sections = this.kuzuGraph.search(String(query), limit);
+          const concepts = this.kuzuGraph.searchConcepts(String(query), limit);
+          const zettels = this.kuzuGraph.searchZettels(String(query), limit);
+          if (sections.length === 0 && concepts.length === 0 && zettels.length === 0) {
+            return "No matching sections found in Kuzu knowledge graph.";
+          }
+          const blocks: string[] = [];
+          for (const r of sections) {
+            blocks.push(`Section: ${r.sectionId} | Book: ${r.bookTitle} (${r.bookKey})\nTitle: ${r.sectionTitle}\nScore: ${r.score.toFixed(2)}\n`);
+          }
+          for (const c of concepts) {
+            blocks.push(
+              `Concept: ${c.id} | Domain: ${c.domainTheory || "general"}\nName: ${c.name}${c.msc2020 ? `\nMSC2020: ${c.msc2020}` : ""}\n`
+            );
+          }
+          for (const z of zettels) {
+            blocks.push(
+              `Zettel: ${z.id} | Status: ${z.status || "note"}\nTitle: ${z.title}${z.filePath ? `\nFile: ${z.filePath}` : ""}\n`
+            );
+          }
+          return formatWithDetail(blocks.join("\n"));
         } else if (source === "leansearch" || source === "mathlib_web") {
           const num_results = limit;
           try {
@@ -6449,21 +6800,30 @@ export class McpServer {
 
         const isClean = customAxioms.length === 0 && sorries.length === 0;
         const format = String(args.format || "markdown").toLowerCase();
+        const scopeNote =
+          "Source-text scan only: checks selected .lean files for local axiom declarations and sorry/admit tokens; does not inspect imported/transitive axioms or certify formal closure. Not eligible as a compiled axiom gate; run lean_axiom_closure (#print axioms) separately.";
 
         if (format === "json") {
           return JSON.stringify({
             target: targetPath,
             clean: isClean,
+            evidence_kind: "source-text-scan",
+            transitive_axiom_closure_checked: false,
+            gate_eligible: false,
+            scope_note: scopeNote,
             modules_scanned: filesToScan.length,
             declarations_scanned: totalDeclarations,
             custom_axioms: customAxioms,
             sorries: sorries,
-            verdict: isClean ? "PASS: 0 custom axioms, 0 sorry" : "FAIL: violations detected"
+            verdict: isClean
+              ? "SOURCE SCAN CLEAR: 0 local custom axioms, 0 local sorry/admit tokens in scanned files (not a transitive axiom-closure check)"
+              : "SOURCE SCAN FINDINGS: local custom axioms or sorry/admit tokens detected in scanned files"
           }, null, 2);
         } else {
           const lines = [
-            `# Lean Axiom and Soundness Audit: ${targetPath}`,
-            `- **Status**: ${isClean ? "PASS (Zero Custom Axioms, Zero Sorries)" : "FAIL (Violations Detected)"}`,
+            `# Lean Axiom Source Scan: ${targetPath}`,
+            `- **Status**: ${isClean ? "SOURCE SCAN CLEAR (Zero Local Custom Axioms, Zero Local Sorries in Scanned Files)" : "SOURCE SCAN FINDINGS (Local Custom Axioms or Sorries Detected)"}`,
+            `- **Evidence Kind**: \`source-text-scan\` (\`transitive_axiom_closure_checked: false\`, \`gate_eligible: false\`)`,
             `- **Scanned Modules**: ${filesToScan.length}`,
             `- **Scanned Declarations**: ${totalDeclarations}`,
             `- **Custom Axioms Detected**: ${customAxioms.length}`,
@@ -6484,9 +6844,7 @@ export class McpServer {
             }
           }
 
-          if (isClean) {
-            lines.push("", "Verified: Formally closed system with zero unproved goals and zero custom kernel axioms.");
-          }
+          lines.push("", `> Note: ${scopeNote}`);
 
           return lines.join("\n");
         }
@@ -7378,10 +7736,18 @@ export class McpServer {
    * modules resolve; the failure text carries a [hint] when the error is an
    * environment error (`unknown module prefix`, `unknown package`).
    */
-  private runLeanStdin(code: string, context: LeanContext | undefined = this.leanContext): string {
+  private runLeanStdin(
+    code: string,
+    context: LeanContext | undefined = this.leanContext,
+    timeoutMsArg?: unknown
+  ): string {
     const invocation = planLeanInvocation(this.projectRoot, ["--stdin"], context);
     const unavailable = leanContextUnavailable(invocation);
     if (unavailable) return unavailable;
+    const rawDefaultTimeout = Number(process.env.LEAN_RUN_CODE_TIMEOUT_MS);
+    const defaultTimeoutMs =
+      Number.isInteger(rawDefaultTimeout) && rawDefaultTimeout >= 1000 ? rawDefaultTimeout : 15000;
+    const timeoutMs = clampInt(timeoutMsArg, 1000, 120000, defaultTimeoutMs);
     try {
       const out = execFileSync(invocation.command, invocation.args, {
         input: code,
@@ -7390,11 +7756,26 @@ export class McpServer {
         maxBuffer: 1024 * 1024,
         encoding: "utf-8",
         stdio: ["pipe", "pipe", "pipe"],
-        timeout: 15000,
+        timeout: timeoutMs,
       });
       return out.trim() || "No output";
     } catch (err: any) {
+      const timedOut =
+        err?.code === "ETIMEDOUT" ||
+        Boolean(err?.killed) ||
+        String(err?.signal || "") === "SIGTERM" ||
+        /ETIMEDOUT|timed out/i.test(String(err?.message || ""));
       const combined = `${err.stdout || ""}${err.stderr || ""}` || String(err.message || err);
+      if (timedOut) {
+        return (
+          `Error: timeout_expired after ${timeoutMs}ms (${err.message || "Lean stdin execution timed out"})\n` +
+          `Output: ${err.stdout || ""}\n` +
+          `Error Output: ${err.stderr || ""}\n` +
+          `[hint] Increase timeoutMs (up to 120000ms) or LEAN_RUN_CODE_TIMEOUT_MS, or bound elaboration with ` +
+          `\`set_option maxHeartbeats 400000\` / \`set_option maxRecDepth 4096\`.` +
+          `${explainLeanFailure(combined, invocation)}`
+        );
+      }
       return `Error: ${err.message || String(err)}\nOutput: ${err.stdout || ""}\nError Output: ${err.stderr || ""}${explainLeanFailure(combined, invocation)}`;
     }
   }
@@ -7639,6 +8020,16 @@ let mainStarted = false;
 export function main(): void {
   if (mainStarted) return;
   mainStarted = true;
+  const argv = process.argv.slice(2);
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--lake-roots" && argv[i + 1]) {
+      process.env.LEAN_LAKE_ROOTS = argv[i + 1];
+      i++;
+    } else if (arg.startsWith("--lake-roots=")) {
+      process.env.LEAN_LAKE_ROOTS = arg.slice("--lake-roots=".length);
+    }
+  }
   const resolution = resolveProjectRoot(process.cwd());
   const server = new McpServer(resolution.root);
   server.setProjectRootResolution(resolution);

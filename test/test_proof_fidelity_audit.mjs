@@ -1,7 +1,7 @@
 // test_proof_fidelity_audit.mjs
 // Unit tests for auditLeanProofFidelity verifying 100% detection of all 7 defect patterns
 // and 0 false positives on well-formed theorems.
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 
 import { describe, it } from "node:test";
 import * as assert from "node:assert/strict";

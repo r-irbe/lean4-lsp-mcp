@@ -1,7 +1,7 @@
 // packages/lean-analysis/tests/test_abstract_interpreter.mjs
 // Test suite for in-process abstract interpreter, sign-interval mutual reduction,
 // full Nat operator transfers, and Cousot-Cousot widening/narrowing fixpoints.
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 
 import assert from "node:assert/strict";
 import {

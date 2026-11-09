@@ -309,6 +309,21 @@ export function explainLeanVersion(output: string, context: LeanContext): string
 
 const MODULE_PREFIX_RE = /unknown module prefix '([^']+)'/;
 const UNKNOWN_PACKAGE_RE = /unknown package '([^']+)'/;
+const UNKNOWN_TACTIC_RE = /unknown tactic '(ring_nf|ring|nlinarith|linarith|norm_num|positivity|aesop|tauto|field_simp|zify|push_cast)'/;
+
+const CORE_ONLY_TACTIC_HINTS: Record<string, string> = {
+  ring: "Use `omega` for linear Nat/Int equalities, `ac_rfl` for associative-commutative monoids, `grind`, or explicit `simp [Nat.mul_add, Nat.add_mul, Nat.add_assoc, Nat.add_comm]` in Core-only environments.",
+  ring_nf: "Use `omega` for linear Nat/Int arithmetic, `grind`, or `simp [Nat.mul_add, Nat.add_mul, Nat.add_assoc, Nat.add_comm]` in Core-only environments.",
+  linarith: "Use `omega` for linear Nat/Int inequalities and equalities in Core-only Lean 4 without Mathlib.",
+  nlinarith: "Introduce intermediate nonlinear bounds with `have` (e.g. `Nat.mul_le_mul`), then discharge the linear obligation with `omega`.",
+  norm_num: "Use `decide` (or `decide +kernel`) for closed decidable propositions or `rfl` for definitional reduction; avoid `native_decide` on contest-gated paths.",
+  positivity: "Use `omega`, `Nat.zero_le`, or `Nat.succ_pos` in Core-only environments.",
+  aesop: "Use `grind`, `simp_all`, `decide`, or explicit `cases`/`constructor` splits in Core-only environments.",
+  tauto: "Use `decide` on decidable propositions, `by_cases`, or `grind` in Core-only environments.",
+  field_simp: "Clear denominators manually with multiplication lemmas before applying `omega` or `grind` in Core-only environments.",
+  zify: "Lift `Nat` subtraction guards explicitly using `Int.ofNat` lemmas followed by `omega`.",
+  push_cast: "Use `simp` with `Int.ofNat_add` / `Int.ofNat_mul` followed by `omega` in Core-only environments.",
+};
 
 /**
  * Append the fix to a Lean failure that is really an environment failure.
@@ -340,6 +355,16 @@ export function explainLeanFailure(output: string, invocation: LeanInvocation): 
       "",
       `[hint] package '${pkg[1]}' is not in the Lake workspace of ${invocation.cwd}.`,
       "       Run `lake update` there, or set LEAN_PROJECT_ROOT to the workspace root that declares it.",
+    ].join("\n");
+  }
+  const tac = UNKNOWN_TACTIC_RE.exec(output);
+  if (tac) {
+    const tacName = tac[1];
+    const replacement = CORE_ONLY_TACTIC_HINTS[tacName] || "Use Core/Init tactics (`omega`, `grind`, `simp`, `decide`) or import the declaring Mathlib tactic module.";
+    return [
+      "",
+      `[hint] tactic '${tacName}' is a Mathlib tactic not imported in this environment.`,
+      `       Core-only alternative: ${replacement}`,
     ].join("\n");
   }
   return "";

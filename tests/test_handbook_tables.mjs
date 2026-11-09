@@ -5,7 +5,7 @@
 //   - lean_cross_itp_concordance falls back to handbook rows when neither the
 //     concordance table, the master authority index, nor book indexes match
 //   - the vendored copy stays byte-identical to the pi-lens canonical asset
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 
 import assert from "node:assert";
 import * as fs from "node:fs";

@@ -1,6 +1,6 @@
 // tests/test_file_worker_manager.mjs
 // Unit and integration test suite for FileWorkerManager
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 
 import assert from "node:assert";
 import * as fs from "node:fs";

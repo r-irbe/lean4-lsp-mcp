@@ -1,6 +1,6 @@
 // tests/test_decl_references.mjs
 // Unit tests for .ilean `references` ingestion (Lean4IleanIndex.lookupReferences).
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 //
 // Regression origin: the .ilean reader consumed only `decls` and ignored the
 // `references` map, so the index knew where a name was declared but not which

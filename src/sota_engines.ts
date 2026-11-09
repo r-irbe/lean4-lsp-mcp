@@ -6,7 +6,7 @@
 //   - Question 7 (Proposal 5): `lean_minimal_hypotheses` (de-Bruijn + grouped-binder ablation) + `lean_profile_proof` (`lean --profile` wrapper)
 //   - Question 8 (Proposal 6): Hybrid Search (Rango/CoqPilot `similar_proofs`, `workspace/symbol`, Reciprocal Rank Fusion + `lean-explore` transitive dep boost, `detail: "summary" | "full"`)
 //   - Questions 4a, 10, 12b: `lean_skill_dispatch`, `lean_theorem_preflight`, and Multi-Prover Router (`.lean`, `.v`, `.thy`)
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 
 import * as fs from "node:fs";
 import * as path from "node:path";

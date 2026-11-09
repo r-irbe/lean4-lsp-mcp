@@ -13,7 +13,7 @@
  * modules legitimately exceed it (large generated namespaces).
  * Override with LSP_CONTENT_LIMIT_BYTES / LSP_CONTENT_LIMIT_LINES.
  *
- * Strict 7-bit ASCII only (INV-001).
+ * Scoped Unicode policy (INV-001; typographic-free by default).
  */
 
 import { Buffer } from "node:buffer";

@@ -1,6 +1,6 @@
 // tests/test_tranche1_modules.mjs
 // Unit lane for the pi-lens tranche-1 port: content limits and the
-// single-flight primitive. Strict 7-bit ASCII only (INV-001).
+// single-flight primitive. Scoped Unicode policy (INV-001; typographic-free by default).
 
 import assert from "node:assert/strict";
 import { exceedsLspContentLimits, ContentLimitError, contentLimitBounds } from "../src/content_limits.ts";

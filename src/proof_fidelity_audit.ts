@@ -3,7 +3,7 @@
 // Delegates to `LeanAbstractInterpreter.diagnoseSourceText()` (`lean_analyzer.wasm`) merged
 // with structural theorem-block analysis so all 10 proof-fidelity defect classes,
 // 4 soundness classes (`SOUND-01..04`), and 37 `SAIR-LAW-*` diagnostics are reported from a single source.
-// Strict 7-bit ASCII only (INV-001).
+// Scoped Unicode policy (INV-001; typographic-free by default).
 
 import { LeanAbstractInterpreter, type WasmSourceDiagnostic } from "./abstract_interpreter.ts";
 
