@@ -1678,6 +1678,7 @@ export interface AltProofGoalFeatures {
   hasWellFormed: boolean;
   hasChannelOrPrior: boolean;
   hasBitVec?: boolean;
+  hasEquality?: boolean;
 }
 
 export interface AltProofTacticRecommendation {
@@ -1847,6 +1848,38 @@ export const ALTPROOF_ROUTE_TABLE: AltProofRoute[] = [
     rewriteHint: "generalize fixed-arity parameters to Fin n / List or attach certified termination_by n - i decreasing_by omega",
     costHint: "eliminates fixed-arity duplication and WellFounded fuel boilerplate",
     provenance: "lean-analyzer SOUND-04 NatZoneDomain::check_nat_sub_decreasing + FIDELITY-08"
+  },
+  {
+    id: "sair_decide",
+    family: "kernel-friendly-term-design",
+    matchShape: "decidable Nat/Bool/Int equality or inequality on a strict 3-axiom kernel lane where Lean.ofReduceBool is forbidden",
+    rewriteHint: "close via sair_decide (first | rfl | decide +kernel | omega) without invoking native_decide or bv_decide",
+    costHint: "0 Lean.ofReduceBool axioms; direct WHNF or verified Presburger closure",
+    provenance: "Template_SairDecide.lean + SAIR 3-axiom contest gate"
+  },
+  {
+    id: "proof-carrying-codegen",
+    family: "abstraction-concrete-duality",
+    matchShape: "verified BitVec/SWAR bitwise or width-guarded arithmetic kernel lowered to MLIR, CUDA sm_89 PTX, AVX2, or C++20",
+    rewriteHint: "prove equivalence to clean spec in Lean (PolyBitOp / CheckedWord.needsWide) and verify native N01..N12 conformance",
+    costHint: "zero-UB native execution with bit-exact Lean #eval conformance",
+    provenance: "Template_ProofCarryingCodegen.lean + WAVE-13 G1 duality"
+  },
+  {
+    id: "eqsat-congruence-closure",
+    family: "equality-saturation",
+    matchShape: "bidirectional equational chains (commutativity/associativity/congruence) where directional simp loops or stalls",
+    rewriteHint: "close via eqsat_rw [h1, h2, ...] (pure-Lean kernel Eq.trans/congruence saturation) or grind_close",
+    costHint: "0 external FFI binaries; reconstructs compact kernel Eq.trans / congrArg proof terms",
+    provenance: "AltProof.Core.eqsat_rw + core Lean grind congruence closure"
+  },
+  {
+    id: "backchain-solve-by-elim",
+    family: "backchaining-search",
+    matchShape: "shallow Horn-clause / implication / monotonicity / membership obligations solvable from local context + curated lemmas",
+    rewriteHint: "close via backchain or backchain [lem1, lem2] (core Lean SolveByElim bounded depth-first search)",
+    costHint: "core-only (0 Mathlib required); deterministic bounded backchaining without aesop import weight",
+    provenance: "Lean.Elab.Tactic.SolveByElim + AltProof.Core.backchain"
   }
 ];
 
@@ -1868,7 +1901,7 @@ const ALTPROOF_RENDERABLE_PATTERNS: RegExp[] = [
   /^apply\s+\S/,
   /^have\s+\w+\s*:?=?\s*\S+/,
   /^(unfold|simp|simp_rw|rw|erw)\b/,
-  /^(linarith|nlinarith|omega|ring|ring_nf|field_simp|positivity|norm_num|rfl|exact\?|aesop|grind|decide|sum_congr_ring|finset_nonneg|finset_mono|wellformed_tac|channel_fields|alt_proof|elegance\?)\b/,
+  /^(linarith|nlinarith|omega|ring|ring_nf|field_simp|positivity|norm_num|rfl|exact\?|aesop|grind|decide|bv_decide|sair_decide|sum_congr_ring|calc_ring_sum|gcongr_pos|finset_nonneg|finset_mono|wellformed_tac|channel_fields|eqsat_rw|egg_rw|backchain|contra_direct|grind_close|push|alt_proof|elegance\?|bfs_elegance\?)\b/,
   /^(constructor|refine|use|exists|intro|intros|induction|cases|rcases|obtain|fin_cases)\b/
 ];
 
@@ -2073,6 +2106,7 @@ export function analyzeAltProofGoalAndBlock(
   const hasWellFormed = /(?:\bWellFormed\b|\bwellformed_tac\b|\bfin_cases\b[\s\S]*?\bnorm_num\b)/.test(`${target}\n${proof}`);
   const hasChannelOrPrior = /(?:\bChannel\b|\bPrior\b|\bchannel_fields\b)/.test(`${target}\n${proof}`);
   const hasBitVec = /(?:\bBitVec\b|\bUInt8\b|\bUInt16\b|\bUInt32\b|\bUInt64\b|&&&|\|\|\||\^\^\^|<<<|>>>|\bbv_decide\b)/.test(combined);
+  const hasPureEquality = /=/.test(targetNoArrows) && !/(?:<=|>=|!=|\u2264|\u2265|\u2260)/.test(targetNoArrows);
   const hasNatArith = Boolean(
     (hasNatContext || (hasArithOp && !hasFinsetSumInTargetOrProof && !hasWellFormed)) &&
     hasArithOp &&
@@ -2091,7 +2125,8 @@ export function analyzeAltProofGoalAndBlock(
     hasWellFounded,
     hasWellFormed,
     hasChannelOrPrior,
-    hasBitVec
+    hasBitVec,
+    hasEquality: hasPureEquality
   };
 
   const pickedRoutes = ALTPROOF_ROUTE_TABLE.filter((r) => {
@@ -2127,6 +2162,14 @@ export function analyzeAltProofGoalAndBlock(
         return features.hasFinsetMono || features.hasFinsetSum;
       case "induction-rescaling":
         return features.hasNatArith || features.hasWellFounded;
+      case "sair_decide":
+        return features.hasIteOrDecide || features.hasNatArith;
+      case "proof-carrying-codegen":
+        return Boolean(features.hasBitVec);
+      case "eqsat-congruence-closure":
+        return Boolean(features.hasEquality);
+      case "backchain-solve-by-elim":
+        return !features.hasFinsetSum && !features.hasAbs && (features.hasNegOrContra || Boolean(features.hasEquality));
       default:
         return false;
     }
@@ -2141,6 +2184,26 @@ export function analyzeAltProofGoalAndBlock(
       operator: "Nat.sub",
       summary: abstractCertification.natSubTruncationWarning,
       hint: "Add guard `b <= a` or switch to `Int` subtraction before invoking `omega`.",
+      line: 1,
+      col: 1
+    });
+  }
+  if (/\bpush_neg\b/.test(combined)) {
+    staticCertificates.push({
+      kind: "AltProofRouteCandidate",
+      operator: "push_neg",
+      summary: "Deprecated `push_neg` tactic detected under Lean v4.34+.",
+      hint: "Prefer `push Not` instead of deprecated `push_neg`.",
+      line: 1,
+      col: 1
+    });
+  }
+  if (/\bMathlib\.Data\.Real\.Basic\b/.test(combined)) {
+    staticCertificates.push({
+      kind: "AltProofRouteCandidate",
+      operator: "Mathlib.Data.Real.Basic",
+      summary: "Legacy `Mathlib.Data.Real.Basic` module path detected.",
+      hint: "Under Lean v4.34+ Mathlib, import `Mathlib.Basic.Real.Basic` instead.",
       line: 1,
       col: 1
     });
@@ -2165,6 +2228,24 @@ export function analyzeAltProofGoalAndBlock(
     });
   };
 
+  if (hasBitVec) {
+    pushRec(
+      "bv_decide",
+      "fixed-width-bitvec-sat-reflection",
+      "Bit-blasted CaDiCaL LRAT reflection finisher for fixed-width BitVec / SWAR goals; zero Classical.choice overhead.",
+      60,
+      0.97
+    );
+  }
+  if (/\b(?:sair_decide|Lean\.ofReduceBool)\b/.test(combined)) {
+    pushRec(
+      "sair_decide",
+      "sair_decide",
+      "Strict 3-axiom kernel-clean decision macro (rfl | decide +kernel | omega) with zero Lean.ofReduceBool.",
+      70,
+      0.95
+    );
+  }
   if (hasNatArith || abstractCertification?.certified) {
     const certBoost = abstractCertification?.certified ? 0.07 : 0;
     const certNote = abstractCertification?.targetSummary
@@ -2233,7 +2314,93 @@ export function analyzeAltProofGoalAndBlock(
       0.92
     );
   }
+  const hasDoubleSumSide = target
+    .split(/(?:<=|\u2264|=)/)
+    .some((side) => ((side.match(/(?:\bFinset\.sum\b|\u2211)/g) || []).length >= 2));
+  if (
+    (hasDoubleSumSide && !/(?:<=|\u2264)/.test(targetNoArrows)) ||
+    /\b(?:Finset\.sum_comm|calc_ring_sum)\b/.test(proof)
+  ) {
+    pushRec(
+      "calc_ring_sum",
+      "double-sum-commutation-and-separable-product",
+      "Discharges swapped double sums (Finset.sum_comm) and separable double-sum factorizations in one step.",
+      255,
+      0.92
+    );
+  }
+  if (
+    (/\bFinset\.sum_eq_single\b/.test(proof) && /\b(?:if|ite)\b/.test(proof)) ||
+    /(?:\bFinset\.sum\b|\u2211)[\s\S]*?\bif\b[\s\S]*?\bthen\b[\s\S]*?\belse\s+0\b/.test(target)
+  ) {
+    pushRec(
+      "simp only [Finset.sum_ite_eq, Finset.sum_ite_eq', Finset.mem_univ, \u2193reduceIte]",
+      "kronecker-delta-finset-sum-collapse",
+      "Collapses Kronecker-delta Finset.sum over if-then-else via Finset.sum_ite_eq without manual sum_eq_single case splits.",
+      175,
+      0.94
+    );
+  }
+  if (
+    (/(?:<=|\u2264|<)/.test(targetNoArrows) &&
+      /(?:\*|\/)/.test(targetNoArrows) &&
+      !hasFinsetSumInTargetOrProof &&
+      !hasNatArith &&
+      !hasWellFormed &&
+      !hasChannelOrPrior) ||
+    /\bgcongr_pos\b/.test(proof)
+  ) {
+    pushRec(
+      "gcongr_pos",
+      "ordered-ring-monotonicity-congruence",
+      "Applies gcongr and automatically discharges positivity/arithmetic side-conditions.",
+      230,
+      0.89
+    );
+  }
+  if (
+    (hasPureEquality &&
+      !hasFinsetSumInTargetOrProof &&
+      !hasNatArith &&
+      !hasRealLin &&
+      !hasBitVec &&
+      !hasWellFormed &&
+      !hasChannelOrPrior) ||
+    /\b(?:eqsat_rw|egg_rw)\b/.test(proof)
+  ) {
+    pushRec(
+      "eqsat_rw",
+      "eqsat-congruence-closure",
+      "Pure-Lean bidirectional congruence-closure rewrite saturation (Eq.trans / congrArg) with 0 external FFI.",
+      200,
+      0.87
+    );
+  }
+  if (
+    ((hasNegOrContra || /&&[\s\S]*?=\s*true\b/.test(combined)) &&
+      !hasFinsetSumInTargetOrProof &&
+      !hasWellFormed &&
+      !hasChannelOrPrior) ||
+    /\bcontra_direct\b/.test(proof)
+  ) {
+    pushRec(
+      "contra_direct",
+      "redirect-by-contradiction",
+      "Constructive contradiction redirect normalizing decidable/Bool goals without Classical.choice.",
+      165,
+      0.90
+    );
+  }
   const hasInductiveProof = /\b(?:cases|rcases|induction|constructor)\b/.test(proof);
+  if ((((proof.match(/\bapply\b/g) || []).length >= 2) && !hasInductiveProof) || /\bbackchain\b/.test(proof)) {
+    pushRec(
+      "backchain",
+      "backchain-solve-by-elim",
+      "Core-only bounded SolveByElim backchaining (maxDepth := 6) without aesop import overhead.",
+      210,
+      0.86
+    );
+  }
   if (hasInductiveProof) {
     pushRec(
       "aesop",

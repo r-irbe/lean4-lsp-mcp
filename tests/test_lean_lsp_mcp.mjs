@@ -463,7 +463,8 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
 
 // 10. AltProof Hybrid Integration (LeanAbstractInterpreter + McpServer lean_goal/lean_metrics/lean_altproof)
 {
-    const { McpServer, LeanAbstractInterpreter } = await import("../src/index.ts");
+    const { McpServer, LeanAbstractInterpreter, ALTPROOF_ROUTE_TABLE } = await import("../src/index.ts");
+    assert.strictEqual(ALTPROOF_ROUTE_TABLE.length, 20, "ALTPROOF_ROUTE_TABLE exposes all 20 canonical routes");
     const interp = new LeanAbstractInterpreter();
 
     // 10a. Pointwise sum monotonicity (finset_mono) + static Nat certificate
@@ -543,6 +544,32 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
         const parsedLive = JSON.parse(liveSessionJson);
         assert.strictEqual(parsedLive.bestTactic, "finset_mono", "Live LSP goal fetched via lakeManager.getGoal and dispatched to finset_mono");
         assert.strictEqual(parsedLive.features.hasFinsetNonneg, false, "Turnstile isolation holds on fenced LSP getGoal output");
+
+        // 10f. AltProof v0.5.0+ double-sum calc_ring_sum, Kronecker-delta Finset.sum_ite_eq, eqsat_rw, contra_direct, and Lean 4.34 hygiene
+        const dblSumReport = interp.analyzeAltProof(
+            "|- Finset.sum s (fun i => Finset.sum t (fun j => f i * g j)) = (Finset.sum s f) * (Finset.sum t g)",
+            "  rw [Finset.sum_comm]"
+        );
+        assert.strictEqual(dblSumReport.bestTactic, "calc_ring_sum", "Double-sum commutation selects calc_ring_sum ahead of sum_congr_ring");
+
+        const kroneckerReport = interp.analyzeAltProof(
+            "|- Finset.sum s (fun i => if i = j then f i else 0) = f j",
+            "  rw [Finset.sum_eq_single j]\n  if h : j = j then simp else simp"
+        );
+        assert(kroneckerReport.bestTactic && kroneckerReport.bestTactic.includes("Finset.sum_ite_eq"), "Kronecker-delta sum selects Finset.sum_ite_eq collapse");
+
+        const eqsatReport = interp.analyzeAltProof(
+            "a b : Alpha |- f (g a) = f b",
+            "  push_neg\n  eqsat_rw [h1, h2]"
+        );
+        assert(eqsatReport.recommendations.some((r) => r.tactic === "eqsat_rw"), "Recommends eqsat_rw on pure congruence goal");
+        assert(eqsatReport.staticCertificates.some((c) => c.operator === "push_neg"), "Flags deprecated push_neg under Lean 4.34");
+
+        const contraReport = interp.analyzeAltProof(
+            "P Q : Prop |- Not P -> P -> Q",
+            "  by_contra h"
+        );
+        assert.strictEqual(contraReport.bestTactic, "contra_direct", "Contradiction redirect selects contra_direct");
     } finally {
         server.getLakeManager().dispose();
     }
