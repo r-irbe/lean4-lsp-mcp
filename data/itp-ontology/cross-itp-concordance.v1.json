@@ -1457,7 +1457,7 @@
       "provers": {
         "lean4": {
           "tactics": [
-            "EASCI/StochasticCCV/ contraction bounds",
+            "Markov chain contraction bounds",
             "inductive invariant preservation",
             "Nat.div_add_mod"
           ],

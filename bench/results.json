@@ -171,7 +171,7 @@
   }
  ],
  "stderrTail": [
-  "[lean-lsp-mcp] Initialized for project /home/radu/code/tacit-mui/docs/easci/lean (source cwd, marker lakefile.lean)",
+  "[lean-lsp-mcp] Initialized for project <project-root> (source cwd, marker lakefile.lean)",
   ""
  ]
 }

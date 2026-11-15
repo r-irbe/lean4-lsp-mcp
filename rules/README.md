@@ -1,10 +1,18 @@
 # Declarative Lean 4 AST-Grep & Lint Rules
 
-This directory holds the 22 default reusable declarative lint rules for Lean 4 formal verification projects (consolidated under O6), plus profile-scoped opt-in rules (`--profile=sair`). Use `lean-rules` (bundled with `lean4-lsp-mcp`) to scan `.lean` source files or directories against this rule catalog:
+This directory holds 16 universal core declarative lint rules (`--profile=core` / `--profile=default`) plus 7 profile-scoped opt-in domain rules (`--profile=sair|fluid-pde|p2m|all`, 23 rules total). Use `lean-rules` (bundled with `lean4-lsp-mcp`) to scan `.lean` source files or directories against this rule catalog:
 
 ```bash
-lean-rules [files-or-dirs...] [--profile=default|sair|all] [--min-severity=warning|error|info|hint] [--json]
+lean-rules [files-or-dirs...] [--profile=core|default|sair|fluid-pde|p2m|all] [--min-severity=warning|error|info|hint] [--json]
 ```
+
+## Two-Tier Profile & Path Scoping (`profiles` & `paths`)
+
+- **Core / Default (`--profile=core` or `--profile=default`, 16 rules)**: Universal Lean 4 soundness, trust-base, and tactic-hygiene rules without `profiles:` tags.
+- **SAIR (`--profile=sair`, 17 rules)**: Core rules + `rule-lean-sair-submission-gate`.
+- **P2M (`--profile=p2m`, 17 rules)**: Core rules + `rule-lean-p2m-card-conformance` (scoped via `paths: ["**/Theorems/**", "**/Interface/**"]`).
+- **Fluid-PDE (`--profile=fluid-pde`, 21 rules)**: Core rules + the 5 continuum PDE envelope guards (`rule-lean-no-unbounded-{gevrey-norm,logarithmic-gradient,piola-drift,reynolds-stress,swirl-amplification}`).
+- **All (`--profile=all`, 23 rules)**: Evaluates all universal and profile-scoped rules (honoring per-rule `paths:` globs when present).
 
 ## Code vs prose (`scope`)
 

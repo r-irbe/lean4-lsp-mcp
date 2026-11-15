@@ -9,7 +9,7 @@ import { spawn } from "node:child_process";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 const LSP_DIR = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const PROJECT = process.env.LEAN_LSP_BENCH_PROJECT ?? "/home/radu/code/tacit-mui/docs/easci/lean";
+const PROJECT = process.env.LEAN_LSP_BENCH_PROJECT ?? process.cwd();
 const CORPUS = path.join(LSP_DIR, "bench", "corpus.lean");
 
 const server = spawn(

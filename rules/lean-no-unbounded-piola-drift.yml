@@ -1,5 +1,7 @@
 id: rule-lean-no-unbounded-piola-drift
 language: Lean
+profiles:
+  - fluid-pde
 severity: warning
 message: "Unanchored Piola coordinate deformation detected: bare
   coordinate scaling without Jacobian boundedness"
@@ -9,8 +11,7 @@ note: |
   Unconstrained coordinate rescaling without bounding hypotheses risks
   unbounded trajectory drift in belief-space projections. Anchor
   coordinate deformations using volumeRatio or isVolumePreserving
-  invariants as formalized in NavierStokesAndEuler
-  (Template_PiolaTransform).
+  invariants (Template_PiolaTransform).
 rule:
   regex: '^\s*dsimp\s*\[.*(?:aspectRatio|volumeFactor).*\] .*\n\s*linarith\b'
 

@@ -75,12 +75,12 @@ const server = new McpServer(tmpDir);
 }
 
 // 6. concordance fallback reaches handbook rows for idioms absent from the
-//    canonical concordance (verified: "chiseling" appears only in the
-//    lean-causal-reasoning handbook error_to_fix table).
+//    canonical concordance (verified: "chiseling" appears in the
+//    lean-knowledge-formalization handbook error_to_fix table).
 {
   const out = await server.executeTool("lean_cross_itp_concordance", { concept: "chiseling" });
   assert.ok(out.includes("[handbook:"), "concordance fallback surfaces handbook rows");
-  assert.ok(out.includes("lean-causal-reasoning-handbook"), "handbook fallback row names its handbook");
+  assert.ok(out.includes("lean-knowledge-formalization-handbook"), "handbook fallback row names its handbook");
   console.log("  - lean_cross_itp_concordance handbook fallback: PASS");
 }
 
@@ -100,20 +100,23 @@ const server = new McpServer(tmpDir);
   console.log("  - canonical concordance precedence preserved: PASS");
 }
 
-// 9. vendored copy is byte-identical to the pi-lens canonical asset (when
-//    the sibling checkout exists), guarding against divergent copies.
+// 9. vendored copy is byte-identical to the parent proof-skills canonical asset
+//    (when invoked inside the proof-skills tree), guarding against divergent copies.
 {
-  const piLensCopy = "/home/radu/code/pi-lens/vendor/itp-ontology/handbook-tables.v1.json";
+  const parentVendorCopy = path.resolve(
+    import.meta.dirname,
+    "../../../vendor/itp-ontology/handbook-tables.v1.json"
+  );
   const localCopy = path.resolve(import.meta.dirname, "../data/itp-ontology/handbook-tables.v1.json");
   assert.ok(fs.existsSync(localCopy), "vendored handbook-tables.v1.json exists");
-  if (fs.existsSync(piLensCopy)) {
+  if (fs.existsSync(parentVendorCopy)) {
     assert.strictEqual(
       fs.readFileSync(localCopy, "utf-8"),
-      fs.readFileSync(piLensCopy, "utf-8"),
-      "vendored handbook tables must stay byte-identical to the pi-lens canonical copy"
+      fs.readFileSync(parentVendorCopy, "utf-8"),
+      "vendored handbook tables must stay byte-identical to the canonical vendor copy"
     );
   }
-  console.log("  - vendored handbook copy byte-identical to pi-lens canonical: PASS");
+  console.log("  - vendored handbook copy byte-identical to canonical vendor copy: PASS");
 }
 
 console.log("All Handbook Tables Integration tests PASSED!");

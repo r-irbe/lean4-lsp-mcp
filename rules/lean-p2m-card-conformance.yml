@@ -1,5 +1,10 @@
 id: rule-lean-p2m-card-conformance
 language: Lean
+profiles:
+  - p2m
+paths:
+  - "**/Theorems/**"
+  - "**/Interface/**"
 severity: warning
 message: >-
   Interface card theorem should delegate directly via p2m_exact_reverting

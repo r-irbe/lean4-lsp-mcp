@@ -10,7 +10,7 @@ Protocol and gate, per PLAN-LEAN-LSP-MCP-COUNTEREXAMPLE-VERB.
                                  # fixture theorem; see LEAN_LSP_BENCH_FAR below)
 
 Env: `LEAN_LSP_BENCH_PROJECT` overrides the Lean project cwd (default
-`/home/radu/code/tacit-mui/docs/easci/lean`). The stdio probe's far
+`process.cwd()`). The stdio probe's far
 statement lives in a scratch fixture, not this corpus; point
 `LEAN_LSP_BENCH_FAR` at a theorem in a file you pass via a small edit or
 reuse the suite's fixture (`tests/test_counterexample_verb.mjs` case 8).

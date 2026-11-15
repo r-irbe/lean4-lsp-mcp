@@ -330,6 +330,40 @@ console.log("Running SOTA Upgrades Test Suite...");
       "prioritizes and merges `*-domain-deltas.md` in skills-overrides/skills/"
     );
 
+    // Verify 5 canonical roles cover all 21 MCP tools + skill_aliases & packs resolution
+    const aliasedDispatch = JSON.parse(
+      await server.executeTool("lean_skill_dispatch", {
+        skillOrQuery: "lean-enforcement",
+        role: "auditor",
+        projectRoot: tmpDir,
+      })
+    );
+    assert.strictEqual(aliasedDispatch.skill, "lean-verification-gate", "resolves retired skill alias via registry.json");
+    assert.strictEqual(aliasedDispatch.aliasedFrom, "lean-enforcement");
+
+    const packDispatch = JSON.parse(
+      await server.executeTool("lean_skill_dispatch", {
+        skillOrQuery: "math-strategy-studio",
+        role: "specifier",
+        projectRoot: tmpDir,
+      })
+    );
+    assert.strictEqual(packDispatch.skill, "math-strategy-studio", "resolves opt-in pack skill via packs/*/skills/");
+    assert(packDispatch.sourcePath.includes("packs/applied-strategy/skills/math-strategy-studio/SKILL.md"));
+
+    const allCoveredTools = new Set();
+    for (const rName of ["specifier", "prover", "auditor", "editor", "gardener"]) {
+      const rp = JSON.parse(
+        await server.executeTool("lean_skill_dispatch", {
+          skillOrQuery: "lean-proof",
+          role: rName,
+          projectRoot: tmpDir,
+        })
+      );
+      for (const t of rp.allowedTools) allCoveredTools.add(t);
+    }
+    assert.strictEqual(allCoveredTools.size, 21, `expected 5 canonical roles to cover all 21 MCP tools, got ${allCoveredTools.size}`);
+
     // 6g. lean_theorem_preflight
     const preflight = JSON.parse(
       await server.executeTool("lean_theorem_preflight", {

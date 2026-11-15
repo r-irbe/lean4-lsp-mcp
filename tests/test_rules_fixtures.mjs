@@ -19,10 +19,14 @@ const violation = path.join(here, "fixtures", "rules", "violation.leanfix");
 const clean = path.join(here, "fixtures", "rules", "clean.leanfix");
 const ruleTestsDir = path.join(here, "fixtures", "rules", "rule-tests");
 
-test("consolidated 22-rule corpus loads with zero compile warnings", () => {
-  const { ruleCount, warnings } = runScan({ rulesDir, targets: [clean], minSeverity: "info" });
-  assert.equal(ruleCount, 22, `expected the consolidated 22-rule corpus, got ${ruleCount}`);
-  assert.deepEqual(warnings ?? [], [], `unexpected rule warnings: ${JSON.stringify(warnings)}`);
+test("consolidated 16-rule core corpus and 23-rule full corpus load with zero compile warnings", () => {
+  const coreRes = runScan({ rulesDir, targets: [clean], minSeverity: "info", profile: "core" });
+  assert.equal(coreRes.ruleCount, 16, `expected 16 core rules, got ${coreRes.ruleCount}`);
+  assert.deepEqual(coreRes.warnings ?? [], [], `unexpected rule warnings: ${JSON.stringify(coreRes.warnings)}`);
+
+  const allRes = runScan({ rulesDir, targets: [clean], minSeverity: "info", profile: "all" });
+  assert.equal(allRes.ruleCount, 23, `expected 23 total rules under --profile=all, got ${allRes.ruleCount}`);
+  assert.deepEqual(allRes.warnings ?? [], [], `unexpected rule warnings: ${JSON.stringify(allRes.warnings)}`);
 });
 
 test("violation fixture trips the expected rule ids", () => {
@@ -159,8 +163,16 @@ test("sair profile activates rule-lean-sair-submission-gate via runScan and CLI 
     // Auto-resolved bundled rulesDir when omitted in runScan:
     const defaultClean = runScan({ targets: [cleanSair] });
     assert.equal(defaultClean.profile, "default");
-    assert.equal(defaultClean.ruleCount, 22);
+    assert.equal(defaultClean.ruleCount, 16);
     assert.equal(defaultClean.findings.length, 0);
+
+    const coreCleanCli = spawnSync(process.execPath, [cliPath, "--profile=core", "--json", cleanSair], {
+      encoding: "utf-8",
+    });
+    assert.equal(coreCleanCli.status, 0, coreCleanCli.stderr);
+    const coreCleanJson = JSON.parse(coreCleanCli.stdout);
+    assert.equal(coreCleanJson.profile, "core");
+    assert.equal(coreCleanJson.ruleCount, 16);
 
     const sairCleanCli = spawnSync(process.execPath, [cliPath, "--profile=sair", "--json", cleanSair], {
       encoding: "utf-8",
@@ -168,8 +180,40 @@ test("sair profile activates rule-lean-sair-submission-gate via runScan and CLI 
     assert.equal(sairCleanCli.status, 0, sairCleanCli.stderr);
     const sairCleanJson = JSON.parse(sairCleanCli.stdout);
     assert.equal(sairCleanJson.profile, "sair");
-    assert.equal(sairCleanJson.ruleCount, 23);
+    assert.equal(sairCleanJson.ruleCount, 17);
     assert.equal(sairCleanJson.findings.length, 0);
+
+    const fluidClean = runScan({ targets: [cleanSair], profile: "fluid-pde" });
+    assert.equal(fluidClean.ruleCount, 21);
+
+    // P2M profile + paths: glob filtering (`**/Theorems/**`, `**/Interface/**`)
+    const p2mOutside = path.join(tmp, "Basic.leanfix");
+    const p2mInsideDir = path.join(tmp, "Theorems");
+    fs.mkdirSync(p2mInsideDir, { recursive: true });
+    const p2mInside = path.join(p2mInsideDir, "Card.leanfix");
+    const p2mHeavyBody = [
+      "theorem heavy_card (n : Nat) : n + 0 = n := by",
+      "  have h1 : n = n := rfl",
+      "  have h2 : 0 = 0 := rfl",
+      "  have h3 : n + 0 = n := by omega",
+      "  exact h3",
+    ].join("\n");
+    fs.writeFileSync(p2mOutside, p2mHeavyBody);
+    fs.writeFileSync(p2mInside, p2mHeavyBody);
+
+    const p2mOutsideRes = runScan({ targets: [p2mOutside], profile: "p2m", minSeverity: "info" });
+    assert.equal(p2mOutsideRes.ruleCount, 17);
+    assert.equal(
+      p2mOutsideRes.findings.filter((f) => f.ruleId === "rule-lean-p2m-card-conformance").length,
+      0,
+      "Basic.leanfix outside Theorems/ or Interface/ must be skipped by paths: filter"
+    );
+
+    const p2mInsideRes = runScan({ targets: [p2mInside], profile: "p2m", minSeverity: "info" });
+    assert.ok(
+      p2mInsideRes.findings.some((f) => f.ruleId === "rule-lean-p2m-card-conformance"),
+      "Theorems/Card.leanfix must match paths: filter under --profile=p2m"
+    );
 
     for (const [name, source] of sairCases) {
       const fp = path.join(tmp, name);

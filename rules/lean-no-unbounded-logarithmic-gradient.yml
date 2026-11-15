@@ -1,5 +1,7 @@
 id: rule-lean-no-unbounded-logarithmic-gradient
 language: Lean
+profiles:
+  - fluid-pde
 severity: warning
 message: "Unanchored logarithmic gradient estimate detected: bare
   gradient scaling without Sobolev base bound"
@@ -8,8 +10,8 @@ note: |
   explicit Sobolev embedding constants and baseline enstrophy bounds.
   Unconstrained gradient amplification without anchoring hypotheses risks
   uncontrolled growth in multi-agent belief sensitivity. Anchor gradient
-  bounds using isGradientSafe or gradientSafetyMargin invariants as
-  formalized in NavierStokesAndEuler (Template_LogarithmicGradient).
+  bounds using isGradientSafe or gradientSafetyMargin invariants
+  (Template_LogarithmicGradient).
 rule:
   regex: "(?m)^\\s*dsimp\\s*\\[.*(?:gradientSafetyMargin|\
   estimatedGradientBound|sobolev_factor).*\\].*\\n\\s*linarith\\b"

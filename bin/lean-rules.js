@@ -23,10 +23,10 @@ import yaml from "js-yaml";
 import { parseToml, findConfig, checkArchitecture } from "./lean-architecture.mjs";
 
 const SEVERITY_ORDER = { hint: 0, info: 1, warning: 2, error: 3 };
-const VALID_PROFILES = new Set(["default", "sair", "all"]);
+const VALID_PROFILES = new Set(["core", "default", "sair", "fluid-pde", "p2m", "all"]);
 const DEFAULT_RULES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "rules");
 const USAGE_LINE =
-  "usage: lean-rules [files-or-dirs...] [--profile default|sair|all] [--rules <dir>]... [--config lean-project.toml] [--json] [--min-severity warning|error]";
+  "usage: lean-rules [files-or-dirs...] [--profile core|default|sair|fluid-pde|p2m|all] [--rules <dir>]... [--config lean-project.toml] [--json] [--min-severity warning|error]";
 
 export class CliUsageError extends Error {
   constructor(message) {
@@ -101,7 +101,7 @@ export function parseArgs(argv) {
     throw new CliUsageError(`unknown severity: ${opts.minSeverity}`);
   }
   if (!VALID_PROFILES.has(opts.profile)) {
-    throw new CliUsageError(`unknown profile: ${opts.profile} (expected default|sair|all)`);
+    throw new CliUsageError(`unknown profile: ${opts.profile} (expected core|default|sair|fluid-pde|p2m|all)`);
   }
   return opts;
 }
@@ -240,10 +240,48 @@ function walkLean(targets) {
   return files;
 }
 
+function globToRegExp(globPattern) {
+  let out = "^";
+  const g = String(globPattern).replace(/\\/g, "/");
+  for (let i = 0; i < g.length; i++) {
+    if (g[i] === "*" && g[i + 1] === "*") {
+      if (g[i + 2] === "/") {
+        out += "(?:.*/)?";
+        i += 2;
+      } else {
+        out += ".*";
+        i += 1;
+      }
+    } else if (g[i] === "*") {
+      out += "[^/]*";
+    } else if (g[i] === "?") {
+      out += "[^/]";
+    } else if (".+^${}()|[]\\".includes(g[i])) {
+      out += "\\" + g[i];
+    } else {
+      out += g[i];
+    }
+  }
+  out += "$";
+  return new RegExp(out);
+}
+
+function fileMatchesRulePaths(filePath, rule) {
+  if (!Array.isArray(rule.paths) || rule.paths.length === 0) return true;
+  const norm = path.resolve(filePath).replace(/\\/g, "/");
+  const rel = String(filePath).replace(/\\/g, "/");
+  return rule.paths.some((pat) => {
+    const re = globToRegExp(pat);
+    return re.test(norm) || re.test(rel);
+  });
+}
+
 function ruleMatchesProfile(rule, profile) {
   if (profile === "all") return true;
+  const eff = profile === "core" ? "default" : profile;
   if (!Array.isArray(rule.profiles) || rule.profiles.length === 0) return true;
-  return rule.profiles.map((p) => String(p).toLowerCase()).includes(profile);
+  if (eff === "default") return false;
+  return rule.profiles.map((p) => String(p).toLowerCase()).includes(eff);
 }
 
 export function runScan({
@@ -256,7 +294,7 @@ export function runScan({
 }) {
   const normalizedProfile = String(profile || "default").toLowerCase();
   if (!VALID_PROFILES.has(normalizedProfile)) {
-    throw new CliUsageError(`unknown profile: ${profile} (expected default|sair|all)`);
+    throw new CliUsageError(`unknown profile: ${profile} (expected core|default|sair|fluid-pde|p2m|all)`);
   }
   const dirs =
     rulesDirs ??
@@ -301,6 +339,7 @@ export function runScan({
       }
     }
     for (const rule of rules) {
+      if (!fileMatchesRulePaths(file, rule)) continue;
       const haystack = rule.scope === "any" ? content : codeContent;
       let matched = null;
       try {

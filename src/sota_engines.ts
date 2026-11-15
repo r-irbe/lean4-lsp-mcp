@@ -918,16 +918,40 @@ export const ROLE_MCP_PROFILES: Record<
   string,
   { allowedTools: string[]; soulOverlay: string }
 > = {
+  specifier: {
+    allowedTools: [
+      "lean_search",
+      "lean_lookup_symbol",
+      "lean_decl_references",
+      "lean_module_hierarchy",
+      "lean_navigate",
+      "lean_diagnostics",
+      "lean_counterexample_search",
+      "lean_blueprint",
+      "lean_metrics",
+      "lean_theorem_preflight",
+      "lean_skill_dispatch",
+    ],
+    soulOverlay:
+      "Role: Specification & Blueprint Architect (Three-Part Spec, Counterexample-First, DAG Layer Discipline).",
+  },
   prover: {
     allowedTools: [
       "lean_goal",
       "lean_diagnostics",
+      "lean_server_status",
+      "lean_counterexample_search",
       "lean_multi_attempt",
       "lean_repair_proof",
       "lean_lookup_symbol",
+      "lean_decl_references",
+      "lean_navigate",
       "lean_search",
+      "lean_ffi",
+      "lean_exec",
       "lean_theorem_preflight",
       "lean_resync",
+      "lean_skill_dispatch",
     ],
     soulOverlay:
       "Role: Prover Specialist (LSP-First, Counterexample-First, Zero-Sorry Discipline).",
@@ -937,13 +961,53 @@ export const ROLE_MCP_PROFILES: Record<
       "lean_axiom_closure",
       "lean_metrics",
       "lean_diagnostics",
+      "lean_server_status",
+      "lean_counterexample_search",
       "lean_minimal_hypotheses",
       "lean_profile_proof",
+      "lean_lookup_symbol",
       "lean_decl_references",
       "lean_module_hierarchy",
+      "lean_navigate",
+      "lean_ffi",
+      "lean_search",
     ],
     soulOverlay:
       "Role: Kernel Guardian & Proof Fidelity Auditor (Zero Custom Axioms, Zero Vacuity).",
+  },
+  editor: {
+    allowedTools: [
+      "lean_goal",
+      "lean_diagnostics",
+      "lean_multi_attempt",
+      "lean_minimal_hypotheses",
+      "lean_profile_proof",
+      "lean_lookup_symbol",
+      "lean_decl_references",
+      "lean_navigate",
+      "lean_search",
+      "lean_blueprint",
+      "lean_metrics",
+      "lean_resync",
+    ],
+    soulOverlay:
+      "Role: Refactor & Pedagogy Editor (Abstraction-Concrete Duality, Sub-Lemma Extraction, Clear Exposition).",
+  },
+  gardener: {
+    allowedTools: [
+      "lean_search",
+      "lean_lookup_symbol",
+      "lean_decl_references",
+      "lean_module_hierarchy",
+      "lean_navigate",
+      "lean_blueprint",
+      "lean_metrics",
+      "lean_axiom_closure",
+      "lean_server_status",
+      "lean_skill_dispatch",
+    ],
+    soulOverlay:
+      "Role: Corpus Gardener & RETRO Facilitator (Zettelkasten Curation, Dependency Hygiene, Upstream Porting).",
   },
   researcher: {
     allowedTools: [
@@ -951,27 +1015,40 @@ export const ROLE_MCP_PROFILES: Record<
       "lean_lookup_symbol",
       "lean_decl_references",
       "lean_module_hierarchy",
+      "lean_navigate",
       "lean_blueprint",
+      "lean_metrics",
+      "lean_axiom_closure",
+      "lean_server_status",
+      "lean_skill_dispatch",
     ],
     soulOverlay:
       "Role: Epistemic & Premise Researcher (Triangulate across .ilean, Loogle, Kuzu, and Concordance).",
   },
   architect: {
     allowedTools: [
+      "lean_search",
+      "lean_lookup_symbol",
+      "lean_decl_references",
+      "lean_module_hierarchy",
+      "lean_navigate",
+      "lean_diagnostics",
+      "lean_counterexample_search",
       "lean_blueprint",
       "lean_metrics",
-      "lean_module_hierarchy",
       "lean_theorem_preflight",
       "lean_skill_dispatch",
     ],
     soulOverlay:
-      "Role: Specification & Blueprint Architect (Three-Part Spec, DAG Layer Discipline).",
+      "Role: Specification & Blueprint Architect (Three-Part Spec, Counterexample-First, DAG Layer Discipline).",
   },
 };
 
 /**
  * Question 4a: `lean_skill_dispatch(skillOrQuery, role?, projectRoot?)`
- * Loads `skills/<slug>/SKILL.md`, automatically merges any local project overrides
+ * Loads `skills/<slug>/SKILL.md` or `packs/<pack>/skills/<slug>/SKILL.md` (resolving
+ * `agents/facets/registry.json` `skill_aliases` when `skillOrQuery` names a retired or
+ * pack-scoped skill), automatically merges any local project overrides
  * (`skills-overrides/skills/*-domain-deltas.md` + `<slug>.md` + `subst_table.json`),
  * and returns the role-scoped MCP allowlist.
  */
@@ -985,11 +1062,20 @@ export function dispatchLeanSkill(
     throw new Error("Missing required argument: 'skillOrQuery'");
   }
 
+  const skillsRepoDir = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../..");
+  const candidateToolkitRoots = [
+    skillsRepoDir,
+    path.join(projectRoot, "skills"),
+    path.join(projectRoot, "vendor/proof-skills"),
+    path.resolve(projectRoot, "docs/lean/skills"),
+    path.join(os.homedir(), ".gemini/config/plugins/proof-skills"),
+  ];
   const candidateSkillRoots = [
     path.join(projectRoot, "skills/skills"),
     path.join(projectRoot, "skills"),
     path.join(projectRoot, "vendor/proof-skills/skills"),
     path.resolve(projectRoot, "docs/lean/skills/skills"),
+    path.join(skillsRepoDir, "skills"),
     path.join(os.homedir(), ".gemini/config/plugins/proof-skills/skills"),
     path.join(os.homedir(), ".claude/skills"),
   ];
@@ -1004,6 +1090,7 @@ export function dispatchLeanSkill(
     try {
       for (const ent of fs.readdirSync(docsRoot, { withFileTypes: true })) {
         if (ent.isDirectory()) {
+          candidateToolkitRoots.push(path.join(docsRoot, ent.name, "lean/skills"));
           candidateSkillRoots.push(path.join(docsRoot, ent.name, "lean/skills/skills"));
           candidateOverrideDirs.push(path.join(docsRoot, ent.name, "lean/skills-overrides"));
         }
@@ -1013,21 +1100,69 @@ export function dispatchLeanSkill(
     }
   }
 
-  let foundSkillPath: string | null = null;
-  let matchedSlug = query;
+  // Resolve `skill_aliases` from `agents/facets/registry.json` and `packs/*/skills/<slug>`
+  let resolvedTarget = query;
+  let aliasedFrom: string | null = null;
+  for (const tkRoot of candidateToolkitRoots) {
+    const regPath = path.join(tkRoot, "agents/facets/registry.json");
+    if (!fs.existsSync(regPath)) continue;
+    try {
+      const reg = JSON.parse(fs.readFileSync(regPath, "utf-8"));
+      const aliases = reg?.skill_aliases;
+      if (aliases && typeof aliases === "object" && typeof aliases[query] === "string") {
+        resolvedTarget = aliases[query];
+        aliasedFrom = query;
+        break;
+      }
+    } catch {
+      // ignore malformed registry
+    }
+  }
 
+  // Expand `packs/*/skills` into candidateSkillRoots as well
+  for (const tkRoot of candidateToolkitRoots) {
+    const packsDir = path.join(tkRoot, "packs");
+    if (!fs.existsSync(packsDir)) continue;
+    try {
+      for (const ent of fs.readdirSync(packsDir, { withFileTypes: true })) {
+        if (ent.isDirectory()) {
+          candidateSkillRoots.push(path.join(packsDir, ent.name, "skills"));
+        }
+      }
+    } catch {
+      // ignore unreadable packs dir
+    }
+  }
+
+  let foundSkillPath: string | null = null;
+  let matchedSlug = path.basename(resolvedTarget);
+
+  // If `resolvedTarget` is an explicit pack relative path (`packs/<pack>/skills/<slug>`), check toolkit roots directly first
+  if (resolvedTarget.includes("/")) {
+    for (const tkRoot of candidateToolkitRoots) {
+      const p = path.join(tkRoot, resolvedTarget, "SKILL.md");
+      if (fs.existsSync(p)) {
+        foundSkillPath = p;
+        matchedSlug = path.basename(resolvedTarget);
+        break;
+      }
+    }
+  }
+
+  const lookupSlug = matchedSlug;
   for (const root of candidateSkillRoots) {
+    if (foundSkillPath) break;
     if (!fs.existsSync(root)) continue;
-    const direct = path.join(root, query, "SKILL.md");
+    const direct = path.join(root, lookupSlug, "SKILL.md");
     if (fs.existsSync(direct)) {
       foundSkillPath = direct;
-      matchedSlug = query;
+      matchedSlug = lookupSlug;
       break;
     }
     try {
       const entries = fs.readdirSync(root, { withFileTypes: true });
       for (const ent of entries) {
-        if (ent.isDirectory() && ent.name.toLowerCase().includes(query.toLowerCase())) {
+        if (ent.isDirectory() && ent.name.toLowerCase().includes(lookupSlug.toLowerCase())) {
           const p = path.join(root, ent.name, "SKILL.md");
           if (fs.existsSync(p)) {
             foundSkillPath = p;
@@ -1111,6 +1246,7 @@ export function dispatchLeanSkill(
   return JSON.stringify(
     {
       skill: matchedSlug,
+      ...(aliasedFrom ? { aliasedFrom } : {}),
       sourcePath: foundSkillPath || "synthesized",
       projectRoot,
       role: roleKey,

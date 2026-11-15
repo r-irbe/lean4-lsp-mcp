@@ -4963,6 +4963,7 @@ export class McpServer {
     const candidates = [
       path.resolve(__dirname, "../data/itp-ontology/handbook-tables.v1.json"),
       path.resolve(__dirname, "../../data/itp-ontology/handbook-tables.v1.json"),
+      path.resolve(__dirname, "../../../vendor/itp-ontology/handbook-tables.v1.json"),
       path.resolve(process.cwd(), "data/itp-ontology/handbook-tables.v1.json"),
     ];
     const tablePath = candidates.find((p) => fs.existsSync(p));
