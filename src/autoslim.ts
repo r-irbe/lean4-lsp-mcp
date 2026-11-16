@@ -111,6 +111,9 @@ export const ALTPROOF_CUSTOM_TACTICS = new Set<string>([
   "calc_ring_sum",
   "finset_nonneg",
   "finset_mono",
+  "convex_comb",
+  "markov_row_sum",
+  "matrix_pos",
   "gcongr_pos",
   "wellformed_tac",
   "channel_fields",
@@ -127,9 +130,9 @@ export const ALTPROOF_CUSTOM_TACTICS = new Set<string>([
 
 /** Ranked tactic cascade per canonical altproof route (custom AltProof closers -> Mathlib/Core fallbacks). */
 export const ROUTE_TACTIC_CASCADES: Record<string, readonly string[]> = {
-  sum_congr_ring: ["by sum_congr_ring", "by calc_ring_sum", "by ring_nf", "by simp"],
-  finset_nonneg: ["by finset_nonneg", "by positivity"],
-  finset_mono: ["by finset_mono", "by gcongr_pos"],
+  sum_congr_ring: ["by sum_congr_ring", "by markov_row_sum", "by calc_ring_sum", "by convex_comb", "by ring_nf", "by simp"],
+  finset_nonneg: ["by finset_nonneg", "by matrix_pos", "by convex_comb", "by positivity"],
+  finset_mono: ["by finset_mono", "by convex_comb", "by gcongr_pos"],
   "eqsat-congruence-closure": ["by eqsat_rw", "by grind_close", "by grind", "by simp"],
   "backchain-solve-by-elim": ["by backchain", "by solve_by_elim", "by aesop"],
   "redirect-by-contradiction": ["by contra_direct", "by decide"],
@@ -258,7 +261,7 @@ export function detectAltProofAvailability(
       if (!fs.existsSync(absFile)) return false;
       const txt = fs.readFileSync(absFile, "utf-8");
       return (
-        /\b(?:elab|macro)\s+"?(?:sum_congr_ring|finset_mono|finset_nonneg|eqsat_rw|grind_close|solve_by_elim_bounded)\b/.test(
+        /\b(?:elab|macro)\s+"?(?:sum_congr_ring|finset_mono|finset_nonneg|convex_comb|markov_row_sum|matrix_pos|eqsat_rw|grind_close|solve_by_elim_bounded)\b/.test(
           txt
         ) || /\bimport\s+[A-Za-z0-9_.']*AltProof\b/.test(txt)
       );

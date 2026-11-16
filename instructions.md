@@ -24,6 +24,7 @@
 | Run a quick standalone `#check`, `#eval`, or `#synth` snippet without touching files | `lean_exec` | ~1-3 s | **No** (`lean --stdin`) |
 | Audit Lean Blueprint coverage (`\leanok`, `\uses`), generate LaTeX scaffolds, or Layer-4 Zettels | `lean_blueprint` (`action: "status" | "scaffold" | "zettel" | "skeleton" | "walkthrough" | "graph_neighborhood"`) | < 100 ms | **No** |
 | Kernel-verified auto-slimming of multi-line tactic proofs via `lean-analyzer` `ALTPROOF-ROUTE` quickfix spans | `lean_autoslim` (or `lean_metrics` `action: "autoslim"`) | ~0.5-5 s | Optional (uses warm LSP or `lake env lean`) |
+| Tree-shake a corpus down to minimal declaration/module slice (with optional double-blind anonymization & `.tar.gz` archive) | `lean_tree_shake` (or `lean_metrics` `action: "tree_shake"`) | < 200 ms (dry-run) | **No** (reads `.ilean` + `lean-analyzer parse --spans`) |
 | Recover when live goals look stale after an external file edit | `lean_resync` (or `lean_server_status` to inspect workers) | ~50 ms | Yes |
 
 ---
@@ -47,7 +48,7 @@ All `lean-lsp` tools are registered under `ServerName: "lean-lsp"`. Call them vi
 
 ---
 
-## 3. Exact Parameter Signatures & Copy-Paste Examples (All 21 Tools)
+## 3. Exact Parameter Signatures & Copy-Paste Examples (All 23 Tools)
 
 ### 3.1 Interactive Proving & Diagnostics
 
@@ -200,7 +201,7 @@ Maps concepts, tactics, and idioms across prover families (`lean4`, `coq`, `isab
 Consolidated project/module metrics, architecture projections, and AltProof analysis.
 - **Required**: `target` (string: file path, directory path, module name, or goal string).
 - **Optional**:
-  - `action` (`"census" | "hierarchy" | "subgraph" | "bigraph" | "axiom_audit" | "altproof"`, default `"census"`)
+  - `action` (`"census" | "hierarchy" | "subgraph" | "bigraph" | "axiom_audit" | "altproof" | "autoslim" | "tree_shake" | "proof_fidelity"`, default `"census"`)
   - `format` (`"markdown" | "json" | "summary" | "mermaid" | "dot"`, default `"markdown"`)
   - `goal` (string, for `action: "altproof"`), `proof` (string, for `action: "altproof"`)
   - `direction` (`"imports" | "importedBy" | "both"`), `transitive` (boolean), `maxDepth` (integer)
@@ -255,6 +256,16 @@ Discovers exact `by ...` proof-span quickfixes via `lean-analyzer lint --format=
   ```json
   {"filePath": "MyProject/Tests/StageMatrix.lean", "apply": false, "format": "markdown"}
   {"filePath": "MyProject/Tests/StageMatrix.lean", "apply": true, "allowAltProofImport": true}
+  ```
+
+#### `lean_tree_shake` (and `lean_metrics` `action: "tree_shake"`)
+Computes the exact transitive declaration/module closure of one or more entry modules from `.ilean` reference graphs, slices unreachable `theorem`/`lemma`/`def`/`abbrev`/`example` spans via `lean-analyzer parse --spans`, rewrites transitive `import` DAGs without cycles, and optionally emits an anonymized standalone Lake project and metadata-scrubbed `.tar.gz` supplementary archive.
+- **Required**: `entryModules` (array of strings, or `target` string).
+- **Optional**: `granularity` (`"declaration" | "module"`, default `"declaration"`), `outputDir` (string), `archivePath` (string), `anonymize` (boolean, default `false`), `packageName` (string), `forbiddenPatterns` (array of strings), `verifyBuild` (boolean, default `false`), `timeoutMs` (integer, default `600000`), `format` (`"json" | "markdown"`, default `"json"`).
+- **Examples**:
+  ```json
+  {"entryModules": ["MyProject.Synthesis.Concordance"], "granularity": "declaration", "format": "markdown"}
+  {"entryModules": ["MyProject.Synthesis.Concordance"], "archivePath": "/tmp/anon_supplement.tar.gz", "anonymize": true, "verifyBuild": true}
   ```
 
 ---

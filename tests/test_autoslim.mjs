@@ -116,7 +116,12 @@ test("runKernelVerifiedAutoSlim cascades past rejected tactics, accumulates mult
       if (candidateContent.includes("by eqsat_rw") || candidateContent.includes("by grind_close")) {
         return { ok: false, errorCount: 1, warningCount: 0, firstIssue: "eqsat_rw/grind_close failed to close goal" };
       }
-      if (candidateContent.includes("by finset_nonneg") || candidateContent.includes("by positivity")) {
+      if (
+        candidateContent.includes("by finset_nonneg") ||
+        candidateContent.includes("by matrix_pos") ||
+        candidateContent.includes("by convex_comb") ||
+        candidateContent.includes("by positivity")
+      ) {
         return { ok: false, errorCount: 1, warningCount: 0, firstIssue: "unsolved goals" };
       }
       if (candidateContent.includes("by sum_congr_ring") && !candidateContent.includes("import MyProject.Tactics")) {

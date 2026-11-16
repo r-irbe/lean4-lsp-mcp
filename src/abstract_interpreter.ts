@@ -2314,6 +2314,48 @@ export function analyzeAltProofGoalAndBlock(
       0.92
     );
   }
+  if (
+    (/\b(?:Matrix\.vecMul|Matrix\.mulVec|rowStochastic)\b/.test(combined) &&
+      hasFinsetSumInTargetOrProof &&
+      /=/.test(targetNoArrows) &&
+      !/(?:<=|\u2264|<)/.test(targetNoArrows)) ||
+    /\bmarkov_row_sum\b/.test(proof)
+  ) {
+    pushRec(
+      "markov_row_sum",
+      "sum_congr_ring",
+      "Discharges row-stochastic mass-preservation (vecMul / Matrix.mul row sums) via sum_comm + mul_sum + row-sum instantiation.",
+      215,
+      0.93
+    );
+  }
+  if (
+    (/\b1\s*-\s*[A-Za-z0-9_']+/.test(combined) &&
+      /(?:<=|\u2264|=)/.test(targetNoArrows) &&
+      !hasBitVec) ||
+    /\bconvex_comb\b/.test(proof)
+  ) {
+    pushRec(
+      "convex_comb",
+      "finset_mono",
+      "Discharges convex-combination simplex bounds and mass preservation via And-unpacking + bilinear nlinarith / sum_add_distrib.",
+      225,
+      0.91
+    );
+  }
+  if (
+    (/\bMatrix\b/.test(combined) &&
+      /(?:0\s*(?:<=|\u2264|<))/.test(targetNoArrows)) ||
+    /\bmatrix_pos\b/.test(proof)
+  ) {
+    pushRec(
+      "matrix_pos",
+      "finset_nonneg",
+      "Discharges entrywise matrix/product non-negativity and finite Fin n matrix positivity.",
+      210,
+      0.90
+    );
+  }
   const hasDoubleSumSide = target
     .split(/(?:<=|\u2264|=)/)
     .some((side) => ((side.match(/(?:\bFinset\.sum\b|\u2211)/g) || []).length >= 2));

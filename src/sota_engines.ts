@@ -924,6 +924,7 @@ export const ROLE_MCP_PROFILES: Record<
       "lean_lookup_symbol",
       "lean_decl_references",
       "lean_module_hierarchy",
+      "lean_tree_shake",
       "lean_navigate",
       "lean_diagnostics",
       "lean_counterexample_search",
@@ -961,6 +962,7 @@ export const ROLE_MCP_PROFILES: Record<
     allowedTools: [
       "lean_axiom_closure",
       "lean_metrics",
+      "lean_tree_shake",
       "lean_diagnostics",
       "lean_server_status",
       "lean_counterexample_search",
@@ -1001,6 +1003,7 @@ export const ROLE_MCP_PROFILES: Record<
       "lean_lookup_symbol",
       "lean_decl_references",
       "lean_module_hierarchy",
+      "lean_tree_shake",
       "lean_navigate",
       "lean_blueprint",
       "lean_metrics",
@@ -1017,6 +1020,7 @@ export const ROLE_MCP_PROFILES: Record<
       "lean_lookup_symbol",
       "lean_decl_references",
       "lean_module_hierarchy",
+      "lean_tree_shake",
       "lean_navigate",
       "lean_blueprint",
       "lean_metrics",
@@ -1033,6 +1037,7 @@ export const ROLE_MCP_PROFILES: Record<
       "lean_lookup_symbol",
       "lean_decl_references",
       "lean_module_hierarchy",
+      "lean_tree_shake",
       "lean_navigate",
       "lean_diagnostics",
       "lean_counterexample_search",
@@ -1082,23 +1087,25 @@ export function dispatchLeanSkill(
     path.join(os.homedir(), ".claude/skills"),
   ];
 
-  // Look for local override layers in the project tree (including nested docs/*/lean/ layouts)
+  // Look for local override layers and nested docs/*/lean/skills layouts in projectRoot and skillsRepoDir
   const candidateOverrideDirs = [
     path.join(projectRoot, "skills-overrides"),
     path.resolve(projectRoot, "../skills-overrides"),
   ];
-  const docsRoot = path.join(projectRoot, "docs");
-  if (fs.existsSync(docsRoot)) {
-    try {
-      for (const ent of fs.readdirSync(docsRoot, { withFileTypes: true })) {
-        if (ent.isDirectory()) {
-          candidateToolkitRoots.push(path.join(docsRoot, ent.name, "lean/skills"));
-          candidateSkillRoots.push(path.join(docsRoot, ent.name, "lean/skills/skills"));
-          candidateOverrideDirs.push(path.join(docsRoot, ent.name, "lean/skills-overrides"));
+  for (const baseRoot of [projectRoot, skillsRepoDir]) {
+    const docsRoot = path.join(baseRoot, "docs");
+    if (fs.existsSync(docsRoot)) {
+      try {
+        for (const ent of fs.readdirSync(docsRoot, { withFileTypes: true })) {
+          if (ent.isDirectory()) {
+            candidateToolkitRoots.push(path.join(docsRoot, ent.name, "lean/skills"));
+            candidateSkillRoots.push(path.join(docsRoot, ent.name, "lean/skills/skills"));
+            candidateOverrideDirs.push(path.join(docsRoot, ent.name, "lean/skills-overrides"));
+          }
         }
+      } catch {
+        // ignore unreadable docs dir
       }
-    } catch {
-      // ignore unreadable docs dir
     }
   }
 

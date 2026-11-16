@@ -42,6 +42,7 @@ import {
   type NavArgs,
   type NavMode,
 } from "./navigation.ts";
+import { formatTreeShakeMarkdown, runLeanTreeShake } from "./tree_shake.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -290,7 +291,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       properties: {
         action: {
           type: "string",
-          enum: ["census", "hierarchy", "subgraph", "bigraph", "axiom_audit", "altproof", "proof_fidelity", "sair_audit"],
+          enum: ["census", "hierarchy", "subgraph", "bigraph", "axiom_audit", "altproof", "autoslim", "proof_fidelity", "sair_audit", "tree_shake"],
           description: "Metric action to perform (default: census)",
         },
         target: { type: "string", description: "Target file path, directory path, module name, or goal string" },
@@ -650,6 +651,66 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         },
       },
       required: ["filePath"],
+    },
+    annotations: {
+      readOnlyHint: false,
+    },
+  },
+  {
+    name: "lean_tree_shake",
+    description: "Declaration-level and module-level Lean 4 tree-shaker: traces transitive `.ilean` symbol references from one or more entry modules, prunes unreachable modules and declarations via `lean-analyzer parse --spans` UTF-8 byte spans, optionally anonymizes headers/URLs and scans for identity leaks, and emits a standalone verifiable Lake slice or `.tar.gz` archive.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        entryModules: {
+          type: "array",
+          items: { type: "string" },
+          description: "Root module names or .lean paths to preserve (e.g. ['MyProject.Concordance'])",
+        },
+        target: {
+          type: "string",
+          description: "Single entry module or .lean path shorthand when entryModules is omitted",
+        },
+        outputDir: {
+          type: "string",
+          description: "Optional directory to emit the standalone tree-shaken Lake project",
+        },
+        archivePath: {
+          type: "string",
+          description: "Optional .tar.gz path to emit a metadata-scrubbed deterministic archive",
+        },
+        granularity: {
+          type: "string",
+          enum: ["declaration", "module"],
+          description: "Pruning level: 'declaration' (default) or 'module'",
+        },
+        anonymize: {
+          type: "boolean",
+          description: "Scrub author/copyright headers and repository URLs for double-blind review (default: false)",
+        },
+        packageName: {
+          type: "string",
+          description: "Optional package name override in emitted lakefile/manifest",
+        },
+        forbiddenPatterns: {
+          type: "array",
+          items: { type: "string" },
+          description: "Case-insensitive substrings forbidden in emitted files (anonymity audit)",
+        },
+        verifyBuild: {
+          type: "boolean",
+          description: "Run standalone `lake build` on the emitted slice with self-healing module fallback (default: false)",
+        },
+        timeoutMs: {
+          type: "integer",
+          description: "Build verification timeout in ms (default: 600000)",
+        },
+        format: {
+          type: "string",
+          enum: ["json", "markdown"],
+          description: "Output format: 'json' (default) or 'markdown'",
+        },
+      },
     },
     annotations: {
       readOnlyHint: false,
@@ -1430,27 +1491,32 @@ export class Lean4IleanIndex {
       return;
     }
 
-    // Resolve workspace root if projectRoot is inside a subpackage
-    let wsRoot = this.projectRoot;
-    let scanCurr = path.resolve(this.projectRoot);
-    while (scanCurr !== path.dirname(scanCurr)) {
-      if (
-        fs.existsSync(path.join(scanCurr, "CLAUDE.md")) ||
-        fs.existsSync(path.join(scanCurr, "AGENTS.md")) ||
-        (fs.existsSync(path.join(scanCurr, "packages")) && !fs.existsSync(path.join(scanCurr, "..", "packages")))
-      ) {
-        wsRoot = scanCurr;
-        break;
+    const resolvedProjRoot = path.resolve(this.projectRoot);
+    const directLakeProject =
+      isLakeRoot(resolvedProjRoot) && process.env.LEAN_DISCOVER_SUBPROJECTS !== "1";
+
+    let wsRoot = resolvedProjRoot;
+    if (!directLakeProject) {
+      let scanCurr = resolvedProjRoot;
+      while (scanCurr !== path.dirname(scanCurr)) {
+        if (
+          fs.existsSync(path.join(scanCurr, "CLAUDE.md")) ||
+          fs.existsSync(path.join(scanCurr, "AGENTS.md")) ||
+          (fs.existsSync(path.join(scanCurr, "packages")) && !fs.existsSync(path.join(scanCurr, "..", "packages")))
+        ) {
+          wsRoot = scanCurr;
+          break;
+        }
+        scanCurr = path.dirname(scanCurr);
       }
-      scanCurr = path.dirname(scanCurr);
     }
 
     const lakeRootSet = new Set<string>([
-      path.resolve(this.projectRoot),
-      path.resolve(wsRoot),
+      resolvedProjRoot,
+      ...(directLakeProject ? [] : [path.resolve(wsRoot)]),
       ...this.extraLakeRoots,
       ...Lean4IleanIndex.parseEnvLakeRoots(),
-      ...this.discoverSubprojectLakeRoots(wsRoot, 3),
+      ...(directLakeProject ? [] : this.discoverSubprojectLakeRoots(wsRoot, 3)),
     ]);
     this.discoveredLakeRoots = Array.from(lakeRootSet).filter((r) => fs.existsSync(r));
 
@@ -1458,47 +1524,45 @@ export class Lean4IleanIndex {
     const packageDirs: string[] = [];
     for (const lr of this.discoveredLakeRoots) {
       candidateRoots.push(path.join(lr, ".lake", "build", "lib", "lean"));
-      candidateRoots.push(path.join(lr, ".lake", "build", "ir"));
       packageDirs.push(path.join(lr, ".lake", "packages"));
     }
 
-    // Discover nested Lean projects under docs/*/lean if present
-    const docsDir = path.join(wsRoot, "docs");
-    if (fs.existsSync(docsDir)) {
-      try {
-        for (const ent of fs.readdirSync(docsDir, { withFileTypes: true })) {
-          if (ent.isDirectory()) {
-            const nestedLean = path.join(docsDir, ent.name, "lean");
-            if (fs.existsSync(nestedLean)) {
-              candidateRoots.push(path.join(nestedLean, ".lake", "build", "lib", "lean"));
-              candidateRoots.push(path.join(nestedLean, ".lake", "build", "ir"));
-              packageDirs.push(path.join(nestedLean, ".lake", "packages"));
+    if (!directLakeProject) {
+      // Discover nested Lean projects under docs/*/lean if present
+      const docsDir = path.join(wsRoot, "docs");
+      if (fs.existsSync(docsDir)) {
+        try {
+          for (const ent of fs.readdirSync(docsDir, { withFileTypes: true })) {
+            if (ent.isDirectory()) {
+              const nestedLean = path.join(docsDir, ent.name, "lean");
+              if (fs.existsSync(nestedLean)) {
+                candidateRoots.push(path.join(nestedLean, ".lake", "build", "lib", "lean"));
+                packageDirs.push(path.join(nestedLean, ".lake", "packages"));
+              }
             }
           }
+        } catch {
+          // Ignore unreadable docs directory
         }
-      } catch {
-        // Ignore unreadable docs directory
       }
-    }
 
-    // Discover modular Lean packages under packages/*/
-    const packagesDir = path.join(wsRoot, "packages");
-    if (fs.existsSync(packagesDir)) {
-      try {
-        const pkgs = fs.readdirSync(packagesDir, { withFileTypes: true });
-        for (const pkg of pkgs) {
-          if (pkg.isDirectory()) {
-            const pLib = path.join(packagesDir, pkg.name, ".lake", "build", "lib", "lean");
-            const pIr = path.join(packagesDir, pkg.name, ".lake", "build", "ir");
-            if (fs.existsSync(pLib)) candidateRoots.push(pLib);
-            if (fs.existsSync(pIr)) candidateRoots.push(pIr);
+      // Discover modular Lean packages under packages/*/
+      const packagesDir = path.join(wsRoot, "packages");
+      if (fs.existsSync(packagesDir)) {
+        try {
+          const pkgs = fs.readdirSync(packagesDir, { withFileTypes: true });
+          for (const pkg of pkgs) {
+            if (pkg.isDirectory()) {
+              const pLib = path.join(packagesDir, pkg.name, ".lake", "build", "lib", "lean");
+              if (fs.existsSync(pLib)) candidateRoots.push(pLib);
 
-            const pPkgs = path.join(packagesDir, pkg.name, ".lake", "packages");
-            if (fs.existsSync(pPkgs)) packageDirs.push(pPkgs);
+              const pPkgs = path.join(packagesDir, pkg.name, ".lake", "packages");
+              if (fs.existsSync(pPkgs)) packageDirs.push(pPkgs);
+            }
           }
+        } catch {
+          // Ignore unreadable packages directory
         }
-      } catch {
-        // Ignore unreadable packages directory
       }
     }
 
@@ -1795,14 +1859,25 @@ export class Lean4IleanIndex {
           const refModule = constant?.c?.m;
           const refName = constant?.c?.n;
           if (!refModule || !refName) continue;
-          const refId = `${refModule}.${refName}`;
+          const sameRootPkg = (mod: string, name: string): boolean =>
+            Boolean(mod) && name.includes(".") && mod.split(".")[0] === name.split(".")[0];
+          const refId =
+            refName === refModule ||
+            refName.startsWith(refModule + ".") ||
+            sameRootPkg(refModule, refName)
+              ? refName
+              : `${refModule}.${refName}`;
           const usages = Array.isArray(refEntry?.usages) ? refEntry.usages : [];
           for (const usage of usages) {
             const declName = usage?.[4];
             if (typeof declName !== "string" || declName.length === 0) continue;
-            const qualified = moduleName && !declName.startsWith(moduleName)
-              ? `${moduleName}.${declName}`
-              : declName;
+            const qualified =
+              moduleName &&
+              declName !== moduleName &&
+              !declName.startsWith(moduleName + ".") &&
+              !sameRootPkg(moduleName, declName)
+                ? `${moduleName}.${declName}`
+                : declName;
             const declKeys = qualified === declName ? [declName] : [declName, qualified];
             for (const key of declKeys) {
               let refs = this.declToRefs.get(key);
@@ -1812,12 +1887,15 @@ export class Lean4IleanIndex {
               }
               refs.add(refId);
             }
-            let users = this.refToDecls.get(refId);
-            if (!users) {
-              users = new Set<string>();
-              this.refToDecls.set(refId, users);
+            const refKeys = refId === refName ? [refId] : [refId, refName];
+            for (const rk of refKeys) {
+              let users = this.refToDecls.get(rk);
+              if (!users) {
+                users = new Set<string>();
+                this.refToDecls.set(rk, users);
+              }
+              users.add(qualified);
             }
-            users.add(qualified);
           }
         }
       }
@@ -1867,7 +1945,11 @@ export class Lean4IleanIndex {
     direction: "uses" | "usedBy" | "both",
     limit: number = 50
   ): { direction: string; lines: string[]; total: number; resolved: boolean } {
-    if (this.declToRefs.size === 0) this.refresh();
+    if (this.declToRefs.size === 0 && this.symbolIndex.size === 0) {
+      this.refresh();
+    } else {
+      this.refreshIfStale();
+    }
 
     const resolve = (map: Map<string, Set<string>>, sym: string): { key: string; value: Set<string> } | null => {
       const exact = map.get(sym);
@@ -1921,12 +2003,15 @@ export class Lean4IleanIndex {
   /** True when the index has a module record (distinguishes "no imports" from "unknown module"). */
   public hasModule(moduleName: string): boolean {
     if (this.moduleImportsMap.size === 0) this.refresh();
+    else this.refreshIfStale();
     return this.moduleImportsMap.has(moduleName);
   }
 
   public getModuleImports(moduleName: string): string[] {
     if (this.dagIndex.getNodeCount() === 0 && this.moduleImportsMap.size === 0) {
       this.refresh();
+    } else {
+      this.refreshIfStale();
     }
     return this.dagIndex.getDirectImports(moduleName);
   }
@@ -1934,6 +2019,8 @@ export class Lean4IleanIndex {
   public getModuleImportedBy(moduleName: string): string[] {
     if (this.dagIndex.getNodeCount() === 0 && this.moduleImportsMap.size === 0) {
       this.refresh();
+    } else {
+      this.refreshIfStale();
     }
     return this.dagIndex.getDirectImportedBy(moduleName);
   }
@@ -1945,6 +2032,8 @@ export class Lean4IleanIndex {
   ): TransitiveClosureResult {
     if (this.dagIndex.getNodeCount() === 0 && this.moduleImportsMap.size === 0) {
       this.refresh();
+    } else {
+      this.refreshIfStale();
     }
     return this.dagIndex.getTransitiveClosure(rootModule, direction, maxDepth);
   }
@@ -5535,7 +5624,7 @@ export class McpServer {
       case "lean_run_code": {
         const code = args.code;
         if (!code) throw new Error("Missing required argument: 'code'");
-        return this.runLeanStdin(
+        return await this.runLeanStdin(
           code,
           args.context === undefined ? this.leanContext : validateLeanContext(args.context),
           args.timeoutMs
@@ -5560,7 +5649,7 @@ export class McpServer {
           throw new Error("Invalid argument: 'module' (expected a Lean module name without whitespace/semicolons)");
         }
         const code = (module ? `import ${module}\n\n` : "") + `#print axioms ${symbol}\n`;
-        const out = this.runLeanStdin(code);
+        const out = await this.runLeanStdin(code);
         if (out.startsWith("Error:")) return out;
         return out.trim() || `${symbol}: no axiom output (is the symbol in scope? pass the declaring module via 'module')`;
       }
@@ -5594,67 +5683,101 @@ export class McpServer {
       }
 
       case "lean_local_search": {
-        const query = args.query;
+        const query = String(args.query || "").trim();
         if (!query) throw new Error("Missing required argument: 'query'");
         const limit = Number(args.limit ?? 10);
         const modifiers = ["public", "protected", "private", "noncomputable", "partial", "unsafe", "scoped", "local"];
         const keywords = ["theorem", "lemma", "def", "axiom", "class", "instance", "structure", "inductive", "abbrev", "opaque"];
-        
+
         const declLead = "^\\s*(?:@\\[[^\\]]*\\]\\s*)*(?:(?:" + modifiers.join("|") + ")\\s+)*";
         const keywordAlt = keywords.join("|");
         const escapedQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const pattern = declLead + "(?:" + keywordAlt + ")\\s+(?:[A-Za-z0-9_'.]+\\.)*" + escapedQuery + "[A-Za-z0-9_'.]*(?:\\s|:)";
-        
+        const pattern = declLead + "(?:" + keywordAlt + ")\\s+[A-Za-z0-9_'.]*" + escapedQuery + "[A-Za-z0-9_'.]*(?:\\s|:)";
+        const declExtractRe = new RegExp(declLead + "(" + keywordAlt + ")\\s+([A-Za-z0-9_']+(?:\\.[A-Za-z0-9_']+)*)");
+        const lowQuery = query.toLowerCase();
+
+        // Detect nested subprojects so primary-project declarations rank ahead of guest sub-repos and generated concat files
+        const nestedSubprojDirs = new Set<string>();
         try {
-          const { execFileSync } = await import("node:child_process");
-          const out = execFileSync("rg", [
-            "--json", "--no-ignore", "--smart-case", "--hidden", "--color", "never", "--no-messages",
-            "-g", "*.lean", "-g", "!.git/**", "-g", "!.lake/build/**", "-e", pattern
-          ], {
-            cwd: this.projectRoot,
-            encoding: "utf-8",
-            stdio: ["ignore", "pipe", "ignore"],
-          });
-          const results: string[] = [];
-          for (const line of out.split("\n")) {
+          for (const ent of fs.readdirSync(this.projectRoot, { withFileTypes: true })) {
+            if (!ent.isDirectory() || ent.name.startsWith(".")) continue;
+            const subFull = path.join(this.projectRoot, ent.name);
+            if (
+              fs.existsSync(path.join(subFull, "lakefile.toml")) ||
+              fs.existsSync(path.join(subFull, "lakefile.lean")) ||
+              fs.existsSync(path.join(subFull, "lean-toolchain"))
+            ) {
+              nestedSubprojDirs.add(ent.name);
+            }
+          }
+        } catch {
+          // ignore
+        }
+
+        const scoreMatch = (declName: string, relFile: string): number => {
+          const normRel = relFile.replace(/\\/g, "/");
+          const topSeg = normRel.split("/")[0] || "";
+          let tier = 0;
+          if (topSeg === "generated" || normRel.includes("/generated/")) tier += 20;
+          else if (nestedSubprojDirs.has(topSeg)) tier += 10;
+
+          const lowName = declName.toLowerCase();
+          const bare = lowName.split(".").pop() || lowName;
+          if (bare === lowQuery) return tier + 0;
+          if (bare.startsWith(lowQuery)) return tier + 1;
+          if (lowName.includes(lowQuery)) return tier + 2;
+          return tier + 3;
+        };
+
+        const parseRgLines = (rawOut: string): string => {
+          const hits: Array<{ name: string; kind: string; file: string; rank: number }> = [];
+          const cap = Math.max(limit * 25, 250);
+          for (const line of rawOut.split("\n")) {
             if (!line) continue;
             try {
               const event = JSON.parse(line);
               if (event.type === "match") {
                 const text = event.data.lines.text;
-                const match = text.match(new RegExp(declLead + "(" + keywordAlt + ")\\s+([A-Za-z0-9_']+(?:\\.[A-Za-z0-9_']+)*)"));
+                const match = text.match(declExtractRe);
                 if (match) {
-                  results.push(`Name: ${match[2]}\nKind: ${match[1]}\nFile: ${event.data.path.text}\n`);
-                  if (results.length >= limit) break;
+                  const file = String(event.data.path.text || "");
+                  hits.push({
+                    name: match[2],
+                    kind: match[1],
+                    file,
+                    rank: scoreMatch(match[2], file),
+                  });
+                  if (hits.length >= cap) break;
                 }
               }
             } catch {
-              // per-target best effort: one unreadable target must not sink the batch
+              // per-target best effort
             }
           }
-          if (results.length === 0) return "No results found.";
-          return results.join("\n");
+          if (hits.length === 0) return "No results found.";
+          hits.sort((a, b) => a.rank - b.rank || a.file.localeCompare(b.file) || a.name.localeCompare(b.name));
+          return hits
+            .slice(0, limit)
+            .map((h) => `Name: ${h.name}\nKind: ${h.kind}\nFile: ${h.file}\n`)
+            .join("\n");
+        };
+
+        try {
+          const out = execFileSync("rg", [
+            "--json", "--no-ignore", "--ignore-case", "--hidden", "--color", "never", "--no-messages",
+            "-g", "*.lean", "-g", "!.git/**", "-g", "!.lake/**", "-g", "!node_modules/**", "-e", pattern
+          ], {
+            cwd: this.projectRoot,
+            encoding: "utf-8",
+            maxBuffer: 16 * 1024 * 1024,
+            stdio: ["ignore", "pipe", "ignore"],
+          });
+          return parseRgLines(out);
         } catch (err: any) {
           if (err.status === 1 && (!err.stdout || !err.stdout.trim())) return "No results found.";
           if (err.stdout && err.stdout.trim().length > 0) {
-            const results: string[] = [];
-            for (const line of err.stdout.split("\n")) {
-              if (!line) continue;
-              try {
-                const event = JSON.parse(line);
-                if (event.type === "match") {
-                  const text = event.data.lines.text;
-                  const match = text.match(new RegExp(declLead + "(" + keywordAlt + ")\\s+([A-Za-z0-9_']+(?:\\.[A-Za-z0-9_']+)*)"));
-                  if (match) {
-                    results.push(`Name: ${match[2]}\nKind: ${match[1]}\nFile: ${event.data.path.text}\n`);
-                    if (results.length >= limit) break;
-                  }
-                }
-              } catch {
-                // per-target best effort: one unreadable target must not sink the batch
-              }
-            }
-            if (results.length > 0) return results.join("\n");
+            const parsed = parseRgLines(err.stdout);
+            if (parsed !== "No results found.") return parsed;
           }
           return `Search failed: ${err.message || String(err)}`;
         }
@@ -7536,6 +7659,11 @@ export class McpServer {
             ...args,
             filePath: args.filePath || target,
           });
+        } else if (action === "tree_shake" || action === "treeshake" || action === "slice") {
+          return await this.executeTool("lean_tree_shake", {
+            ...args,
+            target,
+          });
         } else if (action === "proof_fidelity" || action === "fidelity_audit" || action === "sair_audit") {
           return await this.executeTool("lean_proof_fidelity_audit", {
             targetPath: target,
@@ -7675,6 +7803,35 @@ export class McpServer {
           timeoutMs: args.timeoutMs !== undefined ? Number(args.timeoutMs) : undefined,
           format: args.format === "markdown" ? "markdown" : "json",
         });
+      }
+
+      case "lean_tree_shake": {
+        const rawEntries: string[] = Array.isArray(args.entryModules)
+          ? args.entryModules.map(String)
+          : args.target || args.moduleName || args.filePath
+            ? [String(args.target || args.moduleName || args.filePath)]
+            : [];
+        if (rawEntries.length === 0) {
+          throw new Error("Missing required argument: 'entryModules' (or 'target')");
+        }
+        const report = await runLeanTreeShake({
+          projectRoot: args.projectRoot ? String(args.projectRoot) : this.projectRoot,
+          entryModules: rawEntries,
+          outputDir: args.outputDir ? String(args.outputDir) : undefined,
+          archivePath: args.archivePath ? String(args.archivePath) : undefined,
+          granularity: args.granularity === "module" ? "module" : "declaration",
+          anonymize: args.anonymize === true,
+          packageName: args.packageName ? String(args.packageName) : undefined,
+          forbiddenPatterns: Array.isArray(args.forbiddenPatterns)
+            ? args.forbiddenPatterns.map(String)
+            : undefined,
+          verifyBuild: args.verifyBuild === true,
+          timeoutMs: args.timeoutMs !== undefined ? Number(args.timeoutMs) : undefined,
+          format: args.format === "markdown" ? "markdown" : "json",
+        });
+        return args.format === "markdown"
+          ? formatTreeShakeMarkdown(report)
+          : JSON.stringify(report, null, 2);
       }
 
       default:
@@ -7926,44 +8083,134 @@ export class McpServer {
     code: string,
     context: LeanContext | undefined = this.leanContext,
     timeoutMsArg?: unknown
-  ): string {
+  ): Promise<string> {
     const invocation = planLeanInvocation(this.projectRoot, ["--stdin"], context);
     const unavailable = leanContextUnavailable(invocation);
-    if (unavailable) return unavailable;
+    if (unavailable) return Promise.resolve(unavailable);
     const rawDefaultTimeout = Number(process.env.LEAN_RUN_CODE_TIMEOUT_MS);
     const defaultTimeoutMs =
-      Number.isInteger(rawDefaultTimeout) && rawDefaultTimeout >= 1000 ? rawDefaultTimeout : 15000;
+      Number.isInteger(rawDefaultTimeout) && rawDefaultTimeout >= 1000 ? rawDefaultTimeout : 30000;
     const timeoutMs = clampInt(timeoutMsArg, 1000, 120000, defaultTimeoutMs);
-    try {
-      const out = execFileSync(invocation.command, invocation.args, {
-        input: code,
-        cwd: invocation.cwd,
-        env: leanInvocationEnv(invocation),
-        maxBuffer: 1024 * 1024,
-        encoding: "utf-8",
-        stdio: ["pipe", "pipe", "pipe"],
-        timeout: timeoutMs,
-      });
-      return out.trim() || "No output";
-    } catch (err: any) {
-      const timedOut =
-        err?.code === "ETIMEDOUT" ||
-        Boolean(err?.killed) ||
-        String(err?.signal || "") === "SIGTERM" ||
-        /ETIMEDOUT|timed out/i.test(String(err?.message || ""));
-      const combined = `${err.stdout || ""}${err.stderr || ""}` || String(err.message || err);
-      if (timedOut) {
-        return (
-          `Error: timeout_expired after ${timeoutMs}ms (${err.message || "Lean stdin execution timed out"})\n` +
-          `Output: ${err.stdout || ""}\n` +
-          `Error Output: ${err.stderr || ""}\n` +
-          `[hint] Increase timeoutMs (up to 120000ms) or LEAN_RUN_CODE_TIMEOUT_MS, or bound elaboration with ` +
-          `\`set_option maxHeartbeats 400000\` / \`set_option maxRecDepth 4096\`.` +
-          `${explainLeanFailure(combined, invocation)}`
+
+    if (invocation.via === "explicit" || Boolean((execFileSync as any)?.mock)) {
+      try {
+        const out = execFileSync(invocation.command, invocation.args, {
+          input: code,
+          cwd: invocation.cwd,
+          env: leanInvocationEnv(invocation),
+          maxBuffer: 1024 * 1024,
+          encoding: "utf-8",
+          stdio: ["pipe", "pipe", "pipe"],
+          timeout: timeoutMs,
+        });
+        return Promise.resolve(out.trim() || "No output");
+      } catch (err: any) {
+        const isTimedOut =
+          err?.code === "ETIMEDOUT" ||
+          Boolean(err?.killed) ||
+          String(err?.signal || "") === "SIGTERM" ||
+          /ETIMEDOUT|timed out/i.test(String(err?.message || ""));
+        const combined = `${err.stdout || ""}${err.stderr || ""}` || String(err.message || err);
+        if (isTimedOut) {
+          return Promise.resolve(
+            `Error: timeout_expired after ${timeoutMs}ms (${err.message || "Lean stdin execution timed out"})\n` +
+              `Output: ${err.stdout || ""}\n` +
+              `Error Output: ${err.stderr || ""}\n` +
+              `[hint] Increase timeoutMs (up to 120000ms) or LEAN_RUN_CODE_TIMEOUT_MS, or bound elaboration with ` +
+              `\`set_option maxHeartbeats 400000\` / \`set_option maxRecDepth 4096\`.` +
+              `${explainLeanFailure(combined, invocation)}`
+          );
+        }
+        return Promise.resolve(
+          `Error: ${err.message || String(err)}\nOutput: ${err.stdout || ""}\nError Output: ${err.stderr || ""}${explainLeanFailure(combined, invocation)}`
         );
       }
-      return `Error: ${err.message || String(err)}\nOutput: ${err.stdout || ""}\nError Output: ${err.stderr || ""}${explainLeanFailure(combined, invocation)}`;
     }
+
+    return new Promise<string>((resolve) => {
+      let stdout = "";
+      let stderr = "";
+      let settled = false;
+      let timedOut = false;
+
+      const child = spawn(invocation.command, invocation.args, {
+        cwd: invocation.cwd,
+        env: leanInvocationEnv(invocation),
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      const timer = setTimeout(() => {
+        timedOut = true;
+        try {
+          child.kill("SIGTERM");
+          setTimeout(() => {
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              // ignore
+            }
+          }, 250).unref();
+        } catch {
+          // ignore
+        }
+      }, timeoutMs);
+
+      const capAppend = (prev: string, chunk: Buffer | string): string => {
+        const next = prev + chunk.toString("utf-8");
+        return next.length > 1024 * 1024 ? next.slice(0, 1024 * 1024) : next;
+      };
+
+      child.stdout?.on("data", (d) => {
+        stdout = capAppend(stdout, d);
+      });
+      child.stderr?.on("data", (d) => {
+        stderr = capAppend(stderr, d);
+      });
+
+      child.on("error", (err: any) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        const combined = `${stdout}${stderr}` || String(err?.message || err);
+        resolve(
+          `Error: ${err?.message || String(err)}\nOutput: ${stdout}\nError Output: ${stderr}${explainLeanFailure(combined, invocation)}`
+        );
+      });
+
+      child.on("close", (exitCode, signal) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (timedOut || signal === "SIGTERM" || signal === "SIGKILL") {
+          const combined = `${stdout}${stderr}` || "Lean stdin execution timed out";
+          resolve(
+            `Error: timeout_expired after ${timeoutMs}ms (Lean stdin execution timed out)\n` +
+              `Output: ${stdout}\n` +
+              `Error Output: ${stderr}\n` +
+              `[hint] Increase timeoutMs (up to 120000ms) or LEAN_RUN_CODE_TIMEOUT_MS, or bound elaboration with ` +
+              `\`set_option maxHeartbeats 400000\` / \`set_option maxRecDepth 4096\`.` +
+              `${explainLeanFailure(combined, invocation)}`
+          );
+          return;
+        }
+        if (exitCode !== 0) {
+          const msg = `Command failed: ${invocation.command} ${invocation.args.join(" ")}`;
+          const combined = `${stdout}${stderr}` || msg;
+          resolve(
+            `Error: ${msg}\nOutput: ${stdout}\nError Output: ${stderr}${explainLeanFailure(combined, invocation)}`
+          );
+          return;
+        }
+        resolve(stdout.trim() || "No output");
+      });
+
+      try {
+        child.stdin?.write(code, "utf-8");
+        child.stdin?.end();
+      } catch {
+        // ignore broken pipe on immediate exit
+      }
+    });
   }
 
   /** One scratch-file run of a synthesized harness (v1 slice or a v2 candidate). */
