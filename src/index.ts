@@ -1,4 +1,5 @@
 // tools/lean_lsp_mcp/src/index.ts
+export { resolveProjectRoot } from "./project_root.ts";
 // Standalone Model Context Protocol (MCP) server for Lean 4 & C FFI.
 // Scoped Unicode policy (INV-001; typographic-free by default).
 
@@ -88,6 +89,12 @@ import {
   type ExtractedSubLemma,
 } from "./sota_engines.ts";
 export * from "./sota_engines.ts";
+import {
+  formatAutoSlimMarkdown,
+  runKernelVerifiedAutoSlim,
+  type AutoSlimOptions,
+} from "./autoslim.ts";
+export * from "./autoslim.ts";
 
 export interface IleanSymbolEntry {
   filePath: string;
@@ -610,6 +617,42 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
     annotations: {
       readOnlyHint: true,
+    },
+  },
+  {
+    name: "lean_autoslim",
+    description: "Kernel-verified proof auto-slimmer: discovers ALTPROOF-ROUTE `by ...` proof-span quickfixes via `lean-analyzer lint --format=json`, probes ranked candidate tactics against the real Lean 4 elaborator/kernel (Virtual LSP `didChange` + `$/lean/fileProgress` or batch `lake env lean`), and accepts only strictly shorter, 0-error / 0-warning / 0-`sorry` replacements.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        filePath: { type: "string", description: "Path to the .lean file to slim" },
+        apply: { type: "boolean", description: "If true, atomically writes verified slimmed proofs to disk (default: false dry-run)" },
+        mode: {
+          type: "string",
+          enum: ["auto", "lsp", "batch"],
+          description: "Verification backend: 'auto' (warm LSP if attached, else batch lake env lean), 'lsp' (Virtual LSP didChange), or 'batch' (lake env lean)",
+        },
+        allowAltProofImport: {
+          type: "boolean",
+          description: "If true, allows inserting `import ProofSkills.AltProof` (or the project's `Tactics` / `AltProof` module) when needed by a verified closer (default: false)",
+        },
+        routes: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional whitelist of altproof route IDs to attempt (e.g. ['sum_congr_ring', 'finset_mono'])",
+        },
+        maxCandidates: { type: "integer", description: "Maximum number of quickfix candidates to test (default: 50)" },
+        timeoutMs: { type: "integer", description: "Per-candidate Lean verification timeout in ms (default: 25000)" },
+        format: {
+          type: "string",
+          enum: ["json", "markdown"],
+          description: "Output format: 'json' (default structured receipt) or 'markdown'",
+        },
+      },
+      required: ["filePath"],
+    },
+    annotations: {
+      readOnlyHint: false,
     },
   },
 ];
@@ -4539,6 +4582,124 @@ export class FileWorkerManager {
     return lines.join("\n");
   }
 
+  /**
+   * Kernel-verified auto-slimmer (`lean_autoslim`).
+   * Uses a warm Virtual LSP session (`didChange` + `waitForAnalysis` on `$/lean/fileProgress`)
+   * when `mode === 'lsp'` or when `mode === 'auto'` and a live Lean server is attached,
+   * otherwise falls back to batch `lake env lean` verification.
+   */
+  public async autoSlimFile(options: AutoSlimOptions): Promise<string> {
+    const absPath = this.resolveTargetPath(options.filePath);
+    if (!fs.existsSync(absPath)) {
+      throw new Error(`File not found: ${options.filePath}`);
+    }
+    const leanRoot = this.findLeanRoot(absPath);
+    const buildStatus = LakeBuildGuard.inspectBuildActivity(leanRoot);
+    const mode = options.mode || "auto";
+
+    const canUseLsp =
+      process.env.LEAN_SKIP_LSP_FOR_TEST !== "1" &&
+      process.env.LEAN_ANALYZER_LSP !== "1" &&
+      !buildStatus.isLocked &&
+      (mode === "lsp" || (mode === "auto" && this.sessions.has(leanRoot)));
+
+    let lspVerifier: AutoSlimOptions["lspVerifier"] | undefined;
+    let sessionToRestore: FileWorkerSession | null = null;
+    let uriToRestore: string | null = null;
+    let originalDiskText: string | null = null;
+
+    if (canUseLsp) {
+      const session = await this.ensureSession(leanRoot);
+      const syncedAt = Date.now();
+      const uri = this.syncDocument(session, absPath);
+      await this.waitForAnalysis(session, uri, syncedAt, Math.min(15000, Number(options.timeoutMs ?? 25000)));
+      sessionToRestore = session;
+      uriToRestore = uri;
+      originalDiskText = fs.readFileSync(absPath, "utf-8");
+
+      lspVerifier = async (candidateContent: string, timeoutMs: number) => {
+        let fileInfo = session.openFiles.get(absPath);
+        if (!fileInfo) {
+          this.syncDocument(session, absPath);
+          fileInfo = session.openFiles.get(absPath);
+        }
+        if (!fileInfo) {
+          return { ok: false, errorCount: 1, warningCount: 0, firstIssue: "document-not-open" };
+        }
+        const changedAt = Date.now();
+        fileInfo.lastAccessedMs = changedAt;
+        session.lastActiveMs = changedAt;
+        fileInfo.version++;
+        this.sendNotification(session, "textDocument/didChange", {
+          textDocument: { uri, version: fileInfo.version },
+          contentChanges: [{ text: candidateContent }],
+        });
+        const ready = await this.waitForAnalysis(session, uri, changedAt, timeoutMs);
+        if (!ready) {
+          return {
+            ok: false,
+            errorCount: 1,
+            warningCount: 0,
+            firstIssue: `LSP fileProgress did not complete within ${timeoutMs}ms`,
+          };
+        }
+        const diags = session.diagnostics.get(uri)?.diags ?? [];
+        const errors = diags.filter((d: any) => Number(d.severity ?? 1) === 1);
+        const warnings = diags.filter(
+          (d: any) =>
+            Number(d.severity ?? 2) === 2 ||
+            /\b(?:sorry|unsolved goals)\b/i.test(String(d.message ?? ""))
+        );
+        const ok = errors.length === 0 && warnings.length === 0;
+        const firstMsg = (errors[0] || warnings[0])?.message;
+        return {
+          ok,
+          errorCount: errors.length,
+          warningCount: warnings.length,
+          ...(ok ? {} : { firstIssue: firstMsg ? String(firstMsg).split("\n")[0] : "LSP diagnostic failure" }),
+        };
+      };
+    }
+
+    try {
+      const report = await runKernelVerifiedAutoSlim(this.projectRoot, {
+        ...options,
+        filePath: absPath,
+        leanContext: this.leanContext,
+        lspVerifier,
+      });
+      if (sessionToRestore && uriToRestore) {
+        if (report.applied) {
+          this.forceResync(sessionToRestore, absPath);
+        } else if (originalDiskText !== null) {
+          const fileInfo = sessionToRestore.openFiles.get(absPath);
+          if (fileInfo) {
+            fileInfo.version++;
+            this.sendNotification(sessionToRestore, "textDocument/didChange", {
+              textDocument: { uri: uriToRestore, version: fileInfo.version },
+              contentChanges: [{ text: originalDiskText }],
+            });
+          }
+        }
+        sessionToRestore = null;
+      }
+      return (options.format || "json") === "markdown"
+        ? formatAutoSlimMarkdown(report)
+        : JSON.stringify(report, null, 2);
+    } finally {
+      if (sessionToRestore && uriToRestore && originalDiskText !== null) {
+        const fileInfo = sessionToRestore.openFiles.get(absPath);
+        if (fileInfo) {
+          fileInfo.version++;
+          this.sendNotification(sessionToRestore, "textDocument/didChange", {
+            textDocument: { uri: uriToRestore, version: fileInfo.version },
+            contentChanges: [{ text: originalDiskText }],
+          });
+        }
+      }
+    }
+  }
+
   public disposeSession(leanRoot: string): void {
     const session = this.sessions.get(leanRoot);
     if (session) {
@@ -7370,6 +7531,11 @@ export class McpServer {
             ...args,
             goal: args.goal || (typeof target === "string" && target !== "." ? target : ""),
           });
+        } else if (action === "autoslim" || action === "slim") {
+          return await this.executeTool("lean_autoslim", {
+            ...args,
+            filePath: args.filePath || target,
+          });
         } else if (action === "proof_fidelity" || action === "fidelity_audit" || action === "sair_audit") {
           return await this.executeTool("lean_proof_fidelity_audit", {
             targetPath: target,
@@ -7490,6 +7656,25 @@ export class McpServer {
           });
         }
         return buildTheoremPreflightStatic(this.projectRoot, absPath, theoremName, cesResult);
+      }
+
+      case "lean_autoslim":
+      case "lean_slim_file": {
+        const filePath = String(args.filePath || args.path || args.file || args.target || "").trim();
+        if (!filePath) throw new Error("Missing required argument: 'filePath'");
+        return await this.lakeManager.autoSlimFile({
+          filePath,
+          apply: args.apply === true,
+          mode:
+            args.mode === "lsp" || args.mode === "batch" || args.mode === "auto"
+              ? args.mode
+              : "auto",
+          allowAltProofImport: args.allowAltProofImport === true,
+          routes: Array.isArray(args.routes) ? args.routes.map(String) : undefined,
+          maxCandidates: args.maxCandidates !== undefined ? Number(args.maxCandidates) : undefined,
+          timeoutMs: args.timeoutMs !== undefined ? Number(args.timeoutMs) : undefined,
+          format: args.format === "markdown" ? "markdown" : "json",
+        });
       }
 
       default:

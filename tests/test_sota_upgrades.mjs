@@ -330,7 +330,7 @@ console.log("Running SOTA Upgrades Test Suite...");
       "prioritizes and merges `*-domain-deltas.md` in skills-overrides/skills/"
     );
 
-    // Verify 5 canonical roles cover all 21 MCP tools + skill_aliases & packs resolution
+    // Verify 5 canonical roles cover all 22 MCP tools + skill_aliases & packs resolution
     const aliasedDispatch = JSON.parse(
       await server.executeTool("lean_skill_dispatch", {
         skillOrQuery: "lean-enforcement",
@@ -362,7 +362,7 @@ console.log("Running SOTA Upgrades Test Suite...");
       );
       for (const t of rp.allowedTools) allCoveredTools.add(t);
     }
-    assert.strictEqual(allCoveredTools.size, 21, `expected 5 canonical roles to cover all 21 MCP tools, got ${allCoveredTools.size}`);
+    assert.strictEqual(allCoveredTools.size, 22, `expected 5 canonical roles to cover all 22 MCP tools, got ${allCoveredTools.size}`);
 
     // 6g. lean_theorem_preflight
     const preflight = JSON.parse(

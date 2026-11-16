@@ -23,6 +23,7 @@
 | Verify a theorem depends only on standard axioms (`propext`, `Classical.choice`, `Quot.sound`) | `lean_axiom_closure` (single symbol) or `lean_metrics` (`action: "axiom_audit"`, directory/file) | ~1-3 s / < 50 ms | **No** |
 | Run a quick standalone `#check`, `#eval`, or `#synth` snippet without touching files | `lean_exec` | ~1-3 s | **No** (`lean --stdin`) |
 | Audit Lean Blueprint coverage (`\leanok`, `\uses`), generate LaTeX scaffolds, or Layer-4 Zettels | `lean_blueprint` (`action: "status" | "scaffold" | "zettel" | "skeleton" | "walkthrough" | "graph_neighborhood"`) | < 100 ms | **No** |
+| Kernel-verified auto-slimming of multi-line tactic proofs via `lean-analyzer` `ALTPROOF-ROUTE` quickfix spans | `lean_autoslim` (or `lean_metrics` `action: "autoslim"`) | ~0.5-5 s | Optional (uses warm LSP or `lake env lean`) |
 | Recover when live goals look stale after an external file edit | `lean_resync` (or `lean_server_status` to inspect workers) | ~50 ms | Yes |
 
 ---
@@ -245,6 +246,16 @@ Audits Lean Blueprint alignment or generates LaTeX blueprint macros, proof skele
 #### `lean_ffi`
 Inspects Lean 4 C FFI `@[extern]` bindings, C headers, and `lean --print-prefix` sysroot flags.
 - **Optional**: `action` (`"inspect_env" | "resolve_symbol" | "verify_headers" | "sysroot"`, default `"inspect_env"`), `externName` (string), `cHeaderPath` (string).
+
+#### `lean_autoslim` (and `lean_metrics` `action: "autoslim"`)
+Discovers exact `by ...` proof-span quickfixes via `lean-analyzer lint --format=json`, tests ranked candidate tactics against the real Lean 4 elaborator/kernel (Virtual LSP `didChange` + `$/lean/fileProgress` or batch `lake env lean`), and accepts only strictly shorter, `0`-error / `0`-warning / `0`-`sorry` replacements.
+- **Required**: `filePath` (string).
+- **Optional**: `apply` (boolean, default `false` dry-run), `mode` (`"auto" | "lsp" | "batch"`, default `"auto"`), `allowAltProofImport` (boolean, default `false`), `routes` (array of strings), `maxCandidates` (integer, default `50`), `timeoutMs` (integer, default `25000`), `format` (`"json" | "markdown"`, default `"json"`).
+- **Examples**:
+  ```json
+  {"filePath": "MyProject/Tests/StageMatrix.lean", "apply": false, "format": "markdown"}
+  {"filePath": "MyProject/Tests/StageMatrix.lean", "apply": true, "allowAltProofImport": true}
+  ```
 
 ---
 
