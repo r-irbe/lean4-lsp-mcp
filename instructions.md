@@ -212,6 +212,40 @@ Consolidated project/module metrics, architecture projections, and AltProof anal
   {"target": "MyProject/QualityGates.lean", "action": "altproof", "goal": "g1 <= g2"}
   ```
 
+#### Compiled kernel census (`lean_metrics`, `action: "kernel_census"`)
+
+Static `action: "census"` remains a source scan. For compiled proof coverage:
+
+```json
+{"action":"kernel_census","target":".","prefix":"MyProject","mode":"check","format":"json"}
+```
+
+The target must be a Lake project inside the served workspace. Check mode is the
+read-only default: it validates the stored receipt, SHA-256 source/artifact/config
+and compiler/import context, without starting Lean or a build. Missing, legacy,
+failed, malformed and stale evidence is never `gateEligible: true`.
+
+Use `mode: "rebuild"` explicitly to build all selected source modules, replay
+eligible constants and write a fresh receipt plus logs. `receiptPath` defaults
+to `.lake/kernel-census/<prefix>.json` inside the target project. Symlink and
+out-of-project destinations are refused. Check defaults to 60 seconds; rebuild
+to 20 minutes; `timeoutMs` may be 1,000 through 3,600,000. On POSIX, timeout kills
+the adapter process group, including build children. Server disposal, EOF and
+shutdown signals also terminate active adapter groups.
+
+Use an MCP installation nested inside the proof-skills toolkit, or configure
+`LEAN_PROOF_SKILLS_ROOT` in the server environment. A requested project cannot
+supply an executable adapter. A missing
+optional toolkit reports `unavailable`. The same generic Python adapter is the
+producer and freshness checker; the MCP layer does not implement another audit.
+
+Results distinguish unique compiled constants, replayed eligible constants,
+private theorem constants, unsafe/partial exclusions and the transitive axiom
+footprint. External imported library bodies remain the replay base; discarded
+anonymous examples are not serialized theorem constants. Large manifests remain
+in the receipt. Because rebuild can write build outputs, tool metadata declares
+`lean_metrics` may write even though check itself is read-only.
+
 #### `lean_module_census`
 Direct declaration census over a directory or `.lean` file.
 - **Required**: `targetPath` (string).

@@ -42,6 +42,7 @@ import {
   type NavArgs,
   type NavMode,
 } from "./navigation.ts";
+import { runKernelCensus } from "./kernel_census.ts";
 import { formatTreeShakeMarkdown, runLeanTreeShake } from "./tree_shake.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -288,16 +289,20 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "lean_metrics",
-    description: "Module and project metrics: static code census, module dependency hierarchy DAG, dependency subgraphs, dual Place-Link bigraph projection, axiom source scan, WASM proof_fidelity/SAIR audit, and AltProof elegance/tactic analysis",
+    description: "Module and project metrics: static code census, compiled kernel receipt check or explicit rebuild, module dependency hierarchy DAG, dependency subgraphs, dual Place-Link bigraph projection, axiom source scan, WASM proof_fidelity/SAIR audit, and AltProof elegance/tactic analysis",
     inputSchema: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["census", "hierarchy", "subgraph", "bigraph", "axiom_audit", "altproof", "autoslim", "proof_fidelity", "sair_audit", "tree_shake"],
+          enum: ["census", "kernel_census", "hierarchy", "subgraph", "bigraph", "axiom_audit", "altproof", "autoslim", "proof_fidelity", "sair_audit", "tree_shake"],
           description: "Metric action to perform (default: census)",
         },
         target: { type: "string", description: "Target file path, directory path, module name, or goal string" },
+        prefix: { type: "string", description: "Required source module prefix for kernel_census" },
+        receiptPath: { type: "string", description: "Kernel receipt JSON inside target project; default .lake/kernel-census/<prefix>.json" },
+        mode: { type: "string", enum: ["check", "rebuild"], default: "check", description: "Kernel census mode; rebuild explicitly builds modules, replays and writes receipt/logs" },
+        timeoutMs: { type: "integer", minimum: 1000, maximum: 3600000, description: "Kernel adapter timeout; check defaults to 60s, rebuild to 20min" },
         goal: { type: "string", description: "Optional explicit goal string for action='altproof'" },
         proof: { type: "string", description: "Optional proof block for action='altproof'" },
         direction: { type: "string", enum: ["imports", "importedBy", "both"], description: "Traversal direction for hierarchy (default: both)" },
@@ -308,7 +313,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       required: ["target"],
     },
     annotations: {
-      readOnlyHint: true,
+      readOnlyHint: false,
     },
   },
   {
@@ -5194,6 +5199,7 @@ function firstErrorExcerpt(out: string): string {
 }
 
 export class McpServer {
+  private readonly kernelCensusAbort = new AbortController();
   private projectRoot: string;
   private ileanIndex: Lean4IleanIndex;
   private lakeManager: LakeServerManager;
@@ -7680,7 +7686,9 @@ export class McpServer {
       case "lean_metrics": {
         const action = String(args.action || "census").toLowerCase();
         const target = args.target || args.targetPath || args.moduleName || args.filePath || ".";
-        if (action === "hierarchy") {
+        if (action === "kernel_census") {
+          return runKernelCensus(this.projectRoot, { ...args, target }, this.kernelCensusAbort.signal);
+        } else if (action === "hierarchy") {
           return await this.executeTool("lean_module_hierarchy", {
             moduleName: target,
             direction: args.direction,
@@ -8439,7 +8447,7 @@ export class McpServer {
       this.processBuffer();
     });
     process.stdin.on("end", () => {
-      this.lakeManager.dispose();
+      this.dispose();
       process.exit(0);
     });
   }
@@ -8506,6 +8514,7 @@ export class McpServer {
   }
 
   public dispose(): void {
+    this.kernelCensusAbort.abort();
     this.lakeManager.dispose();
     this.ileanIndex.invalidate();
   }
@@ -8533,6 +8542,9 @@ export function main(): void {
     `[lean-lsp-mcp] Initialized for project ${resolution.root} ` +
       `(source ${resolution.source}${resolution.marker ? `, marker ${resolution.marker}` : ""})\n`
   );
+  const shutdown = () => { server.dispose(); process.exit(0); };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
   server.startStdio();
 }
 
