@@ -92,8 +92,10 @@ import {
 export * from "./sota_engines.ts";
 import {
   formatAutoSlimMarkdown,
+  formatAutoSlimBatchMarkdown,
   runKernelVerifiedAutoSlim,
   type AutoSlimOptions,
+  type AutoSlimBatchReport,
 } from "./autoslim.ts";
 export * from "./autoslim.ts";
 
@@ -137,6 +139,7 @@ export interface McpToolDefinition {
     type: "object";
     properties: Record<string, unknown>;
     required?: string[];
+    anyOf?: { required: string[] }[];
   };
   /** MCP hints clients use for permission gating (tranche 3). */
   annotations?: {
@@ -627,6 +630,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       type: "object",
       properties: {
         filePath: { type: "string", description: "Path to the .lean file to slim" },
+        filePaths: { type: "array", minItems: 1, items: { type: "string" }, description: "Batch of Lean files; results and failures are reported per file" },
         apply: { type: "boolean", description: "If true, atomically writes verified slimmed proofs to disk (default: false dry-run)" },
         mode: {
           type: "string",
@@ -650,7 +654,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
           description: "Output format: 'json' (default structured receipt) or 'markdown'",
         },
       },
-      required: ["filePath"],
+      anyOf: [{ required: ["filePath"] }, { required: ["filePaths"] }],
     },
     annotations: {
       readOnlyHint: false,
@@ -4719,6 +4723,7 @@ export class FileWorkerManager {
         fileInfo.lastAccessedMs = changedAt;
         session.lastActiveMs = changedAt;
         fileInfo.version++;
+        const candidateVersion = fileInfo.version;
         this.sendNotification(session, "textDocument/didChange", {
           textDocument: { uri, version: fileInfo.version },
           contentChanges: [{ text: candidateContent }],
@@ -4732,7 +4737,16 @@ export class FileWorkerManager {
             firstIssue: `LSP fileProgress did not complete within ${timeoutMs}ms`,
           };
         }
-        const diags = session.diagnostics.get(uri)?.diags ?? [];
+        const evidence = session.diagnostics.get(uri);
+        const progress = session.progress?.get(uri);
+        if (this.sessions.get(leanRoot) !== session || session.openFiles.get(absPath) !== fileInfo
+          || fileInfo.version !== candidateVersion || !evidence || !progress
+          || evidence.version !== candidateVersion || progress.version !== candidateVersion
+          || evidence.ts < changedAt || progress.ts < changedAt || progress.pending !== 0) {
+          return { ok: false, errorCount: 1, warningCount: 0,
+            firstIssue: "LSP evidence does not attest the exact candidate version" };
+        }
+        const diags = evidence.diags;
         const errors = diags.filter((d: any) => Number(d.severity ?? 1) === 1);
         const warnings = diags.filter(
           (d: any) =>
@@ -4766,7 +4780,7 @@ export class FileWorkerManager {
             fileInfo.version++;
             this.sendNotification(sessionToRestore, "textDocument/didChange", {
               textDocument: { uri: uriToRestore, version: fileInfo.version },
-              contentChanges: [{ text: originalDiskText }],
+              contentChanges: [{ text: fs.readFileSync(absPath, "utf8") }],
             });
           }
         }
@@ -4782,11 +4796,37 @@ export class FileWorkerManager {
           fileInfo.version++;
           this.sendNotification(sessionToRestore, "textDocument/didChange", {
             textDocument: { uri: uriToRestore, version: fileInfo.version },
-            contentChanges: [{ text: originalDiskText }],
+            contentChanges: [{ text: fs.readFileSync(absPath, "utf8") }],
           });
         }
       }
     }
+  }
+
+  public async autoSlimFiles(options: Omit<AutoSlimOptions, "filePath"> & { filePaths: string[] }): Promise<string> {
+    const filePaths = [...new Set(options.filePaths.map(p => this.resolveTargetPath(p)))];
+    if (filePaths.length === 0) throw new Error("filePaths must not be empty");
+    const startedAt = performance.now();
+    const reports: import("./autoslim.ts").AutoSlimReport[] = [];
+    const failures: { filePath: string; error: string }[] = [];
+    for (const filePath of filePaths) {
+      try {
+        reports.push(JSON.parse(await this.autoSlimFile({ ...options, filePath, format: "json" })));
+      } catch (error) {
+        failures.push({ filePath, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    const report: AutoSlimBatchReport = {
+      schemaVersion: 1, kind: "batch", completed: failures.length === 0,
+      filesRequested: filePaths.length, filesApplied: reports.filter(r => r.applied).length,
+      verifiedCount: reports.reduce((n, r) => n + r.verifiedCount, 0),
+      rejectedCount: reports.reduce((n, r) => n + r.rejectedCount, 0),
+      verificationTimeMs: reports.reduce((n, r) => n + r.verificationTimeMs, 0),
+      elapsedMs: performance.now() - startedAt, reports, failures,
+    };
+    return options.format === "markdown"
+      ? formatAutoSlimBatchMarkdown(report)
+      : JSON.stringify(report, null, 2);
   }
 
   public disposeSession(leanRoot: string): void {
@@ -7789,20 +7829,23 @@ export class McpServer {
       case "lean_autoslim":
       case "lean_slim_file": {
         const filePath = String(args.filePath || args.path || args.file || args.target || "").trim();
-        if (!filePath) throw new Error("Missing required argument: 'filePath'");
-        return await this.lakeManager.autoSlimFile({
-          filePath,
+        const filePaths = Array.isArray(args.filePaths) ? args.filePaths.map(String) : [];
+        if (!filePath && filePaths.length === 0) throw new Error("Missing required argument: 'filePath' or 'filePaths'");
+        const options = {
           apply: args.apply === true,
-          mode:
+          mode: (
             args.mode === "lsp" || args.mode === "batch" || args.mode === "auto"
               ? args.mode
-              : "auto",
+              : "auto") as AutoSlimOptions["mode"],
           allowAltProofImport: args.allowAltProofImport === true,
           routes: Array.isArray(args.routes) ? args.routes.map(String) : undefined,
           maxCandidates: args.maxCandidates !== undefined ? Number(args.maxCandidates) : undefined,
           timeoutMs: args.timeoutMs !== undefined ? Number(args.timeoutMs) : undefined,
-          format: args.format === "markdown" ? "markdown" : "json",
-        });
+          format: (args.format === "markdown" ? "markdown" : "json") as AutoSlimOptions["format"],
+        };
+        return filePaths.length > 0
+          ? await this.lakeManager.autoSlimFiles({ ...options, filePaths })
+          : await this.lakeManager.autoSlimFile({ ...options, filePath });
       }
 
       case "lean_tree_shake": {

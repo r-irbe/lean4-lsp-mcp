@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isWholeTheoremProof, isSafeProofReplacement, stripLeanCommentsAndStrings } from "./lean_source.ts";
 import {
   isLakeRoot,
   leanInvocationEnv,
@@ -72,6 +73,8 @@ export interface AutoSlimReport {
   altProofAvailable: boolean;
   importInserted: boolean;
   candidatesDiscovered: number;
+  candidatesConsidered: number;
+  candidatesDeferred: number;
   verifiedCount: number;
   rejectedCount: number;
   linesBefore: number;
@@ -83,6 +86,12 @@ export interface AutoSlimReport {
   edits: AutoSlimVerifiedEdit[];
   rejected: AutoSlimRejectedCandidate[];
   diff: string;
+  sourceHashBefore: string;
+  sourceHashAfter: string;
+  signaturesPreserved: boolean;
+  verificationAttempts: number;
+  verificationTimeMs: number;
+  elapsedMs: number;
 }
 
 export interface AutoSlimOptions {
@@ -103,6 +112,26 @@ export interface AutoSlimOptions {
     warningCount: number;
     firstIssue?: string;
   }>;
+}
+
+export interface AutoSlimBatchReport {
+  schemaVersion: 1;
+  kind: "batch";
+  completed: boolean;
+  filesRequested: number;
+  filesApplied: number;
+  verifiedCount: number;
+  rejectedCount: number;
+  verificationTimeMs: number;
+  elapsedMs: number;
+  reports: AutoSlimReport[];
+  failures: { filePath: string; error: string }[];
+}
+
+export function formatAutoSlimBatchMarkdown(report: AutoSlimBatchReport): string {
+  return [`# Batch fixes: ${report.reports.length}/${report.filesRequested} files processed`,
+    ...report.reports.map(formatAutoSlimMarkdown),
+    ...report.failures.map(f => `Failed: ${f.filePath}: ${f.error}`)].join("\n\n");
 }
 
 /** Tactics defined in ProofSkills/AltProof.lean (or re-exported by a project Tactics.lean umbrella). */
@@ -130,6 +159,7 @@ export const ALTPROOF_CUSTOM_TACTICS = new Set<string>([
 
 /** Ranked tactic cascade per canonical altproof route (custom AltProof closers -> Mathlib/Core fallbacks). */
 export const ROUTE_TACTIC_CASCADES: Record<string, readonly string[]> = {
+  "kernel-friendly-term-design": ["by grind", "by omega", "by aesop", "by simp_all", "by simp", "by nlinarith", "by linarith", "by norm_num", "by ring"],
   sum_congr_ring: ["by sum_congr_ring", "by markov_row_sum", "by calc_ring_sum", "by convex_comb", "by ring_nf", "by simp"],
   finset_nonneg: ["by finset_nonneg", "by matrix_pos", "by convex_comb", "by positivity"],
   finset_mono: ["by finset_mono", "by convex_comb", "by gcongr_pos"],
@@ -385,6 +415,20 @@ export function buildCandidateTacticList(
   return ordered;
 }
 
+/** Preserve explicit definition hints when replacing a structural proof as a whole. */
+export function buildUnfoldingTactics(proof: string): string[] {
+  const names = new Set<string>();
+  for (const match of stripLeanCommentsAndStrings(proof).matchAll(/\bunfold[ \t]+([^;\n]+)/g)) {
+    const args = match[1].split(/\s+at\b/)[0].trim().split(/\s+/);
+    if (args.every(name => /^[\p{L}_][\p{L}\p{N}_'.]*$/u.test(name))) {
+      for (const name of args) names.add(name);
+    }
+  }
+  if (names.size === 0) return [];
+  const defs = [...names].join(", ");
+  return [`by simp_all [${defs}]`, `by grind [${defs}]`, `by simp [${defs}]`];
+}
+
 /** Discover `ALTPROOF-ROUTE` quickfix candidates on `absPath` via `lean-analyzer lint --format=json`. */
 export function discoverAutoSlimCandidates(
   absPath: string,
@@ -468,7 +512,7 @@ export function runBatchLeanCheck(
   const scratchPath = path.join(targetDirForScratch, scratchName);
   fs.writeFileSync(scratchPath, candidateContent, "utf-8");
 
-  const invocation = planLeanInvocation(leanRoot, [scratchPath], leanContext);
+  const invocation = planLeanInvocation(leanRoot, ["-DwarningAsError=true", scratchPath], leanContext);
   const env = leanInvocationEnv(invocation);
 
   return new Promise((resolve) => {
@@ -638,6 +682,7 @@ export async function runKernelVerifiedAutoSlim(
   projectRoot: string,
   options: AutoSlimOptions
 ): Promise<AutoSlimReport> {
+  const startedAt = performance.now();
   const absPath = path.isAbsolute(options.filePath)
     ? path.resolve(options.filePath)
     : path.resolve(projectRoot, options.filePath);
@@ -653,7 +698,20 @@ export async function runKernelVerifiedAutoSlim(
   const leanRoot =
     resolvedRoot.source === "none" ? path.resolve(projectRoot) : resolvedRoot.root;
 
-  const originalText = fs.readFileSync(absPath, "utf-8");
+  const originalBytes = fs.readFileSync(absPath);
+  const originalText = originalBytes.toString("utf8");
+  if (!Buffer.from(originalText, "utf8").equals(originalBytes)) {
+    throw new Error("Refusing invalid UTF-8 source; original bytes are unchanged");
+  }
+  const hash = (text: string) => createHash("sha256").update(text).digest("hex");
+  const sourceHashBefore = hash(originalText);
+  const assertSourceUnchanged = () => {
+    const stat = fs.lstatSync(absPath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.ino !== lstat.ino || stat.dev !== lstat.dev
+      || !fs.readFileSync(absPath).equals(originalBytes)) {
+      throw new Error("Source changed during auto-slimming; refusing stale edits");
+    }
+  };
   const linesBefore = originalText.split("\n").length;
   const bytesBefore = Buffer.byteLength(originalText, "utf-8");
 
@@ -666,6 +724,7 @@ export async function runKernelVerifiedAutoSlim(
     routes: options.routes,
     allowCustomAltProof,
   });
+  assertSourceUnchanged();
 
   const maxCandidates = Math.max(1, Math.min(200, Number(options.maxCandidates ?? 50)));
   const timeoutMs = Math.max(2000, Math.min(120000, Number(options.timeoutMs ?? 25000)));
@@ -683,6 +742,8 @@ export async function runKernelVerifiedAutoSlim(
       altProofAvailable: allowCustomAltProof,
       importInserted: false,
       candidatesDiscovered: 0,
+      candidatesConsidered: 0,
+      candidatesDeferred: 0,
       verifiedCount: 0,
       rejectedCount: 0,
       linesBefore,
@@ -694,6 +755,12 @@ export async function runKernelVerifiedAutoSlim(
       edits: [],
       rejected: [],
       diff: "",
+      sourceHashBefore,
+      sourceHashAfter: sourceHashBefore,
+      signaturesPreserved: true,
+      verificationAttempts: 0,
+      verificationTimeMs: 0,
+      elapsedMs: performance.now() - startedAt,
     };
   }
 
@@ -709,17 +776,22 @@ export async function runKernelVerifiedAutoSlim(
   }
   const backendUsed: "lsp" | "batch" = useLsp ? "lsp" : "batch";
 
+  let verificationAttempts = 0;
+  let verificationTimeMs = 0;
   const verifyContent = async (content: string) => {
-    if (useLsp) {
-      return await options.lspVerifier!(content, timeoutMs);
-    }
-    return await runBatchLeanCheck(
+    assertSourceUnchanged();
+    const start = performance.now();
+    verificationAttempts++;
+    const verdict = useLsp ? await options.lspVerifier!(content, timeoutMs) : await runBatchLeanCheck(
       leanRoot,
       path.dirname(absPath),
       content,
       timeoutMs,
       options.leanContext
     );
+    verificationTimeMs += performance.now() - start;
+    assertSourceUnchanged();
+    return verdict;
   };
 
   // Map candidates onto exact original-buffer character intervals, filtering invalid or overlapping spans
@@ -747,6 +819,11 @@ export async function runKernelVerifiedAutoSlim(
       continue;
     }
     const oldSlice = originalText.slice(offs.startIdx, offs.endIdx);
+    if (!isWholeTheoremProof(originalText, offs.startIdx, offs.endIdx, cand.theoremName)) {
+      rejected.push({ theoremName: cand.theoremName, route: cand.route, range: cand.range,
+        reason: "proof-boundary-or-declaration-mismatch", triedTactics: [] });
+      continue;
+    }
     if (!/^by\b/.test(oldSlice)) {
       rejected.push({
         theoremName: cand.theoremName,
@@ -757,7 +834,7 @@ export async function runKernelVerifiedAutoSlim(
       });
       continue;
     }
-    if (/\bsorry\b|\badmit\b/.test(oldSlice)) {
+    if (/\bsorry\b|\badmit\b/.test(stripLeanCommentsAndStrings(oldSlice))) {
       rejected.push({
         theoremName: cand.theoremName,
         route: cand.route,
@@ -806,7 +883,9 @@ export async function runKernelVerifiedAutoSlim(
     let lastDiag: string | undefined;
     let acceptedEdit: AutoSlimVerifiedEdit | null = null;
 
-    for (const tac of cand.candidateTactics) {
+    const tactics = [...new Set([...buildUnfoldingTactics(oldSlice), ...cand.candidateTactics])];
+    for (const tac of tactics) {
+      if (!isSafeProofReplacement(tac)) continue;
       if (hasForbiddenUnicode(tac)) continue;
       const newBytes = Buffer.byteLength(tac, "utf-8");
       const newLines = tac.split("\n").length;
@@ -841,7 +920,7 @@ export async function runKernelVerifiedAutoSlim(
       triedTactics.push(tac);
       const trialContent = baseText.slice(0, curStart) + tac + baseText.slice(curEnd);
       const verdict = await verifyContent(trialContent);
-      if (verdict.ok) {
+      if (verdict.ok && verdict.errorCount === 0 && verdict.warningCount === 0) {
         workingText = trialContent;
         if (needsImportNow) {
           importInserted = true;
@@ -883,19 +962,21 @@ export async function runKernelVerifiedAutoSlim(
 
   let applied = false;
   if (apply && edits.length > 0 && workingText !== originalText) {
+    assertSourceUnchanged();
     if (hasForbiddenUnicode(workingText) && !hasForbiddenUnicode(originalText)) {
       throw new Error("Refusing to write auto-slimmed file: synthesized content violates INV-001 Unicode policy");
     }
     const modeBits = lstat.mode & 0o777;
-    const tmpWritePath = path.join(
-      path.dirname(absPath),
-      `.autoslim_apply_${process.pid}_${createHash("sha256")
-        .update(absPath)
-        .digest("hex")
-        .slice(0, 8)}.tmp`
-    );
-    fs.writeFileSync(tmpWritePath, workingText, { encoding: "utf-8", mode: modeBits });
-    fs.renameSync(tmpWritePath, absPath);
+    const tmpDir = fs.mkdtempSync(path.join(path.dirname(absPath), ".autoslim_apply_"));
+    const tmpWritePath = path.join(tmpDir, "source.lean");
+    try {
+      fs.writeFileSync(tmpWritePath, workingText, { encoding: "utf-8", mode: modeBits, flag: "wx" });
+      assertSourceUnchanged();
+      fs.renameSync(tmpWritePath, absPath);
+    } finally {
+      if (fs.existsSync(tmpWritePath)) fs.unlinkSync(tmpWritePath);
+      fs.rmdirSync(tmpDir);
+    }
     applied = true;
   }
 
@@ -914,6 +995,8 @@ export async function runKernelVerifiedAutoSlim(
     altProofAvailable: allowCustomAltProof,
     importInserted,
     candidatesDiscovered: rawCandidates.length,
+    candidatesConsidered: Math.min(rawCandidates.length, maxCandidates),
+    candidatesDeferred: Math.max(0, rawCandidates.length - maxCandidates),
     verifiedCount: edits.length,
     rejectedCount: rejected.length,
     linesBefore,
@@ -925,16 +1008,24 @@ export async function runKernelVerifiedAutoSlim(
     edits,
     rejected,
     diff,
+    sourceHashBefore,
+    sourceHashAfter: hash(workingText),
+    signaturesPreserved: true,
+    verificationAttempts,
+    verificationTimeMs,
+    elapsedMs: performance.now() - startedAt,
   };
 }
 
 export function formatAutoSlimMarkdown(report: AutoSlimReport): string {
   const lines: string[] = [
-    `# Kernel-Verified Auto-Slim Report: \`${path.basename(report.filePath)}\``,
+    `# Auto-Slim Report: \`${path.basename(report.filePath)}\``,
     `- **File**: \`${report.filePath}\``,
     `- **Backend**: \`${report.backendUsed}\` (\`applied=${report.applied}\`, \`altProofAvailable=${report.altProofAvailable}\`${report.importInserted ? ", inserted AltProof import" : ""})`,
     `- **Candidates**: ${report.verifiedCount} verified / ${report.candidatesDiscovered} discovered (${report.rejectedCount} rejected)`,
+    `- **Coverage**: ${report.candidatesConsidered} considered; ${report.candidatesDeferred} deferred`,
     `- **LOC Impact**: ${report.linesBefore} -> ${report.linesAfter} lines (**net -${report.netLinesSaved} LOC**, -${report.netBytesSaved} bytes)`,
+    `- **Verification**: ${report.verificationAttempts} attempts, ${report.verificationTimeMs.toFixed(1)} ms; public signatures preserved`,
   ];
   if (report.edits.length > 0) {
     lines.push("", "## Verified Slimmed Proofs");

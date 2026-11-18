@@ -9,6 +9,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as zlib from "node:zlib";
+import { stripLeanCommentsAndStrings } from "./lean_source.ts";
 import { resolveLeanAnalyzerBin } from "./autoslim.ts";
 import { resolveProjectRoot } from "./project_root.ts";
 
@@ -1475,65 +1476,7 @@ export function stripOrphanSectionHusks(
 }
 
 /** Strip nested `/- ... -/` comments, `-- ...` line comments, and `"..."` strings while preserving newlines. */
-export function stripLeanCommentsAndStrings(src: string): string {
-  const out: string[] = [];
-  let i = 0;
-  const n = src.length;
-  let blockDepth = 0;
-  while (i < n) {
-    const ch = src[i];
-    const nxt = i + 1 < n ? src[i + 1] : "";
-    if (blockDepth > 0) {
-      if (ch === "/" && nxt === "-") {
-        blockDepth++;
-        out.push("  ");
-        i += 2;
-      } else if (ch === "-" && nxt === "/") {
-        blockDepth--;
-        out.push("  ");
-        i += 2;
-      } else {
-        out.push(ch === "\n" ? "\n" : " ");
-        i++;
-      }
-      continue;
-    }
-    if (ch === "/" && nxt === "-") {
-      blockDepth = 1;
-      out.push("  ");
-      i += 2;
-      continue;
-    }
-    if (ch === "-" && nxt === "-") {
-      while (i < n && src[i] !== "\n") {
-        out.push(" ");
-        i++;
-      }
-      continue;
-    }
-    if (ch === '"') {
-      out.push(" ");
-      i++;
-      while (i < n && src[i] !== '"') {
-        if (src[i] === "\\" && i + 1 < n) {
-          out.push("  ");
-          i += 2;
-        } else {
-          out.push(src[i] === "\n" ? "\n" : " ");
-          i++;
-        }
-      }
-      if (i < n) {
-        out.push(" ");
-        i++;
-      }
-      continue;
-    }
-    out.push(ch);
-    i++;
-  }
-  return out.join("");
-}
+export { stripLeanCommentsAndStrings } from "./lean_source.ts";
 
 /** Rewrite top-of-file `import ...` lines (and prune `open <DroppedMod>` lines) to keep external + kept/promoted imports. */
 export function rewriteModuleImports(

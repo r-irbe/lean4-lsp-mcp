@@ -15,7 +15,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = path.resolve(__dirname, "..");
 
 const USAGE = [
-  "Usage: lean-autoslim <file.lean> [options]",
+  "Usage: lean-autoslim <file.lean> [more-files.lean ...] [options]",
   "",
   "Options:",
   "  --apply                   Atomically write verified slimmed proofs to disk (default: dry-run)",
@@ -32,6 +32,7 @@ const USAGE = [
 export function parseAutoSlimCliArgs(argv) {
   const opts = {
     filePath: "",
+    filePaths: [],
     apply: false,
     mode: "auto",
     allowAltProofImport: false,
@@ -100,8 +101,9 @@ export function parseAutoSlimCliArgs(argv) {
       throw new Error(`Unknown option: ${a}`);
     } else if (!opts.filePath) {
       opts.filePath = a;
+      opts.filePaths.push(a);
     } else {
-      throw new Error(`Unexpected extra positional argument: ${a}`);
+      opts.filePaths.push(a);
     }
   }
   return opts;
@@ -150,8 +152,8 @@ async function runCli() {
   const resolvedRoot = (mod.resolveProjectRoot || rootMod.resolveProjectRoot)(path.dirname(absTarget));
   const manager = new mod.FileWorkerManager(resolvedRoot.root);
   try {
-    const out = await manager.autoSlimFile({
-      filePath: absTarget,
+    const batch = opts.filePaths.length > 1;
+    const options = {
       apply: opts.apply,
       mode: opts.mode,
       allowAltProofImport: opts.allowAltProofImport,
@@ -159,8 +161,13 @@ async function runCli() {
       maxCandidates: opts.maxCandidates,
       timeoutMs: opts.timeoutMs,
       format: opts.format,
-    });
-    process.stdout.write(`${out}\n`);
+    };
+    const out = batch
+      ? await manager.autoSlimFiles({ ...options, format: "json", filePaths: opts.filePaths.map(p => path.resolve(process.cwd(), p)) })
+      : await manager.autoSlimFile({ ...options, filePath: absTarget });
+    const receipt = batch ? JSON.parse(out) : null;
+    process.stdout.write(`${batch && opts.format === "markdown" ? mod.formatAutoSlimBatchMarkdown(receipt) : out}\n`);
+    if (receipt && !receipt.completed) process.exitCode = 1;
   } catch (err) {
     process.stderr.write(`lean-autoslim error: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);

@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import {
   buildCandidateTacticList,
   computeUtf16LineOffsets,
@@ -22,9 +23,259 @@ import {
   discoverAutoSlimCandidates,
   lspRangeToStringOffsets,
   runKernelVerifiedAutoSlim,
+  runBatchLeanCheck,
 } from "../src/autoslim.ts";
-import { McpServer, TOOL_DEFINITIONS } from "../src/index.ts";
+import * as autoslimHelpers from "../src/autoslim.ts";
+import { McpServer, TOOL_DEFINITIONS, FileWorkerManager } from "../src/index.ts";
+import { isWholeTheoremProof, isSafeProofReplacement } from "../src/lean_source.ts";
 import { parseAutoSlimCliArgs } from "../bin/lean-autoslim.js";
+
+function safetyFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "autoslim-safety-"));
+  fs.writeFileSync(path.join(root, "lakefile.toml"), 'name = "demo"\n');
+  const file = path.join(root, "Sample.lean");
+  const source = [
+    "theorem keep_named (a b c d : Nat) (ha : a = b) (hb : b = c)",
+    "    (hc : c = d) (hd : d = d) : a = d := by",
+    "  rw [ha]",
+    "  rw [hb]",
+    "  rw [hc]",
+    "  rw [hd]",
+    "",
+    "theorem neighbour (ha : True) : True := by exact ha",
+    "",
+  ].join("\n");
+  fs.writeFileSync(file, source);
+  return { root, file, source };
+}
+
+function fixtureAnalyzer(root, diagnostic, mutate = "") {
+  const bin = path.join(root, "analyzer.mjs");
+  fs.writeFileSync(bin, `#!${process.execPath}\nimport fs from "node:fs";\n${mutate}\nconsole.log(${JSON.stringify(JSON.stringify({ files: [{ diagnostics: [diagnostic] }] }))});\n`);
+  fs.chmodSync(bin, 0o755);
+  return bin;
+}
+
+function fixtureDiagnostic(source, replacement = "by grind") {
+  return {
+    code: "ALTPROOF-ROUTE", operator: "keep_named", altproof_route: "eqsat-congruence-closure",
+    quickfix: { range: { start: { line: 1, character: source.split("\n")[1].indexOf("by") },
+      end: { line: 5, character: "  rw [hd]".length } }, new_text: replacement },
+  };
+}
+
+test("structural proof proposals retain explicit unfold hints and mask comments", () => {
+  assert.deepEqual(autoslimHelpers.buildUnfoldingTactics("by\n  unfold Demo.distance at h\n  /- unfold Wrong -/\n  grind"),
+    ["by simp_all [Demo.distance]", "by grind [Demo.distance]", "by simp [Demo.distance]"]);
+  assert.deepEqual(autoslimHelpers.buildUnfoldingTactics('by\n  let s := "unfold Wrong"\n  trivial'), []);
+});
+
+test("proof boundary rejects opaque commands, later definitions, and type-level proofs", () => {
+  for (const [source, needle] of [
+    ["theorem a : True := by trivial\nopaque marker : Nat := 37\n", "by trivial"],
+    ["theorem a : True := by trivial\ndef second : Nat := by exact 12345\n", "by exact"],
+    ["theorem a : let T := by exact True; T := by trivial\n", "by exact"],
+  ]) {
+    assert.equal(isWholeTheoremProof(source, source.indexOf(needle), source.trimEnd().length, "a"), false);
+  }
+  assert.equal(isSafeProofReplacement("by trivial\nopaque marker : Nat := 37"), false);
+});
+
+test("autoslim refuses malformed UTF-8 without changing any original bytes", async () => {
+  const { root, file, source } = safetyFixture();
+  const bytes = Buffer.concat([Buffer.from(source + "-- "), Buffer.from([0xff])]);
+  fs.writeFileSync(file, bytes);
+  try {
+    await assert.rejects(runKernelVerifiedAutoSlim(root, {
+      filePath: file, apply: true, mode: "lsp",
+      lspVerifier: async () => ({ ok: true, errorCount: 0, warningCount: 0 }),
+    }), /UTF-8/);
+    assert.deepEqual(fs.readFileSync(file), bytes);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("autoslim never removes another invocation's existing temporary file", async () => {
+  const { root, file } = safetyFixture();
+  const foreign = path.join(root, `.autoslim_apply_${process.pid}_${createHash("sha256").update(file).digest("hex").slice(0, 8)}.tmp`);
+  fs.writeFileSync(foreign, "foreign temp contents");
+  try {
+    try {
+      await runKernelVerifiedAutoSlim(root, { filePath: file, apply: true, mode: "lsp",
+        lspVerifier: async () => ({ ok: true, errorCount: 0, warningCount: 0 }) });
+    } catch (error) { assert.equal(error.code, "EEXIST"); }
+    assert.equal(fs.readFileSync(foreign, "utf8"), "foreign temp contents");
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("manager refuses stale or absent LSP diagnostic versions for an edited candidate", async () => {
+  const { root, file } = safetyFixture();
+  const manager = new FileWorkerManager(root);
+  const uri = "file://" + file;
+  const session = { leanRoot: root, child: { kill() {} }, openFiles: new Map([[file, { version: 1 }]]),
+    diagnostics: new Map([[uri, { version: 1, diags: [], ts: Date.now() }]]),
+    progress: new Map([[uri, { version: 1, pending: 0, ts: Date.now() }]]) };
+  manager["sessions"].set(root, session);
+  manager["ensureSession"] = async () => session;
+  manager["syncDocument"] = () => uri;
+  manager["waitForAnalysis"] = async () => true;
+  manager["sendNotification"] = () => {};
+  try {
+    const result = JSON.parse(await manager.autoSlimFile({ filePath: file, mode: "lsp" }));
+    assert.equal(result.verifiedCount, 0);
+    assert.match(result.rejected[0].lastDiagnostic, /version|evidence/i);
+  } finally { manager.dispose(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("CLI emits a partial batch receipt and a failing exit status", () => {
+  const { root, file } = safetyFixture();
+  fs.writeFileSync(file, "theorem clean : True := by trivial\n");
+  try {
+    let output;
+    try {
+      output = execFileSync(process.execPath, [fileURLToPath(new URL("../bin/lean-autoslim.js", import.meta.url)),
+        file, path.join(root, "Missing.lean"), "--json"], { encoding: "utf8" });
+      assert.fail("partial batch must exit nonzero");
+    } catch (error) { assert.equal(error.status, 1); output = error.stdout; }
+    const report = JSON.parse(output);
+    assert.equal(report.completed, false);
+    assert.equal(report.reports.length, 1);
+    assert.equal(report.failures.length, 1);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("autoslim preserves concurrent edits made during verification", async () => {
+  const { root, file, source } = safetyFixture();
+  const foreign = source + "-- concurrent writer's work\n";
+  try {
+    await assert.rejects(runKernelVerifiedAutoSlim(root, {
+      filePath: file, apply: true, mode: "lsp",
+      lspVerifier: async () => {
+        fs.writeFileSync(file, foreign);
+        return { ok: true, errorCount: 0, warningCount: 0 };
+      },
+    }), /source.*changed/i);
+    assert.equal(fs.readFileSync(file, "utf8"), foreign);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("autoslim rejects source changed by the analyzer before using its ranges", async () => {
+  const { root, file, source } = safetyFixture();
+  const changed = "-- shifted during discovery\n" + source;
+  try {
+    const analyzerBin = fixtureAnalyzer(root, fixtureDiagnostic(source),
+      `fs.writeFileSync(process.argv[3], ${JSON.stringify(changed)});`);
+    await assert.rejects(runKernelVerifiedAutoSlim(root, {
+      filePath: file, apply: true, mode: "lsp", analyzerBin,
+      lspVerifier: async () => ({ ok: true, errorCount: 0, warningCount: 0 }),
+    }), /source.*changed/i);
+    assert.equal(fs.readFileSync(file, "utf8"), changed);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("autoslim rejects a proof range that swallows a neighbouring theorem header", async () => {
+  const { root, file, source } = safetyFixture();
+  try {
+    const diag = fixtureDiagnostic(source);
+    diag.quickfix.range.end = { line: 7, character: source.split("\n")[7].length };
+    const report = await runKernelVerifiedAutoSlim(root, {
+      filePath: file, apply: true, mode: "lsp", analyzerBin: fixtureAnalyzer(root, diag),
+      lspVerifier: async () => ({ ok: true, errorCount: 0, warningCount: 0 }),
+    });
+    assert.equal(report.verifiedCount, 0);
+    assert.equal(fs.readFileSync(file, "utf8"), source);
+    assert.match(report.rejected[0].reason, /proof.*boundary|declaration/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("autoslim rejects sorry proposals even when a verifier reports success", async () => {
+  const { root, file, source } = safetyFixture();
+  try {
+    const diag = fixtureDiagnostic(source, "by sorry");
+    diag.altproof_route = "test-no-fallback";
+    const report = await runKernelVerifiedAutoSlim(root, {
+      filePath: file, apply: true, mode: "lsp", analyzerBin: fixtureAnalyzer(root, diag),
+      lspVerifier: async () => ({ ok: true, errorCount: 0, warningCount: 0 }),
+    });
+    assert.equal(report.verifiedCount, 0);
+    assert.equal(fs.readFileSync(file, "utf8"), source);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("autoslim never accepts a verifier verdict carrying warnings", async () => {
+  const { root, file, source } = safetyFixture();
+  try {
+    const report = await runKernelVerifiedAutoSlim(root, {
+      filePath: file, apply: true, mode: "lsp",
+      lspVerifier: async () => ({ ok: true, errorCount: 0, warningCount: 1 }),
+    });
+    assert.equal(report.verifiedCount, 0);
+    assert.equal(fs.readFileSync(file, "utf8"), source);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("autoslim receipts bind accepted proof edits to source hashes, signatures and timing", async () => {
+  const { root, file, source } = safetyFixture();
+  try {
+    const report = await runKernelVerifiedAutoSlim(root, {
+      filePath: file, apply: true, mode: "lsp",
+      lspVerifier: async () => ({ ok: true, errorCount: 0, warningCount: 0 }),
+    });
+    assert.equal(report.verifiedCount, 1);
+    assert.equal(report.signaturesPreserved, true);
+    assert.equal(report.candidatesConsidered, 1);
+    assert.equal(report.candidatesDeferred, 0);
+    assert.match(report.sourceHashBefore, /^[a-f0-9]{64}$/);
+    assert.notEqual(report.sourceHashBefore, report.sourceHashAfter);
+    assert.ok(report.verificationTimeMs >= 0);
+    assert.equal(fs.readFileSync(file, "utf8").split(":= by")[0], source.split(":= by")[0]);
+    assert.match(fs.readFileSync(file, "utf8"), /theorem neighbour \(ha : True\)/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("CLI and MCP accept a deduplicated batch and report per-file failures", async () => {
+  const opts = parseAutoSlimCliArgs(["One.lean", "Two.lean", "--apply"]);
+  assert.deepEqual(opts.filePaths, ["One.lean", "Two.lean"]);
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "autoslim-batch-"));
+  fs.writeFileSync(path.join(root, "lakefile.toml"), 'name = "demo"\n');
+  fs.writeFileSync(path.join(root, "One.lean"), "theorem one : True := by trivial\n");
+  const server = new McpServer(root);
+  try {
+    const out = JSON.parse(await server.executeTool("lean_autoslim", {
+      filePaths: ["One.lean", "Missing.lean", "One.lean"],
+    }));
+    assert.equal(out.kind, "batch");
+    assert.equal(out.filesRequested, 2);
+    assert.equal(out.reports.length, 1);
+    assert.equal(out.failures.length, 1);
+    assert.match(out.failures[0].error, /not found/i);
+    assert.equal(out.verifiedCount, 0);
+    assert.equal(out.completed, false);
+  } finally { server.dispose(); fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("real Lean accepts signature-preserving fixes and rejects errors and sorry", {
+  skip: !process.env.LEAN_AUTOSLIM_INTEGRATION_ROOT,
+}, async () => {
+  const root = path.resolve(process.env.LEAN_AUTOSLIM_INTEGRATION_ROOT);
+  const dir = fs.mkdtempSync(path.join(root, ".autoslim-integration-"));
+  const file = path.join(dir, "Sample.lean");
+  const source = "import Mathlib.Tactic\nset_option autoImplicit false\n" +
+    "theorem named (P : Prop) (ha : P) : P /\\ P := by constructor <;> exact ha\n";
+  fs.writeFileSync(file, source);
+  try {
+    const report = await runKernelVerifiedAutoSlim(root, {
+      filePath: file, apply: true, mode: "batch", timeoutMs: 30000,
+    });
+    assert.equal(report.verifiedCount, 1);
+    assert.equal(report.applied, true);
+    assert.match(fs.readFileSync(file, "utf8"), /\(ha : P\).*:= by grind/);
+    for (const proof of ["by trivial", "by sorry"]) {
+      const verdict = await runBatchLeanCheck(root, dir,
+        `import Mathlib.Tactic\ntheorem rejected : False := ${proof}\n`, 30000);
+      assert.equal(verdict.ok, false, proof);
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
 
 test("UTF-16 LSP range offsets slice multi-line proofs with Unicode math symbols accurately", () => {
   const src = [
@@ -205,13 +456,14 @@ test("McpServer registers lean_autoslim + lean_metrics(action='autoslim') and CL
         target: "Clean.lean",
         format: "markdown",
       });
-      assert.match(mdOut, /Kernel-Verified Auto-Slim Report/);
+      assert.match(mdOut, /Auto-Slim Report/);
+      assert.doesNotMatch(mdOut, /Kernel-Verified/);
 
       const cliBin = fileURLToPath(new URL("../bin/lean-autoslim.js", import.meta.url));
       const cliOut = execFileSync(process.execPath, [cliBin, cleanLean, "--markdown"], {
         encoding: "utf-8",
       });
-      assert.match(cliOut, /Kernel-Verified Auto-Slim Report/);
+      assert.match(cliOut, /Auto-Slim Report/);
     } finally {
       srv.dispose();
     }
