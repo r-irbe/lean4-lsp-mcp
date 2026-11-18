@@ -1,3 +1,4 @@
+import { readRankingHistory, rankTactics, candidatePriority } from "./autoslim_ranking.ts";
 // src/autoslim.ts
 // Kernel-verified proof auto-slimmer wiring lean-analyzer ALTPROOF-ROUTE quickfix spans
 // to real Lean 4 elaboration (Virtual LSP didChange + $/lean/fileProgress or batch lake env lean).
@@ -107,6 +108,7 @@ export interface AutoSlimReport {
   finalCheckPassed: boolean | null;
   provisionalCount: number;
   screenedOutCount: number;
+  rankingObservations: import("./autoslim_ranking.ts").RankingObservation[];
 }
 
 export interface AutoSlimOptions {
@@ -125,6 +127,7 @@ export interface AutoSlimOptions {
   groupSize?: number;
   maxVerificationAttempts?: number;
   rankBySize?: boolean;
+  rankingHistoryPath?: string;
   /** Optional Virtual LSP verifier callback injected by FileWorkerManager. */
   lspVerifier?: (candidateContent: string, timeoutMs: number) => Promise<{
     ok: boolean;
@@ -865,6 +868,7 @@ export async function runKernelVerifiedAutoSlim(
       finalCheckPassed: null,
       provisionalCount: 0,
       screenedOutCount: 0,
+      rankingObservations: [],
     };
   }
 
@@ -998,6 +1002,12 @@ export async function runKernelVerifiedAutoSlim(
     });
   }
 
+  const history = readRankingHistory(options.rankingHistoryPath);
+  for (const item of validIndexed) {
+    item.tactics = rankTactics(item.cand.route, item.tactics, history);
+    item.id = contentHash(JSON.stringify([item.cand.theoremName, item.cand.route, item.origStart, item.origEnd, item.oldSlice, [...item.tactics].sort()]));
+    item.score = candidatePriority(item.cand.route, item.score, history);
+  }
   const screenedOutCount = rejected.length;
   const ranked = [...validIndexed].sort(options.rankBySize === false
     ? (a, b) => a.origStart - b.origStart : (a, b) => b.score - a.score || a.origStart - b.origStart);
@@ -1116,6 +1126,7 @@ export async function runKernelVerifiedAutoSlim(
     finalCheckPassed: grouped.finalCheckPassed,
     provisionalCount: grouped.completed ? 0 : grouped.accepted.size,
     screenedOutCount,
+    rankingObservations: grouped.observations.map(o => ({route:selectedById.get(o.id)!.cand.route,tactic:o.tactic,ok:o.ok,elapsedMs:o.elapsedMs})),
   };
 }
 

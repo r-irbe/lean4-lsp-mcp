@@ -18,6 +18,7 @@ export interface GroupedVerificationResult {
   finalCheckPassed: boolean | null;
   attempts: number;
   verificationTimeMs: number;
+  observations: { id: string; tactic: string; ok: boolean; elapsedMs: number }[];
 }
 
 class AttemptBudget extends Error {}
@@ -34,6 +35,7 @@ export async function verifyProofGroups(options: {
   const accepted = new Map<string, string>();
   const rejected: GroupedVerificationResult["rejected"] = new Map();
   let attempts = 0, cacheHits = 0, groupChecks = 0, bisections = 0, verificationTimeMs = 0;
+  const observations: GroupedVerificationResult["observations"] = [];
   let finalCheckPassed: boolean | null = null;
   for (const p of options.proposals) {
     const saved = options.journal.accepted.get(p.id);
@@ -71,7 +73,9 @@ export async function verifyProofGroups(options: {
     const trial = new Map(accepted);
     for (const p of items) trial.set(p.id, p.tactics[0]);
     groupChecks++;
+    const beforeAttempts = attempts, beforeTime = verificationTimeMs;
     const initial = await check(options.render(trial), items.length > 1 ? "group" : "single", items.map(p=>[p.id,p.tactics[0]]));
+    if (items.length === 1 && attempts > beforeAttempts) observations.push({ id: items[0].id, tactic: items[0].tactics[0], ok: strict(initial), elapsedMs: verificationTimeMs - beforeTime });
     if (strict(initial)) { for (const p of items) commit(p, p.tactics[0]); return; }
     if (items.length > 1) {
       bisections++;
@@ -86,7 +90,9 @@ export async function verifyProofGroups(options: {
     for (const tactic of p.tactics.slice(1)) {
       const next = new Map(accepted); next.set(p.id, tactic);
       triedTactics.push(tactic);
+      const beforeAttempts = attempts, beforeTime = verificationTimeMs;
       const verdict = await check(options.render(next), "single", [[p.id,tactic]]);
+      if (attempts > beforeAttempts) observations.push({id:p.id,tactic,ok:strict(verdict),elapsedMs:verificationTimeMs-beforeTime});
       if (strict(verdict)) { commit(p, tactic); return; }
       lastDiagnostic = verdict.firstIssue;
     }
@@ -110,5 +116,5 @@ export async function verifyProofGroups(options: {
     else throw error;
   }
   return { accepted, rejected, completed: !stopReason, ...(stopReason ? { stopReason } : {}), ...(stopDiagnostic ? {stopDiagnostic} : {}),
-    resumedCandidates, cacheHits, groupChecks, bisections, finalCheckPassed, attempts, verificationTimeMs };
+    resumedCandidates, cacheHits, groupChecks, bisections, finalCheckPassed, attempts, verificationTimeMs, observations };
 }

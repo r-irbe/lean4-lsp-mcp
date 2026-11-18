@@ -650,6 +650,8 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         timeoutMs: { type: "integer", description: "Per-candidate Lean verification timeout in ms (default: 25000)" },
         checkpointDir: { type: "string", description: "Directory for durable resumable progress" },
         resume: { type: "boolean", description: "Reuse matching progress (default: true); false starts fresh" },
+        rankingHistoryPath: { type: "string", description: "Optional bounded route/tactic success and timing observations; ordering hints only" },
+        rankBySize: { type: "boolean", description: "False visits candidates in source order" },
         groupSize: { type: "integer", minimum: 1, maximum: 32, description: "Candidates per verification group (default: 4)" },
         maxVerificationAttempts: { type: "integer", minimum: 0, description: "Attempt budget including final check; exhaustion returns incomplete" },
         format: {
@@ -7855,6 +7857,8 @@ export class McpServer {
           timeoutMs: args.timeoutMs !== undefined ? Number(args.timeoutMs) : undefined,
           checkpointDir: args.checkpointDir !== undefined ? String(args.checkpointDir) : undefined,
           resume: args.resume !== false,
+          rankingHistoryPath: args.rankingHistoryPath !== undefined ? String(args.rankingHistoryPath) : undefined,
+          rankBySize: args.rankBySize !== undefined ? Boolean(args.rankBySize) : undefined,
           groupSize: args.groupSize !== undefined ? Number(args.groupSize) : undefined,
           maxVerificationAttempts: args.maxVerificationAttempts !== undefined ? Number(args.maxVerificationAttempts) : undefined,
           format: (args.format === "markdown" ? "markdown" : "json") as AutoSlimOptions["format"],

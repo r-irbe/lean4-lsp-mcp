@@ -94,6 +94,9 @@ test("CLI and MCP forward checkpoint, fresh, group and attempt controls", async 
   const args = parseAutoSlimCliArgs(["Sample.lean", "--checkpoint-dir", "/tmp/checkpoints", "--fresh", "--group-size", "3", "--max-attempts", "0"]);
   assert.equal(args.checkpointDir, "/tmp/checkpoints");
   assert.equal(args.resume, false);
+  const ranked = parseAutoSlimCliArgs(["Sample.lean", "--ranking-history", "/tmp/history.json", "--source-order"]);
+  assert.equal(ranked.rankingHistoryPath,"/tmp/history.json");
+  assert.equal(ranked.rankBySize,false);
   assert.equal(args.groupSize, 3);
   assert.equal(args.maxVerificationAttempts, 0);
   for (const value of ["-1", "2x", "1.5", "33"]) assert.throws(() => parseAutoSlimCliArgs(["Sample.lean", "--group-size", value]));
@@ -102,7 +105,9 @@ test("CLI and MCP forward checkpoint, fresh, group and attempt controls", async 
   let received;
   server.lakeManager.autoSlimFile = async options => { received = options; return "{}"; };
   try {
-    await server.executeTool("lean_autoslim", { filePath: f.file, checkpointDir: f.checkpointDir, resume: false, groupSize: 3, maxVerificationAttempts: 0 });
+    await server.executeTool("lean_autoslim", { filePath: f.file, checkpointDir: f.checkpointDir, resume: false, groupSize: 3, maxVerificationAttempts: 0, rankingHistoryPath:"/tmp/history.json",rankBySize:false });
+    assert.equal(received.rankingHistoryPath,"/tmp/history.json");
+    assert.equal(received.rankBySize,false);
     for (const key of ["checkpointDir", "resume", "groupSize", "maxVerificationAttempts"]) {
       assert.equal(received[key], {checkpointDir:f.checkpointDir,resume:false,groupSize:3,maxVerificationAttempts:0}[key]);
       assert.ok(TOOL_DEFINITIONS.find(t => t.name === "lean_autoslim").inputSchema.properties[key]);
@@ -284,4 +289,92 @@ test("journal refuses symlinks and corrupt middle records but recovers a torn la
     fs.symlinkSync(f.checkpointDir, symlink);
     await assert.rejects(runKernelVerifiedAutoSlim(f.root, { ...opts(f), checkpointDir: symlink }), /symlink/i);
   } finally { fs.rmSync(f.root, { recursive: true, force: true }); }
+});
+
+
+test("advisory history prioritizes successful cheap tactics without removing fallbacks", async () => {
+  const { rankTactics, candidatePriority } = await import("../src/autoslim_ranking.ts");
+  const history = [{route:"arithmetic",tactic:"by omega",ok:true,elapsedMs:10},
+    {route:"arithmetic",tactic:"by grind",ok:false,elapsedMs:1000}];
+  assert.deepEqual(rankTactics("arithmetic",["by grind","by omega","by simp"],history),["by omega","by simp","by grind"]);
+  assert.deepEqual(rankTactics("unknown",["by grind","by omega"],history),["by grind","by omega"]);
+  assert.ok(candidatePriority("arithmetic",100,history)>0);
+  assert.equal(candidatePriority("unknown",100,history),100);
+});
+
+test("history loader bounds and validates advisory input", async () => {
+  const { readRankingHistory } = await import("../src/autoslim_ranking.ts");
+  const f=fixture(); const file=path.join(f.root,"ranking.json");
+  try {
+    fs.writeFileSync(file,JSON.stringify({schemaVersion:1,observations:[{route:"r",tactic:"by omega",ok:true,elapsedMs:2}]}));
+    assert.equal(readRankingHistory(file).length,1);
+    for(const elapsedMs of [-1,null,"2"]) {
+      fs.writeFileSync(file,JSON.stringify({schemaVersion:1,observations:[{route:"r",tactic:"by omega",ok:true,elapsedMs}]}));
+      assert.throws(()=>readRankingHistory(file),/ranking history/i);
+    }
+    assert.deepEqual(readRankingHistory(undefined),[]);
+  } finally {fs.rmSync(f.root,{recursive:true,force:true});}
+});
+
+
+test("history only reorders allowed recipes and changed history still needs a fresh final check", async () => {
+  const f=fixture();const history=path.join(f.root,"history.json");
+  fs.writeFileSync(history,JSON.stringify({schemaVersion:1,observations:[{route:"eqsat-congruence-closure",tactic:"by simp",ok:true,elapsedMs:1}]}));
+  try {
+    const ranked=await runKernelVerifiedAutoSlim(f.root,{...opts(f),rankingHistoryPath:history});
+    assert.equal(ranked.completed,true);
+    assert.equal(ranked.verifiedCount,4);
+    assert.ok(ranked.edits.every(e=>e.newText==="by simp"));
+    const fallback=await runKernelVerifiedAutoSlim(f.root,opts(f));
+    assert.equal(fallback.completed,true);
+    assert.equal(fallback.verifiedCount,4);
+    assert.equal(fallback.finalCheckPassed,true);
+    assert.ok(fallback.verificationAttempts>=1);
+    assert.equal(fallback.resumedCandidates,4);
+    assert.ok(fallback.edits.every(e=>e.newText==="by simp"));
+  } finally {fs.rmSync(f.root,{recursive:true,force:true});}
+});
+
+
+test("ranking history refuses nonregular streams without blocking", {skip:process.platform==="win32"}, () => {
+  const f=fixture();const fifo=path.join(f.root,"history.fifo");
+  try {
+    assert.equal(spawnSync("mkfifo",[fifo]).status,0);
+    const module=fileURLToPath(new URL("../src/autoslim_ranking.ts",import.meta.url));
+    const script=`import {readRankingHistory} from ${JSON.stringify(module)}; try {readRankingHistory(${JSON.stringify(fifo)}); process.exit(2);} catch(e) {if(!/ranking history/i.test(e.message)) throw e;}`;
+    const result=spawnSync(process.execPath,["--experimental-strip-types","--input-type=module","-e",script],{timeout:3000,encoding:"utf8"});
+    assert.equal(result.error,undefined);
+    assert.equal(result.status,0,result.stderr);
+  } finally {fs.rmSync(f.root,{recursive:true,force:true});}
+});
+
+
+test("ranking observations exclude group, final, cache and inconclusive evidence", async () => {
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),"ranking-observations-"));
+  const proposals=[{id:"a",tactics:["by grind"]},{id:"b",tactics:["by grind"]}];
+  const render=choices=>JSON.stringify([...choices]);
+  try {
+    const grouped=await verifyProofGroups({proposals,render,verify:clean,journal:new AutoSlimJournal(root,contentHash("group")),groupSize:2});
+    assert.equal(grouped.observations.length,0);
+    const journal=new AutoSlimJournal(root,contentHash("single"));
+    const single=await verifyProofGroups({proposals,render,verify:clean,journal,groupSize:1});
+    assert.equal(single.observations.length,2);
+    assert.ok(single.observations.every(o=>o.ok && o.elapsedMs>=0));
+    const cached=await verifyProofGroups({proposals,render,verify:clean,journal,groupSize:1});
+    assert.equal(cached.observations.length,0);
+    assert.equal(cached.attempts,1);
+    const incomplete=await verifyProofGroups({proposals,render,verify:async()=>({ok:false,errorCount:1,warningCount:0,inconclusive:true}),journal:new AutoSlimJournal(root,contentHash("incomplete")),groupSize:1});
+    assert.equal(incomplete.observations.length,0);
+    assert.equal(incomplete.completed,false);
+  } finally {fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test("source order remains available with history supplied", async () => {
+  const f=fixture(); const history=path.join(f.root,"history.json");
+  fs.writeFileSync(history,JSON.stringify({schemaVersion:1,observations:[{route:"eqsat-congruence-closure",tactic:"by simp",ok:true,elapsedMs:1}]}));
+  try {
+    const report=await runKernelVerifiedAutoSlim(f.root,{...opts(f),maxCandidates:1,rankBySize:false,rankingHistoryPath:history});
+    assert.equal(report.verifiedCount,1);
+    assert.equal(report.edits[0].theoremName,"first");
+  } finally {fs.rmSync(f.root,{recursive:true,force:true});}
 });

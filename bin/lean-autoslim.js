@@ -25,6 +25,8 @@ const USAGE = [
   "  --max-candidates <n>      Maximum number of candidates to probe (default: 50)",
   "  --timeout-ms <ms>         Per-candidate Lean timeout in ms (default: 25000)",
   "  --checkpoint-dir <path>   Durable progress directory (default: project .lake/autoslim-checkpoints)",
+  "  --ranking-history <path> Optional bounded route/tactic timing observations",
+  "  --source-order            Visit candidates in source order",
   "  --fresh                   Ignore saved progress and cached verdicts",
   "  --group-size <n>          Candidates per compiler group, 1..32 (default: 4)",
   "  --max-attempts <n>        Compiler attempt budget, including final check (default: unlimited)",
@@ -51,6 +53,7 @@ export function parseAutoSlimCliArgs(argv) {
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    if (a === "--source-order") { opts.rankBySize = false; continue; }
     if (a === "--fresh") { opts.resume = false; continue; }
     if (a === "-h" || a === "--help") {
       opts.help = true;
@@ -85,7 +88,10 @@ export function parseAutoSlimCliArgs(argv) {
       i++;
       return argv[i];
     };
-    if (flag === "--checkpoint-dir") {
+    if (flag === "--ranking-history") {
+      opts.rankingHistoryPath = takeVal();
+      if (!opts.rankingHistoryPath) throw new Error("Empty ranking history path");
+    } else if (flag === "--checkpoint-dir") {
       opts.checkpointDir = takeVal();
       if (!opts.checkpointDir) throw new Error("Empty checkpoint directory");
     } else if (flag === "--group-size" || flag === "--max-attempts") {
@@ -180,6 +186,8 @@ async function runCli() {
       checkpointDir: opts.checkpointDir,
       resume: opts.resume,
       groupSize: opts.groupSize,
+      rankBySize: opts.rankBySize,
+      rankingHistoryPath: opts.rankingHistoryPath,
       maxVerificationAttempts: opts.maxVerificationAttempts,
     };
     const out = batch
