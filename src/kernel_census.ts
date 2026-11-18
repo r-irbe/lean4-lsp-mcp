@@ -18,7 +18,10 @@ function validatePaths(workspace: string, args: any) {
   if(!inside(base,project) || !fs.statSync(project).isDirectory() || !isLakeRoot(project)) throw new Error('Invalid project target: outside workspace or not a Lake project');
   if(typeof args.prefix!=='string' || !/^[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*$/.test(args.prefix)) throw new Error('Invalid module prefix');
   const mode=args.mode===undefined?'check':args.mode;
-  if(mode!=='check' && mode!=='rebuild') throw new Error('Invalid census mode');
+  if(!['check','rebuild','start','status','cancel'].includes(mode)) throw new Error('Invalid census mode');
+  if(['status','cancel'].includes(mode)) {
+    if(typeof args.jobId!=='string' || !/^[a-f0-9]{32}$/.test(args.jobId)) throw new Error('Invalid census job identifier');
+  } else if(args.jobId!==undefined) throw new Error('Job identifier is valid only for status/cancel');
   if(args.receiptPath!==undefined && (typeof args.receiptPath!=='string' || !args.receiptPath.trim())) throw new Error('Invalid receipt path');
   const receipt=path.resolve(project,args.receiptPath??path.join('.lake','kernel-census',args.prefix+'.json'));
   if(!inside(project,receipt) || !receipt.endsWith('.json') || ['lake-manifest.json','package.json','package-lock.json'].includes(path.basename(receipt))) throw new Error('Invalid receipt path: must be a census JSON inside project');
@@ -29,7 +32,7 @@ function validatePaths(workspace: string, args: any) {
     catch(error: any) {if(error.code!=='ENOENT') throw error;}
   }
   if(args.rehashImports!==undefined && typeof args.rehashImports!=='boolean') throw new Error('Invalid rehashImports');
-  const timeoutMs=args.timeoutMs??(mode==='check'?120000:1200000);
+  const timeoutMs=args.timeoutMs??(['rebuild','start'].includes(mode)?1200000:120000);
   if(!Number.isInteger(timeoutMs) || timeoutMs<1000 || timeoutMs>3600000) throw new Error('Invalid census timeoutMs');
   return {project,receipt,mode,timeoutMs};
 }
@@ -48,9 +51,19 @@ function failed(receipt: string, reason: string, status='unverified') {
   return {status,evidenceKind:'compiled-kernel-replay',gateEligible:false,receiptPath:receipt,reasons:[reason]};
 }
 
-function invoke(adapter: string, project: string, receipt: string, prefix: string, mode: string, timeoutMs: number, rehashImports: boolean, abort?: AbortSignal): Promise<any> {
+export function kernelControllerTimeout(mode: string, timeoutMs: number): number {
+  return ['start','cancel'].includes(mode)?15000:mode==='status'?Math.min(timeoutMs,240000):timeoutMs;
+}
+
+function invoke(adapter: string, project: string, receipt: string, prefix: string, mode: string, timeoutMs: number, rehashImports: boolean, jobId: string|undefined, abort?: AbortSignal): Promise<any> {
   return new Promise(resolve=>{
-    const child=spawn('python3',[adapter,'--project-root',project,'--prefix',prefix,'--receipt',receipt,'--mode',mode,...(rehashImports?['--rehash-imports']:[])],{cwd:project,detached:process.platform!=='win32',stdio:['ignore','pipe','pipe']});
+    const jobs=['start','status','cancel'].includes(mode);
+    const script=jobs?path.join(path.dirname(adapter),'kernel_census_jobs.py'):adapter;
+    if(!fs.existsSync(script)){resolve(failed(receipt,'Installed toolkit has no durable job adapter','unavailable'));return;}
+    const argv=[script,'--project-root',project,'--prefix',prefix,'--receipt',receipt,'--mode',mode,...(rehashImports?['--rehash-imports']:[])];
+    if(jobs){argv.push('--timeout-ms',String(timeoutMs));if(jobId)argv.push('--job-id',jobId);}
+    const controllerTimeout=kernelControllerTimeout(mode,timeoutMs);
+    const child=spawn('python3',argv,{cwd:project,detached:process.platform!=='win32',stdio:['ignore','pipe','pipe']});
     let stdout='';let stderr='';let failure='';let done=false;
     let killTimer: ReturnType<typeof setTimeout>|undefined;
     const kill=(signal: NodeJS.Signals)=>{try {if(process.platform!=='win32' && child.pid)process.kill(-child.pid,signal);else if(child.pid)spawnSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});}catch {child.kill(signal);}};
@@ -58,7 +71,7 @@ function invoke(adapter: string, project: string, receipt: string, prefix: strin
     const onAbort=()=>{failure='Kernel census cancelled by server shutdown';kill('SIGKILL');};
     abort?.addEventListener('abort',onAbort,{once:true});
     if(abort?.aborted)onAbort();
-    const timer=setTimeout(()=>stop(`Kernel census timeout after ${timeoutMs}ms`),timeoutMs);
+    const timer=setTimeout(()=>stop(`Kernel census timeout after ${controllerTimeout}ms`),controllerTimeout);
     const finish=(value: any)=>{if(done)return;done=true;abort?.removeEventListener('abort',onAbort);clearTimeout(timer);if(killTimer && !failure)clearTimeout(killTimer);resolve(value);};
     child.stdout.on('data',(data: Buffer)=>{if(stdout.length+data.length>1024*1024) stop('Kernel adapter output limit exceeded');else stdout+=data.toString('utf8');});
     child.stderr.on('data',(data: Buffer)=>{stderr=(stderr+data.toString('utf8')).slice(-8192);});
@@ -67,7 +80,8 @@ function invoke(adapter: string, project: string, receipt: string, prefix: strin
       if(failure || signal) return finish(failed(receipt,failure||`Kernel adapter interrupted: ${signal}`));
       try {
         const report=JSON.parse(stdout);
-        if(report.evidenceKind!=='compiled-kernel-replay' || !['verified','stale','missing','unverified','unavailable'].includes(report.status) || report.gateEligible!==(report.status==='verified') || (report.gateEligible && code!==0)) throw new Error('Invalid adapter receipt status');
+        if(report.evidenceKind!=='compiled-kernel-replay' || !['verified','stale','missing','unverified','unavailable',...(jobs?['queued','running','cancelling','cancelled','failed','interrupted','timed_out']:[])].includes(report.status) || report.gateEligible!==(report.status==='verified') || (report.gateEligible && code!==0)) throw new Error('Invalid adapter receipt status');
+        if(jobs && report.job && (!/^[a-f0-9]{32}$/.test(report.job.id??'') || (jobId && report.job.id!==jobId))) throw new Error('Invalid backend job identity');
         if(report.gateEligible) {
           const fields=['modules','constants','theorems','definitions','declaredAxioms','eligible','replayed','axiomAudited','skippedUnsafe','skippedPartial','privateTheorems','loadedParts','disallowedAxiomUses'];
           if(!fields.every(k=>Number.isSafeInteger(report.counts?.[k]) && report.counts[k]>=0) || !/^[a-f0-9]{64}$/.test(report.receiptSha256??'') || !/^[a-f0-9]{64}$/.test(report.contextFingerprint??'') || !report.scope || Object.values(report.scope).some(v=>v!==false)) throw new Error('Incomplete verified adapter result');
@@ -81,9 +95,10 @@ function invoke(adapter: string, project: string, receipt: string, prefix: strin
 export async function runKernelCensus(workspace: string,args: any,abort?: AbortSignal): Promise<string> {
   const {project,receipt,mode,timeoutMs}=validatePaths(workspace,args);
   const adapter=resolveKernelCensusAdapter(project);
-  const report=adapter?await invoke(adapter,project,receipt,args.prefix,mode,timeoutMs,args.rehashImports===true,abort):failed(receipt,'Install proof-skills or set LEAN_PROOF_SKILLS_ROOT','unavailable');
+  const report=adapter?await invoke(adapter,project,receipt,args.prefix,mode,timeoutMs,args.rehashImports===true,args.jobId,abort):failed(receipt,'Install proof-skills or set LEAN_PROOF_SKILLS_ROOT','unavailable');
   if(args.format==='json')return JSON.stringify(report);
   const lines=[`Kernel census: ${report.status}`,`Evidence: ${report.evidenceKind}`,`gateEligible: ${report.gateEligible}`,`Receipt: ${report.receiptPath}`];
+  if(report.job)lines.push(`Job: ${report.job.id}; state: ${report.job.state}; phase: ${report.job.phase??report.job.state}`);
   if(report.counts) lines.push(`Modules: ${report.counts.modules}; constants: ${report.counts.constants}; replayed: ${report.counts.replayed}; theorem constants: ${report.counts.theorems}`,`Excluded unsafe: ${report.counts.skippedUnsafe}; partial: ${report.counts.skippedPartial}`);
   lines.push(...(report.reasons??[]),'Scope: external library bodies and discarded examples are not replayed.');
   return lines.join('\n');
