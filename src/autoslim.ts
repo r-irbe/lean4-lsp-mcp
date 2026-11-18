@@ -10,11 +10,14 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isWholeTheoremProof, isSafeProofReplacement, stripLeanCommentsAndStrings } from "./lean_source.ts";
+import { AutoSlimJournal, contentHash, assertNoSymlinkComponents } from "./autoslim_checkpoint.ts";
+import { verifyProofGroups } from "./autoslim_engine.ts";
 import {
   isLakeRoot,
   leanInvocationEnv,
   planLeanInvocation,
   resolveProjectRoot,
+  leanEnvironmentFingerprint,
   type LeanContext,
 } from "./project_root.ts";
 
@@ -92,6 +95,18 @@ export interface AutoSlimReport {
   verificationAttempts: number;
   verificationTimeMs: number;
   elapsedMs: number;
+  completed: boolean;
+  stopReason?: "attempt-budget" | "final-check-failed" | "verification-inconclusive";
+  stopDiagnostic?: string;
+  checkpointPath: string | null;
+  resumedCandidates: number;
+  interruptedAttempts: number;
+  cacheHits: number;
+  groupChecks: number;
+  bisections: number;
+  finalCheckPassed: boolean | null;
+  provisionalCount: number;
+  screenedOutCount: number;
 }
 
 export interface AutoSlimOptions {
@@ -105,13 +120,88 @@ export interface AutoSlimOptions {
   format?: "json" | "markdown";
   analyzerBin?: string;
   leanContext?: LeanContext;
+  checkpointDir?: string;
+  resume?: boolean;
+  groupSize?: number;
+  maxVerificationAttempts?: number;
+  rankBySize?: boolean;
   /** Optional Virtual LSP verifier callback injected by FileWorkerManager. */
   lspVerifier?: (candidateContent: string, timeoutMs: number) => Promise<{
     ok: boolean;
     errorCount: number;
     warningCount: number;
     firstIssue?: string;
+    inconclusive?: boolean;
   }>;
+}
+
+/** A stat fingerprint of compiled inputs; generated journals and scratch files are excluded. */
+function compiledInputsFingerprint(leanRoot: string, context?: LeanContext, extraRoots: string[] = []): string {
+  const roots = new Set<string>([path.join(leanRoot, ".lake/build/lib/lean"), ...(context?.moduleRoots || []), ...extraRoots]);
+  const manifestPath = path.join(leanRoot, "lake-manifest.json");
+  if (fs.existsSync(manifestPath)) {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    for (const pkg of manifest.packages || []) {
+      const directory = pkg.type === "path" && typeof pkg.dir === "string"
+        ? path.resolve(leanRoot, pkg.dir) : path.join(leanRoot, ".lake/packages", String(pkg.name));
+      roots.add(path.join(directory, ".lake/build/lib/lean"));
+    }
+  }
+  const files: string[] = [];
+  const seen = new Set<string>();
+  const visit = (directory: string) => {
+    if (!fs.existsSync(directory)) return;
+    const real = fs.realpathSync(directory);
+    if (seen.has(real)) return;
+    seen.add(real);
+    for (const entry of fs.readdirSync(real, { withFileTypes: true })) {
+      const p = path.join(real, entry.name);
+      const stat = entry.isSymbolicLink() ? fs.statSync(p) : undefined;
+      if (entry.isDirectory() || stat?.isDirectory()) visit(p);
+      else if ((entry.isFile() || stat?.isFile()) && /\.olean(?:\.private|\.server)?$/.test(entry.name)) {
+        const s = fs.statSync(p, { bigint: true });
+        files.push(JSON.stringify([p, String(s.size), String(s.mtimeNs), String(s.ctimeNs), String(s.ino)]));
+      }
+    }
+  };
+  for (const root of roots) visit(root);
+  return contentHash(files.sort().join("\n"));
+}
+
+function verificationContext(leanRoot: string, options: AutoSlimOptions, backend: string): () => string {
+  const invocation = planLeanInvocation(leanRoot, ["--print-prefix"], options.leanContext);
+  let compiler = options.leanContext?.compilerPath;
+  if (!compiler) {
+    const probe = spawnSync(invocation.command, invocation.args, {
+      cwd: invocation.cwd, env: leanInvocationEnv(invocation), encoding: "utf8", timeout: 15000,
+    });
+    if (probe.status === 0) {
+      const prefix = probe.stdout.trim().split(/\r?\n/).at(-1) || "";
+      const binary = path.join(prefix, "bin", process.platform === "win32" ? "lean.exe" : "lean");
+      if (path.isAbsolute(prefix) && fs.existsSync(binary)) compiler = fs.realpathSync(binary);
+    }
+  }
+  const policyFiles = ["autoslim", "autoslim_engine", "autoslim_checkpoint", "lean_source"].map(name => {
+    const p = path.join(__dirname, name + (fs.existsSync(path.join(__dirname, name + ".ts")) ? ".ts" : ".js"));
+    return contentHash(fs.readFileSync(p));
+  });
+  const analyzer = resolveLeanAnalyzerBin(options.analyzerBin);
+  const analyzerHash = analyzer ? contentHash(fs.readFileSync(analyzer)) : "unavailable";
+  const effectiveRoots = (leanInvocationEnv(invocation).LEAN_PATH || "").split(path.delimiter).filter(Boolean).map(p => path.resolve(invocation.cwd,p));
+  if (compiler) effectiveRoots.push(path.join(path.dirname(path.dirname(compiler)), "lib/lean"));
+  return () => {
+    let compilerIdentity: unknown = "unavailable";
+    if (compiler) {
+      const s = fs.statSync(compiler, { bigint: true });
+      compilerIdentity = [compiler, String(s.size), String(s.mtimeNs), String(s.ctimeNs), String(s.ino)];
+    }
+    return contentHash(JSON.stringify({
+      environment: leanEnvironmentFingerprint(leanRoot, invocation.command, invocation.args, process.env, options.leanContext),
+      inputs: compiledInputsFingerprint(leanRoot, options.leanContext, effectiveRoots), compilerIdentity,
+      analyzerHash, policyFiles, backend, timeout: options.timeoutMs ?? 25000,
+      routes: options.routes || [], allowAltProofImport: options.allowAltProofImport === true,
+    }));
+  };
 }
 
 export interface AutoSlimBatchReport {
@@ -505,6 +595,7 @@ export function runBatchLeanCheck(
   errorCount: number;
   warningCount: number;
   firstIssue?: string;
+  inconclusive?: boolean;
 }> {
   const scratchName = `.autoslim_probe_${process.pid}_${Date.now()}_${Math.random()
     .toString(36)
@@ -540,6 +631,7 @@ export function runBatchLeanCheck(
         errorCount: 1,
         warningCount: 0,
         firstIssue: `spawn failed: ${err?.message || String(err)}`,
+        inconclusive: true,
       });
       return;
     }
@@ -575,6 +667,7 @@ export function runBatchLeanCheck(
           errorCount: 1,
           warningCount: 0,
           firstIssue: `timeout after ${timeoutMs}ms`,
+          inconclusive: true,
         });
         return;
       }
@@ -603,7 +696,7 @@ export function runBatchLeanCheck(
       stderr += d.toString("utf-8");
     });
     child.on("error", (err: Error) => {
-      stderr += `\n${err.message}`;
+      stderr += `\nspawn failed: ${err.message}`;
       finalize(1);
     });
     child.on("close", (code: number | null) => finalize(code));
@@ -690,6 +783,7 @@ export async function runKernelVerifiedAutoSlim(
     throw new Error(`File not found: ${options.filePath}`);
   }
   const lstat = fs.lstatSync(absPath);
+  assertNoSymlinkComponents(absPath);
   if (lstat.isSymbolicLink() || !lstat.isFile()) {
     throw new Error(`Refusing non-regular or symlinked target: ${options.filePath}`);
   }
@@ -761,6 +855,16 @@ export async function runKernelVerifiedAutoSlim(
       verificationAttempts: 0,
       verificationTimeMs: 0,
       elapsedMs: performance.now() - startedAt,
+      completed: true,
+      checkpointPath: null,
+      resumedCandidates: 0,
+      interruptedAttempts: 0,
+      cacheHits: 0,
+      groupChecks: 0,
+      bisections: 0,
+      finalCheckPassed: null,
+      provisionalCount: 0,
+      screenedOutCount: 0,
     };
   }
 
@@ -775,11 +879,22 @@ export async function runKernelVerifiedAutoSlim(
     );
   }
   const backendUsed: "lsp" | "batch" = useLsp ? "lsp" : "batch";
+  const currentContext = verificationContext(leanRoot, options, backendUsed);
+  const contextFingerprint = currentContext();
+  const identity = contentHash(JSON.stringify([absPath, sourceHashBefore, contextFingerprint]));
+  const journal = new AutoSlimJournal(path.resolve(options.checkpointDir || path.join(leanRoot, ".lake/autoslim-checkpoints")), identity, options.resume === false);
+  const interruptedAttempts = journal.pendingAttempts.size;
+  const groupSize = options.groupSize ?? 4;
+  if (!Number.isInteger(groupSize) || groupSize < 1 || groupSize > 32) throw new Error("groupSize must be an integer in 1..32");
+  if (options.maxVerificationAttempts !== undefined && (!Number.isInteger(options.maxVerificationAttempts) || options.maxVerificationAttempts < 0)) {
+    throw new Error("maxVerificationAttempts must be a nonnegative integer");
+  }
 
   let verificationAttempts = 0;
   let verificationTimeMs = 0;
   const verifyContent = async (content: string) => {
     assertSourceUnchanged();
+    if (currentContext() !== contextFingerprint) throw new Error("Verification context changed; checkpoint cannot authorize source writes");
     const start = performance.now();
     verificationAttempts++;
     const verdict = useLsp ? await options.lspVerifier!(content, timeoutMs) : await runBatchLeanCheck(
@@ -791,6 +906,7 @@ export async function runKernelVerifiedAutoSlim(
     );
     verificationTimeMs += performance.now() - start;
     assertSourceUnchanged();
+    if (currentContext() !== contextFingerprint) throw new Error("Verification context changed during compilation");
     return verdict;
   };
 
@@ -801,12 +917,15 @@ export async function runKernelVerifiedAutoSlim(
     origStart: number;
     origEnd: number;
     oldSlice: string;
+    id: string;
+    tactics: string[];
+    score: number;
   }
 
   const validIndexed: IndexedCandidate[] = [];
   const rejected: AutoSlimRejectedCandidate[] = [];
 
-  for (const cand of rawCandidates.slice(0, maxCandidates)) {
+  for (const cand of rawCandidates) {
     const offs = lspRangeToStringOffsets(originalText, origLineOffsets, cand.range);
     if (!offs) {
       rejected.push({
@@ -858,111 +977,82 @@ export async function runKernelVerifiedAutoSlim(
       });
       continue;
     }
+    const oldLines = oldSlice.split("\n").length;
+    const oldBytes = Buffer.byteLength(oldSlice);
+    const tactics = [...new Set([...buildUnfoldingTactics(oldSlice), ...cand.candidateTactics])].filter(tac =>
+      isSafeProofReplacement(tac) && !hasForbiddenUnicode(tac)
+      && (tac.split("\n").length < oldLines || (tac.split("\n").length === oldLines && Buffer.byteLength(tac) < oldBytes)));
+    if (tactics.length === 0) {
+      rejected.push({ theoremName: cand.theoremName, route: cand.route, range: cand.range,
+        reason: "no-safe-shorter-recipe", triedTactics: [] });
+      continue;
+    }
     validIndexed.push({
       cand,
       origStart: offs.startIdx,
       origEnd: offs.endIdx,
       oldSlice,
+      tactics,
+      id: contentHash(JSON.stringify([cand.theoremName, cand.route, offs.startIdx, offs.endIdx, oldSlice, tactics])),
+      score: (oldLines - 1) * 1_000_000_000 + oldBytes - Math.min(...tactics.map(t => Buffer.byteLength(t))),
     });
   }
 
-  // Sort top-to-bottom and track cumulative delta (plus optional import insertion delta)
-  validIndexed.sort((a, b) => a.origStart - b.origStart);
-
-  let workingText = originalText;
-  let importDelta = 0;
-  let importInserted = false;
-  let cumulativeEditDelta = 0;
+  const screenedOutCount = rejected.length;
+  const ranked = [...validIndexed].sort(options.rankBySize === false
+    ? (a, b) => a.origStart - b.origStart : (a, b) => b.score - a.score || a.origStart - b.origStart);
+  const selected = ranked.slice(0, maxCandidates);
+  const selectedById = new Map(selected.map(item => [item.id, item]));
+  const render = (choices: ReadonlyMap<string, string>): string => {
+    let text = originalText;
+    const ordered = [...choices].map(([id, tactic]) => {
+      const item = selectedById.get(id);
+      if (!item || !item.tactics.includes(tactic)) throw new Error("Checkpoint recipe is outside the rediscovered candidate set");
+      return { item, tactic };
+    }).sort((a, b) => b.item.origStart - a.item.origStart);
+    for (const { item, tactic } of ordered) {
+      if (text.slice(item.origStart, item.origEnd) !== item.oldSlice) throw new Error("Proof span drift during grouped rendering");
+      text = text.slice(0, item.origStart) + tactic + text.slice(item.origEnd);
+    }
+    if (!avail.importedInFile && avail.availableModule && options.allowAltProofImport === true
+      && ordered.some(({ tactic }) => requiresAltProofTactic(tactic))) {
+      text = insertModuleImport(text, avail.availableModule);
+    }
+    return text;
+  };
+  const grouped = await verifyProofGroups({
+    proposals: selected.map(item => ({ id: item.id, tactics: item.tactics })),
+    render, verify: verifyContent, journal, groupSize, maxAttempts: options.maxVerificationAttempts,
+  });
+  for (const [id, failure] of grouped.rejected) {
+    const item = selectedById.get(id)!;
+    rejected.push({ theoremName: item.cand.theoremName, route: item.cand.route,
+      range: item.cand.range, reason: "kernel-rejected", ...failure });
+  }
   const edits: AutoSlimVerifiedEdit[] = [];
-
-  for (const item of validIndexed) {
-    const { cand, origStart, origEnd, oldSlice } = item;
-    const oldBytes = Buffer.byteLength(oldSlice, "utf-8");
-    const oldLines = oldSlice.split("\n").length;
-    const triedTactics: string[] = [];
-    let lastDiag: string | undefined;
-    let acceptedEdit: AutoSlimVerifiedEdit | null = null;
-
-    const tactics = [...new Set([...buildUnfoldingTactics(oldSlice), ...cand.candidateTactics])];
-    for (const tac of tactics) {
-      if (!isSafeProofReplacement(tac)) continue;
-      if (hasForbiddenUnicode(tac)) continue;
-      const newBytes = Buffer.byteLength(tac, "utf-8");
-      const newLines = tac.split("\n").length;
-      // Strict slimming invariant: must strictly reduce lines, or keep 1 line with strictly fewer bytes
-      const strictlySlimmer =
-        newLines < oldLines || (newLines === oldLines && newBytes < oldBytes);
-      if (!strictlySlimmer) continue;
-
-      let baseText = workingText;
-      let localImportDelta = importDelta;
-      let needsImportNow = false;
-      if (
-        !avail.importedInFile &&
-        !importInserted &&
-        requiresAltProofTactic(tac) &&
-        options.allowAltProofImport === true &&
-        avail.availableModule
-      ) {
-        const withImp = insertModuleImport(workingText, avail.availableModule);
-        localImportDelta = withImp.length - workingText.length;
-        baseText = withImp;
-        needsImportNow = true;
-      }
-
-      const curStart = origStart + (needsImportNow ? localImportDelta : importDelta) + cumulativeEditDelta;
-      const curEnd = origEnd + (needsImportNow ? localImportDelta : importDelta) + cumulativeEditDelta;
-      if (baseText.slice(curStart, curEnd) !== oldSlice) {
-        lastDiag = "span-drift-mismatch";
-        break;
-      }
-
-      triedTactics.push(tac);
-      const trialContent = baseText.slice(0, curStart) + tac + baseText.slice(curEnd);
-      const verdict = await verifyContent(trialContent);
-      if (verdict.ok && verdict.errorCount === 0 && verdict.warningCount === 0) {
-        workingText = trialContent;
-        if (needsImportNow) {
-          importInserted = true;
-          importDelta = localImportDelta;
-        }
-        cumulativeEditDelta += tac.length - oldSlice.length;
-        acceptedEdit = {
-          theoremName: cand.theoremName,
-          route: cand.route,
-          range: cand.range,
-          oldText: oldSlice,
-          newText: tac,
-          oldBytes,
-          newBytes,
-          oldLines,
-          newLines,
-          linesSaved: oldLines - newLines,
-          bytesSaved: oldBytes - newBytes,
-        };
-        break;
-      } else {
-        lastDiag = verdict.firstIssue;
-      }
+  let workingText = originalText;
+  let importInserted = false;
+  if (grouped.completed && grouped.finalCheckPassed === true) {
+    workingText = render(grouped.accepted);
+    for (const item of [...selected].sort((a, b) => a.origStart - b.origStart)) {
+      const tactic = grouped.accepted.get(item.id);
+      if (tactic === undefined) continue;
+      const oldBytes = Buffer.byteLength(item.oldSlice);
+      const newBytes = Buffer.byteLength(tactic);
+      const oldLines = item.oldSlice.split("\n").length;
+      const newLines = tactic.split("\n").length;
+      edits.push({ theoremName: item.cand.theoremName, route: item.cand.route,
+        range: item.cand.range, oldText: item.oldSlice, newText: tactic,
+        oldBytes, newBytes, oldLines, newLines, linesSaved: oldLines - newLines, bytesSaved: oldBytes - newBytes });
     }
-
-    if (acceptedEdit) {
-      edits.push(acceptedEdit);
-    } else {
-      rejected.push({
-        theoremName: cand.theoremName,
-        route: cand.route,
-        range: cand.range,
-        reason: triedTactics.length === 0 ? "not-strictly-shorter" : "kernel-rejected",
-        triedTactics,
-        ...(lastDiag ? { lastDiagnostic: lastDiag } : {}),
-      });
-    }
+    importInserted = !avail.importedInFile && !!avail.availableModule
+      && [...grouped.accepted.values()].some(requiresAltProofTactic);
   }
 
   let applied = false;
   if (apply && edits.length > 0 && workingText !== originalText) {
     assertSourceUnchanged();
+    if (currentContext() !== contextFingerprint) throw new Error("Verification context changed before publication");
     if (hasForbiddenUnicode(workingText) && !hasForbiddenUnicode(originalText)) {
       throw new Error("Refusing to write auto-slimmed file: synthesized content violates INV-001 Unicode policy");
     }
@@ -995,8 +1085,8 @@ export async function runKernelVerifiedAutoSlim(
     altProofAvailable: allowCustomAltProof,
     importInserted,
     candidatesDiscovered: rawCandidates.length,
-    candidatesConsidered: Math.min(rawCandidates.length, maxCandidates),
-    candidatesDeferred: Math.max(0, rawCandidates.length - maxCandidates),
+    candidatesConsidered: selected.length,
+    candidatesDeferred: Math.max(0, validIndexed.length - selected.length),
     verifiedCount: edits.length,
     rejectedCount: rejected.length,
     linesBefore,
@@ -1014,6 +1104,18 @@ export async function runKernelVerifiedAutoSlim(
     verificationAttempts,
     verificationTimeMs,
     elapsedMs: performance.now() - startedAt,
+    completed: grouped.completed,
+    ...(grouped.stopReason ? { stopReason: grouped.stopReason } : {}),
+    ...(grouped.stopDiagnostic ? { stopDiagnostic: grouped.stopDiagnostic } : {}),
+    checkpointPath: journal.filePath,
+    resumedCandidates: grouped.resumedCandidates,
+    interruptedAttempts,
+    cacheHits: grouped.cacheHits,
+    groupChecks: grouped.groupChecks,
+    bisections: grouped.bisections,
+    finalCheckPassed: grouped.finalCheckPassed,
+    provisionalCount: grouped.completed ? 0 : grouped.accepted.size,
+    screenedOutCount,
   };
 }
 
@@ -1024,6 +1126,7 @@ export function formatAutoSlimMarkdown(report: AutoSlimReport): string {
     `- **Backend**: \`${report.backendUsed}\` (\`applied=${report.applied}\`, \`altProofAvailable=${report.altProofAvailable}\`${report.importInserted ? ", inserted AltProof import" : ""})`,
     `- **Candidates**: ${report.verifiedCount} verified / ${report.candidatesDiscovered} discovered (${report.rejectedCount} rejected)`,
     `- **Coverage**: ${report.candidatesConsidered} considered; ${report.candidatesDeferred} deferred`,
+    `- **Progress**: completed=${report.completed}, ${report.resumedCandidates} resumed, ${report.cacheHits} cache hits, ${report.bisections} bisections; final check=${report.finalCheckPassed}`,
     `- **LOC Impact**: ${report.linesBefore} -> ${report.linesAfter} lines (**net -${report.netLinesSaved} LOC**, -${report.netBytesSaved} bytes)`,
     `- **Verification**: ${report.verificationAttempts} attempts, ${report.verificationTimeMs.toFixed(1)} ms; public signatures preserved`,
   ];

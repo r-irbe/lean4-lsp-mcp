@@ -122,7 +122,9 @@ test("manager refuses stale or absent LSP diagnostic versions for an edited cand
   try {
     const result = JSON.parse(await manager.autoSlimFile({ filePath: file, mode: "lsp" }));
     assert.equal(result.verifiedCount, 0);
-    assert.match(result.rejected[0].lastDiagnostic, /version|evidence/i);
+    assert.equal(result.completed, false);
+    assert.equal(result.stopReason, "verification-inconclusive");
+    assert.match(result.stopDiagnostic, /version|evidence/i);
   } finally { manager.dispose(); fs.rmSync(root, { recursive: true, force: true }); }
 });
 

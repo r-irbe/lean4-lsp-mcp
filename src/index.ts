@@ -648,6 +648,10 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         },
         maxCandidates: { type: "integer", description: "Maximum number of quickfix candidates to test (default: 50)" },
         timeoutMs: { type: "integer", description: "Per-candidate Lean verification timeout in ms (default: 25000)" },
+        checkpointDir: { type: "string", description: "Directory for durable resumable progress" },
+        resume: { type: "boolean", description: "Reuse matching progress (default: true); false starts fresh" },
+        groupSize: { type: "integer", minimum: 1, maximum: 32, description: "Candidates per verification group (default: 4)" },
+        maxVerificationAttempts: { type: "integer", minimum: 0, description: "Attempt budget including final check; exhaustion returns incomplete" },
         format: {
           type: "string",
           enum: ["json", "markdown"],
@@ -4717,7 +4721,7 @@ export class FileWorkerManager {
           fileInfo = session.openFiles.get(absPath);
         }
         if (!fileInfo) {
-          return { ok: false, errorCount: 1, warningCount: 0, firstIssue: "document-not-open" };
+          return { ok: false, errorCount: 1, warningCount: 0, inconclusive: true, firstIssue: "document-not-open" };
         }
         const changedAt = Date.now();
         fileInfo.lastAccessedMs = changedAt;
@@ -4735,6 +4739,7 @@ export class FileWorkerManager {
             errorCount: 1,
             warningCount: 0,
             firstIssue: `LSP fileProgress did not complete within ${timeoutMs}ms`,
+            inconclusive: true,
           };
         }
         const evidence = session.diagnostics.get(uri);
@@ -4744,6 +4749,7 @@ export class FileWorkerManager {
           || evidence.version !== candidateVersion || progress.version !== candidateVersion
           || evidence.ts < changedAt || progress.ts < changedAt || progress.pending !== 0) {
           return { ok: false, errorCount: 1, warningCount: 0,
+            inconclusive: true,
             firstIssue: "LSP evidence does not attest the exact candidate version" };
         }
         const diags = evidence.diags;
@@ -4809,15 +4815,21 @@ export class FileWorkerManager {
     const startedAt = performance.now();
     const reports: import("./autoslim.ts").AutoSlimReport[] = [];
     const failures: { filePath: string; error: string }[] = [];
+    let remainingAttempts = options.maxVerificationAttempts;
     for (const filePath of filePaths) {
       try {
-        reports.push(JSON.parse(await this.autoSlimFile({ ...options, filePath, format: "json" })));
+        const report = JSON.parse(await this.autoSlimFile({ ...options, maxVerificationAttempts: remainingAttempts, filePath, format: "json" }));
+        reports.push(report);
+        if (remainingAttempts !== undefined) remainingAttempts = Math.max(0, remainingAttempts - Number(report.verificationAttempts || 0));
       } catch (error) {
         failures.push({ filePath, error: error instanceof Error ? error.message : String(error) });
+        // An exception can interrupt a receipt after attempts ran. Conserve the
+        // remaining batch budget rather than granting unverifiable extra work.
+        if (remainingAttempts !== undefined) remainingAttempts = 0;
       }
     }
     const report: AutoSlimBatchReport = {
-      schemaVersion: 1, kind: "batch", completed: failures.length === 0,
+      schemaVersion: 1, kind: "batch", completed: failures.length === 0 && reports.every(r => r.completed),
       filesRequested: filePaths.length, filesApplied: reports.filter(r => r.applied).length,
       verifiedCount: reports.reduce((n, r) => n + r.verifiedCount, 0),
       rejectedCount: reports.reduce((n, r) => n + r.rejectedCount, 0),
@@ -7841,6 +7853,10 @@ export class McpServer {
           routes: Array.isArray(args.routes) ? args.routes.map(String) : undefined,
           maxCandidates: args.maxCandidates !== undefined ? Number(args.maxCandidates) : undefined,
           timeoutMs: args.timeoutMs !== undefined ? Number(args.timeoutMs) : undefined,
+          checkpointDir: args.checkpointDir !== undefined ? String(args.checkpointDir) : undefined,
+          resume: args.resume !== false,
+          groupSize: args.groupSize !== undefined ? Number(args.groupSize) : undefined,
+          maxVerificationAttempts: args.maxVerificationAttempts !== undefined ? Number(args.maxVerificationAttempts) : undefined,
           format: (args.format === "markdown" ? "markdown" : "json") as AutoSlimOptions["format"],
         };
         return filePaths.length > 0

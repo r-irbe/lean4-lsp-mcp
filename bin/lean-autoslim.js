@@ -24,6 +24,10 @@ const USAGE = [
   "  --route <id>              Whitelist altproof route ID (repeatable or comma-separated)",
   "  --max-candidates <n>      Maximum number of candidates to probe (default: 50)",
   "  --timeout-ms <ms>         Per-candidate Lean timeout in ms (default: 25000)",
+  "  --checkpoint-dir <path>   Durable progress directory (default: project .lake/autoslim-checkpoints)",
+  "  --fresh                   Ignore saved progress and cached verdicts",
+  "  --group-size <n>          Candidates per compiler group, 1..32 (default: 4)",
+  "  --max-attempts <n>        Compiler attempt budget, including final check (default: unlimited)",
   "  --json                    Emit machine-readable JSON report (default)",
   "  --markdown                Emit human-readable Markdown report + diff",
   "  -h, --help                Show this help message",
@@ -41,10 +45,13 @@ export function parseAutoSlimCliArgs(argv) {
     timeoutMs: 25000,
     format: "json",
     help: false,
+    resume: true,
+    groupSize: 4,
   };
 
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
+    if (a === "--fresh") { opts.resume = false; continue; }
     if (a === "-h" || a === "--help") {
       opts.help = true;
       continue;
@@ -78,7 +85,16 @@ export function parseAutoSlimCliArgs(argv) {
       i++;
       return argv[i];
     };
-    if (flag === "--mode") {
+    if (flag === "--checkpoint-dir") {
+      opts.checkpointDir = takeVal();
+      if (!opts.checkpointDir) throw new Error("Empty checkpoint directory");
+    } else if (flag === "--group-size" || flag === "--max-attempts") {
+      const raw = takeVal();
+      const n = Number(raw);
+      if (!/^\d+$/.test(raw) || !Number.isSafeInteger(n) || n < (flag === "--group-size" ? 1 : 0) || (flag === "--group-size" && n > 32)) throw new Error(`Invalid ${flag}: ${raw}`);
+      if (flag === "--group-size") opts.groupSize = n;
+      else opts.maxVerificationAttempts = n;
+    } else if (flag === "--mode") {
       const m = takeVal().toLowerCase();
       if (m !== "auto" && m !== "lsp" && m !== "batch") {
         throw new Error(`Invalid --mode '${m}' (expected auto|lsp|batch)`);
@@ -161,13 +177,18 @@ async function runCli() {
       maxCandidates: opts.maxCandidates,
       timeoutMs: opts.timeoutMs,
       format: opts.format,
+      checkpointDir: opts.checkpointDir,
+      resume: opts.resume,
+      groupSize: opts.groupSize,
+      maxVerificationAttempts: opts.maxVerificationAttempts,
     };
     const out = batch
       ? await manager.autoSlimFiles({ ...options, format: "json", filePaths: opts.filePaths.map(p => path.resolve(process.cwd(), p)) })
-      : await manager.autoSlimFile({ ...options, filePath: absTarget });
-    const receipt = batch ? JSON.parse(out) : null;
-    process.stdout.write(`${batch && opts.format === "markdown" ? mod.formatAutoSlimBatchMarkdown(receipt) : out}\n`);
-    if (receipt && !receipt.completed) process.exitCode = 1;
+      : await manager.autoSlimFile({ ...options, format: "json", filePath: absTarget });
+    const receipt = JSON.parse(out);
+    const rendered = opts.format === "markdown" ? (batch ? mod.formatAutoSlimBatchMarkdown(receipt) : mod.formatAutoSlimMarkdown(receipt)) : out;
+    process.stdout.write(`${rendered}\n`);
+    if (receipt.completed === false) process.exitCode = 1;
   } catch (err) {
     process.stderr.write(`lean-autoslim error: ${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
