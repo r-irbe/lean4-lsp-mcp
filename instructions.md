@@ -228,7 +228,7 @@ failed, malformed and stale evidence is never `gateEligible: true`.
 Use `mode: "rebuild"` explicitly to build all selected source modules, replay
 eligible constants and write a fresh receipt plus logs. `receiptPath` defaults
 to `.lake/kernel-census/<prefix>.json` inside the target project. Symlink and
-out-of-project destinations are refused. Check defaults to 60 seconds; rebuild
+out-of-project destinations are refused. Check defaults to 120 seconds; rebuild
 to 20 minutes; `timeoutMs` may be 1,000 through 3,600,000. On POSIX, timeout kills
 the adapter process group, including build children. Server disposal, EOF and
 shutdown signals also terminate active adapter groups.

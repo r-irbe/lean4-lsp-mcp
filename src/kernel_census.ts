@@ -28,7 +28,7 @@ function validatePaths(workspace: string, args: any) {
     try {if(fs.lstatSync(current).isSymbolicLink()) throw new Error('Invalid receipt path: symlink');}
     catch(error: any) {if(error.code!=='ENOENT') throw error;}
   }
-  const timeoutMs=args.timeoutMs??(mode==='check'?60000:1200000);
+  const timeoutMs=args.timeoutMs??(mode==='check'?120000:1200000);
   if(!Number.isInteger(timeoutMs) || timeoutMs<1000 || timeoutMs>3600000) throw new Error('Invalid census timeoutMs');
   return {project,receipt,mode,timeoutMs};
 }

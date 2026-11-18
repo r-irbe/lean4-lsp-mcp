@@ -302,7 +302,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         prefix: { type: "string", description: "Required source module prefix for kernel_census" },
         receiptPath: { type: "string", description: "Kernel receipt JSON inside target project; default .lake/kernel-census/<prefix>.json" },
         mode: { type: "string", enum: ["check", "rebuild"], default: "check", description: "Kernel census mode; rebuild explicitly builds modules, replays and writes receipt/logs" },
-        timeoutMs: { type: "integer", minimum: 1000, maximum: 3600000, description: "Kernel adapter timeout; check defaults to 60s, rebuild to 20min" },
+        timeoutMs: { type: "integer", minimum: 1000, maximum: 3600000, description: "Kernel adapter timeout; check defaults to 120s, rebuild to 20min" },
         goal: { type: "string", description: "Optional explicit goal string for action='altproof'" },
         proof: { type: "string", description: "Optional proof block for action='altproof'" },
         direction: { type: "string", enum: ["imports", "importedBy", "both"], description: "Traversal direction for hierarchy (default: both)" },
