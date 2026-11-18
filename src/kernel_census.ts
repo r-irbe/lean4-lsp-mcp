@@ -28,6 +28,7 @@ function validatePaths(workspace: string, args: any) {
     try {if(fs.lstatSync(current).isSymbolicLink()) throw new Error('Invalid receipt path: symlink');}
     catch(error: any) {if(error.code!=='ENOENT') throw error;}
   }
+  if(args.rehashImports!==undefined && typeof args.rehashImports!=='boolean') throw new Error('Invalid rehashImports');
   const timeoutMs=args.timeoutMs??(mode==='check'?120000:1200000);
   if(!Number.isInteger(timeoutMs) || timeoutMs<1000 || timeoutMs>3600000) throw new Error('Invalid census timeoutMs');
   return {project,receipt,mode,timeoutMs};
@@ -47,9 +48,9 @@ function failed(receipt: string, reason: string, status='unverified') {
   return {status,evidenceKind:'compiled-kernel-replay',gateEligible:false,receiptPath:receipt,reasons:[reason]};
 }
 
-function invoke(adapter: string, project: string, receipt: string, prefix: string, mode: string, timeoutMs: number, abort?: AbortSignal): Promise<any> {
+function invoke(adapter: string, project: string, receipt: string, prefix: string, mode: string, timeoutMs: number, rehashImports: boolean, abort?: AbortSignal): Promise<any> {
   return new Promise(resolve=>{
-    const child=spawn('python3',[adapter,'--project-root',project,'--prefix',prefix,'--receipt',receipt,'--mode',mode],{cwd:project,detached:process.platform!=='win32',stdio:['ignore','pipe','pipe']});
+    const child=spawn('python3',[adapter,'--project-root',project,'--prefix',prefix,'--receipt',receipt,'--mode',mode,...(rehashImports?['--rehash-imports']:[])],{cwd:project,detached:process.platform!=='win32',stdio:['ignore','pipe','pipe']});
     let stdout='';let stderr='';let failure='';let done=false;
     let killTimer: ReturnType<typeof setTimeout>|undefined;
     const kill=(signal: NodeJS.Signals)=>{try {if(process.platform!=='win32' && child.pid)process.kill(-child.pid,signal);else if(child.pid)spawnSync('taskkill',['/PID',String(child.pid),'/T','/F'],{stdio:'ignore'});}catch {child.kill(signal);}};
@@ -80,7 +81,7 @@ function invoke(adapter: string, project: string, receipt: string, prefix: strin
 export async function runKernelCensus(workspace: string,args: any,abort?: AbortSignal): Promise<string> {
   const {project,receipt,mode,timeoutMs}=validatePaths(workspace,args);
   const adapter=resolveKernelCensusAdapter(project);
-  const report=adapter?await invoke(adapter,project,receipt,args.prefix,mode,timeoutMs,abort):failed(receipt,'Install proof-skills or set LEAN_PROOF_SKILLS_ROOT','unavailable');
+  const report=adapter?await invoke(adapter,project,receipt,args.prefix,mode,timeoutMs,args.rehashImports===true,abort):failed(receipt,'Install proof-skills or set LEAN_PROOF_SKILLS_ROOT','unavailable');
   if(args.format==='json')return JSON.stringify(report);
   const lines=[`Kernel census: ${report.status}`,`Evidence: ${report.evidenceKind}`,`gateEligible: ${report.gateEligible}`,`Receipt: ${report.receiptPath}`];
   if(report.counts) lines.push(`Modules: ${report.counts.modules}; constants: ${report.counts.constants}; replayed: ${report.counts.replayed}; theorem constants: ${report.counts.theorems}`,`Excluded unsafe: ${report.counts.skippedUnsafe}; partial: ${report.counts.skippedPartial}`);

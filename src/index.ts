@@ -300,6 +300,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         },
         target: { type: "string", description: "Target file path, directory path, module name, or goal string" },
         prefix: { type: "string", description: "Required source module prefix for kernel_census" },
+        rehashImports: { type: "boolean", description: "Rehash every imported artifact; default reuses verified digests only when complete file identity and ctime match" },
         receiptPath: { type: "string", description: "Kernel receipt JSON inside target project; default .lake/kernel-census/<prefix>.json" },
         mode: { type: "string", enum: ["check", "rebuild"], default: "check", description: "Kernel census mode; rebuild explicitly builds modules, replays and writes receipt/logs" },
         timeoutMs: { type: "integer", minimum: 1000, maximum: 3600000, description: "Kernel adapter timeout; check defaults to 120s, rebuild to 20min" },

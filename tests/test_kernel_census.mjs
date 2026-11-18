@@ -91,3 +91,12 @@ test('server disposal terminates detached adapters and descendants',async()=>{
   await new Promise(resolve=>setTimeout(resolve,1100));assert.equal(fs.existsSync(marker),false);
  }finally{server.dispose();fs.rmSync(root,{recursive:true,force:true});}
 });
+
+test('strict import rehash is explicitly forwarded to the trusted adapter',async()=>{
+ const root=fixture();const server=new McpServer(root);const adapter=path.join(root,'skills/scripts/lean/kernel_census.py');
+ try{
+  let source=fs.readFileSync(adapter,'utf8');source=source.replace("p.add_argument('--mode');a=", "p.add_argument('--mode');p.add_argument('--rehash-imports',action='store_true');a=").replace('reasons=[]','reasons=[str(a.rehash_imports)]');fs.writeFileSync(adapter,source);
+  const r=JSON.parse(await server.executeTool('lean_metrics',{action:'kernel_census',target:'.',prefix:'Fixture',rehashImports:true,format:'json'}));
+  assert.deepEqual(r.reasons,['True']);
+ }finally{server.dispose();fs.rmSync(root,{recursive:true,force:true});}
+});

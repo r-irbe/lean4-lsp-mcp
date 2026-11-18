@@ -222,7 +222,10 @@ Static `action: "census"` remains a source scan. For compiled proof coverage:
 
 The target must be a Lake project inside the served workspace. Check mode is the
 read-only default: it validates the stored receipt, SHA-256 source/artifact/config
-and compiler/import context, without starting Lean or a build. Missing, legacy,
+and compiler/import context, without starting Lean or a build. Imported digests
+are reused only when resolved path, device, inode, size, mtime and ctime match
+the verified snapshot and the timestamp is at least two seconds old. Set
+`rehashImports: true` to read and hash every import again; this can take minutes. Missing, legacy,
 failed, malformed and stale evidence is never `gateEligible: true`.
 
 Use `mode: "rebuild"` explicitly to build all selected source modules, replay
