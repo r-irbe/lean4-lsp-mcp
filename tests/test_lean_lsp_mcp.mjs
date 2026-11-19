@@ -98,14 +98,15 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     });
     assert(listRes && Array.isArray(listRes.result.tools), "tools list is array");
     const toolNames = listRes.result.tools.map(t => t.name);
-    assert.strictEqual(toolNames.length, 23, "Exposes exactly 23 canonical tools (16 core + 7 SOTA engines; 7 legacy duplicate wrappers retired from tools/list)");
+    assert.strictEqual(toolNames.length, 26, "Exposes 26 canonical tools including autoslim and the three graph engines");
 
     const expectedTools = [
         "lean_goal", "lean_search", "lean_blueprint", "lean_metrics", "lean_ffi", "lean_exec", "lean_resync",
         "lean_lookup_symbol", "lean_module_hierarchy", "lean_axiom_closure", "lean_navigate", "lean_diagnostics",
         "lean_server_status", "lean_decl_references", "lean_counterexample_search",
         "lean_multi_attempt", "lean_repair_proof", "lean_minimal_hypotheses",
-        "lean_profile_proof", "lean_skill_dispatch", "lean_theorem_preflight", "lean_autoslim", "lean_tree_shake"
+        "lean_profile_proof", "lean_skill_dispatch", "lean_theorem_preflight", "lean_autoslim", "lean_tree_shake",
+        "lean_cone_query", "lean_proof_clones", "lean_kernel_whnf_hotspots"
     ];
     for (const t of expectedTools) {
         assert(toolNames.includes(t), `Includes canonical tool: ${t}`);

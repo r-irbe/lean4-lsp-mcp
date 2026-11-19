@@ -99,6 +99,13 @@ import {
   type AutoSlimBatchReport,
 } from "./autoslim.ts";
 export * from "./autoslim.ts";
+import {
+  LeanConeQueryEngine,
+  LeanProofCloneEngine,
+  LeanKernelWHNFHotspotEngine,
+  verifyKernelAxioms,
+} from "./graph_queries.ts";
+export * from "./graph_queries.ts";
 
 export interface IleanSymbolEntry {
   filePath: string;
@@ -295,7 +302,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       properties: {
         action: {
           type: "string",
-          enum: ["census", "kernel_census", "hierarchy", "subgraph", "bigraph", "axiom_audit", "altproof", "autoslim", "proof_fidelity", "sair_audit", "tree_shake"],
+          enum: ["census", "kernel_census", "hierarchy", "subgraph", "bigraph", "axiom_audit", "altproof", "autoslim", "proof_fidelity", "sair_audit", "tree_shake", "cone_audit", "proof_clones", "whnf_hotspots"],
           description: "Metric action to perform (default: census)",
         },
         target: { type: "string", description: "Target file path, directory path, module name, or goal string" },
@@ -731,6 +738,61 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
     },
     annotations: {
       readOnlyHint: false,
+    },
+  },
+  {
+    name: "lean_cone_query",
+    description: "Declaration-level transitive closure graph query separating runtime computation cone from proof verification cone. Audits for 0 Prop leakage, tracks @[csimp] twin pairs, and verifies strict axiom ceilings.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        runtimeRoot: { type: "string", description: "Root of computational runtime cone (e.g. 'Submission.impl' or 'MyModule.compute')" },
+        proofRoot: { type: "string", description: "Root of formal proof cone (e.g. 'Submission.impl_correct')" },
+        trackCsimp: { type: "boolean", description: "Track paired @[csimp] twin declarations (default: true)" },
+        strictZeroProp: { type: "boolean", description: "Flag any Prop-typed constant or proof lemma in runtime cone (default: true)" },
+        permittedAxioms: { type: "array", items: { type: "string" }, description: "Permitted axioms list (default: [propext, Classical.choice, Quot.sound])" },
+        filePath: { type: "string", description: "Optional path to Lean source file" },
+        format: { type: "string", enum: ["json", "markdown"], description: "Output format (default: json)" },
+      },
+      required: ["runtimeRoot"],
+    },
+    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "lean_proof_clones",
+    description: "Locates highest-duplication proof subtrees and tactic bottlenecks across files for altproof compression and parametric helper lemma synthesis.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        filePath: { type: "string", description: "Path to Lean 4 source file" },
+        minNodes: { type: "integer", description: "Minimum AST tactic nodes in a clone subtree (default: 5)" },
+        minOccurrences: { type: "integer", description: "Minimum frequency to report as clone (default: 2)" },
+        synthesizeHelper: { type: "boolean", description: "Synthesize anti-unified parametric lemma signature (default: true)" },
+        format: { type: "string", enum: ["json", "markdown"], description: "Output format (default: json)" },
+      },
+      required: ["filePath"],
+    },
+    annotations: {
+      readOnlyHint: true,
+    },
+  },
+  {
+    name: "lean_kernel_whnf_hotspots",
+    description: "Identifies kernel WHNF reduction hotspots: branching recursor steps (>30 AST nodes), scalar (< 2^63) vs heap GMP (>= 2^63) limb boundaries, unshared subtrees, and lazy accumulator add-chains.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        filePath: { type: "string", description: "Path to Lean source file" },
+        symbol: { type: "string", description: "Optional specific declaration to audit" },
+        mpzThreshold: { type: "integer", description: "2^63 - 1 unboxed scalar ceiling" },
+        format: { type: "string", enum: ["json", "markdown"], description: "Output format (default: json)" },
+      },
+      required: ["filePath"],
+    },
+    annotations: {
+      readOnlyHint: true,
     },
   },
 ];
@@ -7728,6 +7790,31 @@ export class McpServer {
             ...args,
             target,
           });
+        } else if (action === "cone_audit" || action === "cone") {
+          return await this.executeTool("lean_cone_query", {
+            runtimeRoot: args.runtimeRoot || target,
+            proofRoot: args.proofRoot,
+            trackCsimp: args.trackCsimp,
+            strictZeroProp: args.strictZeroProp,
+            permittedAxioms: args.permittedAxioms,
+            filePath: args.filePath || (typeof target === "string" && target !== "." ? target : undefined),
+            format: args.format,
+          });
+        } else if (action === "proof_clones" || action === "clones") {
+          return await this.executeTool("lean_proof_clones", {
+            filePath: args.filePath || (typeof target === "string" && target !== "." ? target : undefined),
+            minNodes: args.minNodes,
+            minOccurrences: args.minOccurrences,
+            synthesizeHelper: args.synthesizeHelper,
+            format: args.format,
+          });
+        } else if (action === "whnf_hotspots" || action === "hotspots") {
+          return await this.executeTool("lean_kernel_whnf_hotspots", {
+            filePath: args.filePath || (typeof target === "string" && target !== "." ? target : undefined),
+            symbol: args.symbol,
+            mpzThreshold: args.mpzThreshold,
+            format: args.format,
+          });
         } else if (action === "proof_fidelity" || action === "fidelity_audit" || action === "sair_audit") {
           return await this.executeTool("lean_proof_fidelity_audit", {
             targetPath: target,
@@ -7905,6 +7992,66 @@ export class McpServer {
         return args.format === "markdown"
           ? formatTreeShakeMarkdown(report)
           : JSON.stringify(report, null, 2);
+      }
+
+      case "lean_cone_query": {
+        const runtimeRoot = String(args.runtimeRoot || args.symbol || args.target || "").trim();
+        if (!runtimeRoot) {
+          throw new Error("Missing required argument: 'runtimeRoot'");
+        }
+        const rawFile = args.filePath || args.path || args.file;
+        const resolvedFile = rawFile
+          ? (path.isAbsolute(String(rawFile)) ? String(rawFile) : path.resolve(this.projectRoot, String(rawFile)))
+          : undefined;
+        const res = LeanConeQueryEngine.execute({
+          runtimeRoot,
+          proofRoot: args.proofRoot ? String(args.proofRoot) : undefined,
+          trackCsimp: args.trackCsimp,
+          strictZeroProp: args.strictZeroProp,
+          permittedAxioms: Array.isArray(args.permittedAxioms) ? args.permittedAxioms.map(String) : undefined,
+          filePath: resolvedFile,
+          source: typeof args.source === "string" ? args.source : undefined,
+          format: args.format === "markdown" ? "markdown" : "json",
+          index: this.ileanIndex,
+        });
+        return args.format === "markdown" ? res.summary : JSON.stringify(res, null, 2);
+      }
+
+      case "lean_proof_clones": {
+        const rawFile = args.filePath || args.path || args.file || args.target;
+        const resolvedFile = rawFile
+          ? (path.isAbsolute(String(rawFile)) ? String(rawFile) : path.resolve(this.projectRoot, String(rawFile)))
+          : undefined;
+        if (!resolvedFile && typeof args.source !== "string") {
+          throw new Error("Missing required argument: 'filePath'");
+        }
+        const res = LeanProofCloneEngine.execute({
+          filePath: resolvedFile,
+          source: typeof args.source === "string" ? args.source : undefined,
+          minNodes: args.minNodes !== undefined ? Number(args.minNodes) : undefined,
+          minOccurrences: args.minOccurrences !== undefined ? Number(args.minOccurrences) : undefined,
+          synthesizeHelper: args.synthesizeHelper,
+          format: args.format === "markdown" ? "markdown" : "json",
+        });
+        return args.format === "markdown" ? res.summary : JSON.stringify(res, null, 2);
+      }
+
+      case "lean_kernel_whnf_hotspots": {
+        const rawFile = args.filePath || args.path || args.file || args.target;
+        const resolvedFile = rawFile
+          ? (path.isAbsolute(String(rawFile)) ? String(rawFile) : path.resolve(this.projectRoot, String(rawFile)))
+          : undefined;
+        if (!resolvedFile && typeof args.source !== "string") {
+          throw new Error("Missing required argument: 'filePath'");
+        }
+        const res = LeanKernelWHNFHotspotEngine.execute({
+          filePath: resolvedFile,
+          source: typeof args.source === "string" ? args.source : undefined,
+          symbol: args.symbol ? String(args.symbol) : undefined,
+          mpzThreshold: args.mpzThreshold !== undefined ? Number(args.mpzThreshold) : undefined,
+          format: args.format === "markdown" ? "markdown" : "json",
+        });
+        return args.format === "markdown" ? res.summary : JSON.stringify(res, null, 2);
       }
 
       default:
@@ -8152,7 +8299,7 @@ export class McpServer {
    * modules resolve; the failure text carries a [hint] when the error is an
    * environment error (`unknown module prefix`, `unknown package`).
    */
-  private runLeanStdin(
+  private async runLeanStdin(
     code: string,
     context: LeanContext | undefined = this.leanContext,
     timeoutMsArg?: unknown
@@ -8200,92 +8347,93 @@ export class McpServer {
       }
     }
 
-    return new Promise<string>((resolve) => {
+    return await new Promise<string>((resolve) => {
       let stdout = "";
       let stderr = "";
-      let settled = false;
+      let outputBytes = 0;
       let timedOut = false;
+      let outputLimitExceeded = false;
+      let settled = false;
+      let timer: NodeJS.Timeout | undefined;
+      let killTimer: NodeJS.Timeout | undefined;
+      const maxBuffer = 1024 * 1024;
+      let child: ChildProcess;
 
-      const child = spawn(invocation.command, invocation.args, {
-        cwd: invocation.cwd,
-        env: leanInvocationEnv(invocation),
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-
-      const timer = setTimeout(() => {
-        timedOut = true;
+      const finish = (result: string) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        if (killTimer) clearTimeout(killTimer);
+        resolve(result);
+      };
+      const signalProcessGroup = (signal: NodeJS.Signals) => {
         try {
-          child.kill("SIGTERM");
-          setTimeout(() => {
-            try {
-              child.kill("SIGKILL");
-            } catch {
-              // ignore
-            }
-          }, 250).unref();
+          if (child.pid !== undefined) process.kill(-child.pid, signal);
+          else child.kill(signal);
         } catch {
-          // ignore
+          try { child.kill(signal); } catch { /* already exited */ }
         }
-      }, timeoutMs);
-
-      const capAppend = (prev: string, chunk: Buffer | string): string => {
-        const next = prev + chunk.toString("utf-8");
-        return next.length > 1024 * 1024 ? next.slice(0, 1024 * 1024) : next;
+      };
+      const onOutput = (target: "stdout" | "stderr", chunk: Buffer) => {
+        outputBytes += chunk.length;
+        if (outputBytes > maxBuffer) {
+          outputLimitExceeded = true;
+          signalProcessGroup("SIGKILL");
+          return;
+        }
+        if (target === "stdout") stdout += chunk.toString("utf-8");
+        else stderr += chunk.toString("utf-8");
       };
 
-      child.stdout?.on("data", (d) => {
-        stdout = capAppend(stdout, d);
-      });
-      child.stderr?.on("data", (d) => {
-        stderr = capAppend(stderr, d);
-      });
-
-      child.on("error", (err: any) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        const combined = `${stdout}${stderr}` || String(err?.message || err);
-        resolve(
-          `Error: ${err?.message || String(err)}\nOutput: ${stdout}\nError Output: ${stderr}${explainLeanFailure(combined, invocation)}`
-        );
-      });
-
-      child.on("close", (exitCode, signal) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (timedOut || signal === "SIGTERM" || signal === "SIGKILL") {
-          const combined = `${stdout}${stderr}` || "Lean stdin execution timed out";
-          resolve(
-            `Error: timeout_expired after ${timeoutMs}ms (Lean stdin execution timed out)\n` +
-              `Output: ${stdout}\n` +
-              `Error Output: ${stderr}\n` +
-              `[hint] Increase timeoutMs (up to 120000ms) or LEAN_RUN_CODE_TIMEOUT_MS, or bound elaboration with ` +
-              `\`set_option maxHeartbeats 400000\` / \`set_option maxRecDepth 4096\`.` +
-              `${explainLeanFailure(combined, invocation)}`
-          );
-          return;
-        }
-        if (exitCode !== 0) {
-          const msg = `Command failed: ${invocation.command} ${invocation.args.join(" ")}`;
-          const combined = `${stdout}${stderr}` || msg;
-          resolve(
-            `Error: ${msg}\nOutput: ${stdout}\nError Output: ${stderr}${explainLeanFailure(combined, invocation)}`
-          );
-          return;
-        }
-        resolve(stdout.trim() || "No output");
-      });
-
       try {
-        child.stdin?.write(code, "utf-8");
-        child.stdin?.end();
-      } catch {
-        // ignore broken pipe on immediate exit
+        child = spawn(invocation.command, invocation.args, {
+          cwd: invocation.cwd,
+          env: leanInvocationEnv(invocation),
+          stdio: ["pipe", "pipe", "pipe"],
+          // Lake can spawn Lean; own the process group so the timeout bounds
+          // both the shim and its compiler child.
+          detached: true,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        finish(`Error: ${message}${explainLeanFailure(message, invocation)}`);
+        return;
       }
+
+      timer = setTimeout(() => {
+        timedOut = true;
+        signalProcessGroup("SIGTERM");
+        killTimer = setTimeout(() => signalProcessGroup("SIGKILL"), 500);
+      }, timeoutMs);
+      child.stdout?.on("data", (chunk: Buffer) => onOutput("stdout", chunk));
+      child.stderr?.on("data", (chunk: Buffer) => onOutput("stderr", chunk));
+      child.on("error", (err) => {
+        const message = err.message;
+        finish(`Error: ${message}${explainLeanFailure(message, invocation)}`);
+      });
+      child.on("close", (exitCode, signal) => {
+        const combined = `${stdout}${stderr}`;
+        if (timedOut) {
+          finish(
+            `Error: timeout_expired after ${timeoutMs}ms (${invocation.command} ${invocation.args.join(" ")} timed out)\n` +
+            `Output: ${stdout}\nError Output: ${stderr}\n` +
+            `[hint] Increase timeoutMs (up to 120000ms) or LEAN_RUN_CODE_TIMEOUT_MS, or bound elaboration with ` +
+            `\`set_option maxHeartbeats 400000\` / \`set_option maxRecDepth 4096\`.` +
+            `${explainLeanFailure(combined, invocation)}`
+          );
+        } else if (outputLimitExceeded) {
+          finish(`Error: Lean stdin output exceeded ${maxBuffer} bytes\nOutput: ${stdout}\nError Output: ${stderr}`);
+        } else if (exitCode !== 0) {
+          const status = signal ? `signal ${signal}` : `exit code ${exitCode}`;
+          finish(`Error: Lean stdin failed with ${status}\nOutput: ${stdout}\nError Output: ${stderr}${explainLeanFailure(combined, invocation)}`);
+        } else {
+          finish(stdout.trim() || "No output");
+        }
+      });
+      child.stdin?.on("error", () => { /* close event reports compiler status */ });
+      child.stdin?.end(code, "utf-8");
     });
   }
-
   /** One scratch-file run of a synthesized harness (v1 slice or a v2 candidate). */
   private async runCesHarness(
     harness: string,
@@ -8513,6 +8661,10 @@ export class McpServer {
       error: { code, message },
     };
     this.sendResponse(errRes, useContentLength);
+  }
+
+  public verifyKernelAxioms(symbol: string, rawOutput: string, permittedAxioms?: string[]): string {
+    return verifyKernelAxioms(symbol, rawOutput, permittedAxioms).summary;
   }
 
   public dispose(): void {

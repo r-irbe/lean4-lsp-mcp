@@ -69,3 +69,41 @@ test("lean_axiom_audit JSON and Markdown report source-text-scan scope honestly"
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test("lean_axiom_closure enforces kernel axiom ceiling [propext, Classical.choice, Quot.sound] and rejects Lean.ofReduceBool / sorryAx", async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "axiom-closure-test-"));
+  try {
+    const server = new McpServer(tmpDir);
+
+    // 1. Pass case: standard kernel axioms
+    const passOut = "'MyTheorem' depends on axioms: [propext, Classical.choice, Quot.sound]";
+    const resPass = server.verifyKernelAxioms("MyTheorem", passOut);
+    assert.match(resPass, /\[KERNEL AXIOM GATE PASSED\]/);
+    assert.match(resPass, /propext, Classical.choice, Quot.sound/);
+
+    // 2. Pass case: no axioms
+    const noAxOut = "'MyTheorem' does not depend on any axioms";
+    const resNoAx = server.verifyKernelAxioms("MyTheorem", noAxOut);
+    assert.match(resNoAx, /\[KERNEL AXIOM GATE PASSED\]/);
+
+    // 3. Reject case: Lean.ofReduceBool
+    const ofReduceOut = "'MyTheorem' depends on axioms: [propext, Lean.ofReduceBool]";
+    const resOfReduce = server.verifyKernelAxioms("MyTheorem", ofReduceOut);
+    assert.match(resOfReduce, /\[KERNEL AXIOM GATE REJECTED\]/);
+    assert.match(resOfReduce, /Lean\.ofReduceBool/);
+
+    // 4. Reject case: sorryAx
+    const sorryOut = "'MyTheorem' depends on axioms: [sorryAx]";
+    const resSorry = server.verifyKernelAxioms("MyTheorem", sorryOut);
+    assert.match(resSorry, /\[KERNEL AXIOM GATE REJECTED\]/);
+    assert.match(resSorry, /sorryAx/);
+
+    // 5. Reject case: uncertified axiom
+    const customOut = "'MyTheorem' depends on axioms: [propext, MyCustomAxiom]";
+    const resCustom = server.verifyKernelAxioms("MyTheorem", customOut);
+    assert.match(resCustom, /\[KERNEL AXIOM GATE REJECTED\]/);
+    assert.match(resCustom, /MyCustomAxiom/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

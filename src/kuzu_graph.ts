@@ -516,7 +516,9 @@ export class KuzuKnowledgeGraph {
     const terms = query
       .toLowerCase()
       .split(/\s+/)
-      .filter((t) => t.length > 2);
+      // Short letter/number names such as Z3 and F2 carry technical meaning.
+      // Keep filtering short prose and bare numbers as before.
+      .filter((t) => t.length > 2 || (t.length === 2 && /\p{L}/u.test(t) && /\p{N}/u.test(t)));
     if (terms.length === 0) return [];
 
     const results: KuzuSearchResult[] = [];

@@ -158,6 +158,8 @@ test("sair profile activates rule-lean-sair-submission-gate via runScan and CLI 
       ["unsafe_def.leanfix", "unsafe def rawCast (n : Nat) : Nat := n\n"],
       ["implemented_by.leanfix", "def fast (n : Nat) : Nat := n\n@[implemented_by fast]\ndef slow (n : Nat) : Nat := n\n"],
       ["extern_attr.leanfix", '@[extern "c_fn"]\nopaque extFn : Nat -> Nat\n'],
+      ["of_reduce_bool.leanfix", 'theorem bad_reduce : 1 = 1 := Lean.ofReduceBool true rfl\n'],
+      ["sorry_ax.leanfix", 'theorem bad_sorry : 1 = 2 := sorryAx (1 = 2) false\n'],
     ];
 
     // Auto-resolved bundled rulesDir when omitted in runScan:
