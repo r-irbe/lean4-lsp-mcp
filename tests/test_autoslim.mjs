@@ -323,6 +323,29 @@ test("buildCandidateTacticList respects allowCustomAltProof and preserves core/M
   assert.deepEqual(withoutAlt, ["by grind", "by simp"]);
 });
 
+test("detectAltProofAvailability recognizes the core-only AltProof module", () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "autoslim-altproof-core-"));
+  try {
+    assert.deepEqual(detectAltProofAvailability("import AltProof.Core\n", root), {
+      importedInFile: true, availableModule: "AltProof.Core",
+    });
+    fs.writeFileSync(path.join(root, "Facade.lean"), "import AltProof.Core\n");
+    assert.deepEqual(detectAltProofAvailability("import Facade\n", root), {
+      importedInFile: true, availableModule: "Facade",
+    });
+    assert.deepEqual(detectAltProofAvailability("import Unrelated.Core\n", root), {
+      importedInFile: false, availableModule: null,
+    });
+    fs.mkdirSync(path.join(root, "AltProof"));
+    fs.writeFileSync(path.join(root, "AltProof", "Core.lean"), "import Lean\n");
+    assert.deepEqual(detectAltProofAvailability("import Lean\n", root), {
+      importedInFile: false, availableModule: "AltProof.Core",
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("runKernelVerifiedAutoSlim cascades past rejected tactics, accumulates multiple edits, and honors dryRun vs apply", async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "autoslim-cascade-"));
   try {

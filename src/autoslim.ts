@@ -339,7 +339,7 @@ export function requiresAltProofTactic(tacticSnippet: string): boolean {
 
 /**
  * Inspect whether a Lean file already has `AltProof` tactics in scope, or whether the
- * enclosing Lake project provides `AltProof.lean` / `<Project>/Tactics.lean` for optional import.
+ * enclosing Lake project provides an AltProof module for optional import.
  *
  * Dynamically discovers `<Pkg>/Tactics.lean` or `<Pkg>/AltProof.lean` inside `leanRoot`
  * (and `lakefile.toml` / `lakefile.lean` local `path` dependencies) without hardcoding
@@ -352,6 +352,8 @@ export function detectAltProofAvailability(
   importedInFile: boolean;
   availableModule: string | null;
 } {
+  const isAltProofModule = (name: string) =>
+    name === "AltProof" || name === "AltProof.Core" || name.endsWith(".AltProof");
   const importRe = /^\s*import\s+([A-Za-z0-9_.']+)/gm;
   const directImports: string[] = [];
   let m: RegExpExecArray | null;
@@ -394,7 +396,7 @@ export function detectAltProofAvailability(
   };
 
   for (const imp of directImports) {
-    if (imp === "AltProof" || imp.endsWith(".AltProof") || imp === "ProofSkills.AltProof") {
+    if (isAltProofModule(imp)) {
       return { importedInFile: true, availableModule: imp };
     }
     const modRel = imp.split(".").join(path.sep) + ".lean";
@@ -410,7 +412,7 @@ export function detectAltProofAvailability(
           let sm: RegExpExecArray | null;
           while ((sm = subImportRe.exec(subSrc)) !== null) {
             const subImp = sm[1];
-            if (subImp === "AltProof" || subImp.endsWith(".AltProof")) {
+            if (isAltProofModule(subImp)) {
               return { importedInFile: true, availableModule: imp };
             }
             if (subImp.endsWith(".Tactics")) {
@@ -432,6 +434,7 @@ export function detectAltProofAvailability(
     const directCandidates: Array<[string, string]> = [
       ["ProofSkills.AltProof", path.join(sr, "ProofSkills", "AltProof.lean")],
       ["AltProof", path.join(sr, "AltProof.lean")],
+      ["AltProof.Core", path.join(sr, "AltProof", "Core.lean")],
     ];
     for (const [modName, p] of directCandidates) {
       if (fs.existsSync(p)) {
