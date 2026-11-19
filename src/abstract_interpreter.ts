@@ -2086,6 +2086,9 @@ export function analyzeAltProofGoalAndBlock(
   const proof = proofText || "";
   const combined = `${goal}\n${proof}`;
   const targetNoArrows = target.replace(/->/g, " ").replace(/=>/g, " ");
+  const contextEnd = goal.search(/(?:\|-|\u22a2)/);
+  const localContext = contextEnd < 0 ? "" : goal.slice(0, contextEnd);
+  const hasLocalEquation = /^[^:\n]+:[^\n]*?(?<![<>=!])=(?!=|>)/m.test(localContext);
 
   const hasFinsetSum = /(?:\bFinset\.sum\b|\u2211|\bsum_sub_distrib\b|\bsum_add_distrib\b|\bmul_sum\b|\bsum_mul\b)/.test(combined);
   const hasFinsetSumInTargetOrProof = /(?:\bFinset\.sum\b|\u2211|\bsum_sub_distrib\b|\bsum_add_distrib\b|\bmul_sum\b|\bsum_mul\b)/.test(`${target}\n${proof}`);
@@ -2237,7 +2240,7 @@ export function analyzeAltProofGoalAndBlock(
       0.97
     );
   }
-  if (/\b(?:sair_decide|Lean\.ofReduceBool)\b/.test(combined)) {
+  if (/\b(?:sair_decide|Lean\.ofReduceBool)\b/.test(combined) || /\bdecide[ \t]+\+kernel\b/.test(proof)) {
     pushRec(
       "sair_decide",
       "sair_decide",
@@ -2401,7 +2404,7 @@ export function analyzeAltProofGoalAndBlock(
     );
   }
   if (
-    (hasPureEquality &&
+    (hasPureEquality && hasLocalEquation &&
       !hasFinsetSumInTargetOrProof &&
       !hasNatArith &&
       !hasRealLin &&

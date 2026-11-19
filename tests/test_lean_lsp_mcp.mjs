@@ -507,6 +507,20 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
         const parsedMetrics = JSON.parse(jsonViaMetrics);
         assert.strictEqual(parsedMetrics.bestTactic, "channel_fields", "lean_metrics action=altproof recommends channel_fields");
 
+        // Check the executable AltProof routes against the same proof shapes as the CLI.
+        const parityCases = [
+            ["\u22a2 (17 : Nat) % 3 = 2", "by decide +kernel", ["sair_decide"]],
+            ["a b c : Alpha\nhab : a = b\nhbc : b = c\n\u22a2 f a = f c", "by rw [hab, hbc]", ["eqsat_rw"]],
+            ["p q r : Prop\nhp : p\nhpq : p \u2192 q\nhqr : q \u2192 r\n\u22a2 r", "by apply hqr; apply hpq; exact hp", ["backchain", "solve_by_elim"]],
+            ["x : Nat\n\u22a2 x = x", "by rfl", []],
+        ];
+        for (const [goal, proof, expected] of parityCases) {
+            const report = JSON.parse(await server.executeTool("lean_goal", {
+                target: "altproof", goal, proof, format: "json",
+            }));
+            assert.deepEqual(report.recommendations.map(({ tactic }) => tactic), expected, proof);
+        }
+
         // 10c. Multiline LSP goal turnstile isolation (hypotheses before |- do not bleed into target conclusion)
         const multilineGoal = [
             "s : Finset Nat",
