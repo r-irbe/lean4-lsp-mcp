@@ -6,17 +6,43 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = path.resolve(__dirname, "..");
-const sdkPath = path.resolve(pkgRoot, "node_modules/@modelcontextprotocol/sdk");
 const pkgJsonPath = path.resolve(pkgRoot, "package.json");
 const lockPath = path.resolve(pkgRoot, "package-lock.json");
+const distEntry = path.resolve(pkgRoot, "dist/index.js");
+const srcEntry = path.resolve(pkgRoot, "src/index.ts");
+const installedPackage = pkgRoot.split(path.sep).includes("node_modules");
+const hasDistEntry = fs.existsSync(distEntry);
+const require = createRequire(import.meta.url);
 
-// Auto-bootstrap runtime npm dependencies on first launch if node_modules is missing.
+function hasRuntimeDependencies() {
+  try {
+    require.resolve("@modelcontextprotocol/sdk/package.json");
+    require.resolve("js-yaml");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+if (installedPackage && !hasDistEntry) {
+  process.stderr.write("[lean-lsp-mcp] ERROR: Installed package is missing dist/index.js. Reinstall a built package.\n");
+  process.exit(1);
+}
+
+const runtimeDependenciesAvailable = hasRuntimeDependencies();
+if (installedPackage && !runtimeDependenciesAvailable) {
+  process.stderr.write("[lean-lsp-mcp] ERROR: Missing runtime dependencies. Reinstall lean4-lsp-mcp.\n");
+  process.exit(1);
+}
+
+// An npm install can hoist dependencies above the package's own node_modules.
 // Direct all npm output to stderr so MCP stdio JSON-RPC on stdout is never polluted.
-if (!fs.existsSync(sdkPath) && fs.existsSync(pkgJsonPath)) {
+if (!runtimeDependenciesAvailable && fs.existsSync(pkgJsonPath)) {
   const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
   const subCmd = fs.existsSync(lockPath) ? "ci" : "install";
   process.stderr.write(
@@ -33,16 +59,14 @@ if (!fs.existsSync(sdkPath) && fs.existsSync(pkgJsonPath)) {
   if (res.stdout && res.stdout.length > 0) {
     process.stderr.write(res.stdout);
   }
-  if (res.status !== 0 && !fs.existsSync(sdkPath)) {
+  if (!hasRuntimeDependencies()) {
+    const exitCode = res.status || 1;
     process.stderr.write(
-      `[lean-lsp-mcp] ERROR: Failed to bootstrap node_modules (exit ${res.status ?? 1}). Run 'npm install' in ${pkgRoot}.\n`
+      `[lean-lsp-mcp] ERROR: Failed to bootstrap node_modules (exit ${exitCode}). Run 'npm install' in ${pkgRoot}.\n`
     );
-    process.exit(res.status ?? 1);
+    process.exit(exitCode);
   }
 }
-
-const distEntry = path.resolve(pkgRoot, "dist/index.js");
-const srcEntry = path.resolve(pkgRoot, "src/index.ts");
 
 // Forward --lake-roots CLI flag into LEAN_LAKE_ROOTS for both dist and strip-types entrypoints.
 const cliArgs = process.argv.slice(2);
@@ -60,10 +84,11 @@ const nodeMajor = Number.parseInt(process.versions.node.split(".")[0] || "0", 10
 const nodeMinor = Number.parseInt(process.versions.node.split(".")[1] || "0", 10);
 const supportsStripTypes = nodeMajor > 22 || (nodeMajor === 22 && nodeMinor >= 6);
 const srcNewerThanDist =
+  !installedPackage &&
   fs.existsSync(srcEntry) &&
-  (!fs.existsSync(distEntry) || fs.statSync(srcEntry).mtimeMs > fs.statSync(distEntry).mtimeMs);
+  (!hasDistEntry || fs.statSync(srcEntry).mtimeMs > fs.statSync(distEntry).mtimeMs);
 
-if (fs.existsSync(distEntry) && !(supportsStripTypes && srcNewerThanDist)) {
+if (hasDistEntry && !(supportsStripTypes && srcNewerThanDist)) {
   const mod = await import(pathToFileURL(distEntry).href);
   if (typeof mod.main === "function") {
     mod.main();

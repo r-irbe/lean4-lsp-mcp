@@ -634,6 +634,62 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     }
 }
 
+// 12. The launcher prefers compiled code under node_modules and editable source elsewhere.
+{
+    const { spawnSync } = await import("node:child_process");
+    const bin = path.resolve(import.meta.dirname, "../bin/lean-lsp-mcp.js");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-launch-layout-"));
+    try {
+        for (const [layout, installed, hoisted, withDist, withDependencies, expected] of [
+            ["hoisted", true, true, true, true, "dist"],
+            ["nested", true, false, true, true, "dist"],
+            ["editable", false, false, true, true, "source"],
+            ["missing-dist", true, false, false, true, /missing dist\/index\.js/],
+            ["installed-missing-deps", true, false, true, false, /Missing runtime dependencies\. Reinstall lean4-lsp-mcp\./],
+            ["missing-deps", false, false, true, false, /Failed to bootstrap node_modules/],
+        ]) {
+            const consumer = path.join(tmp, layout);
+            const pkg = installed ? path.join(consumer, "node_modules/lean4-lsp-mcp") : consumer;
+            for (const dir of ["bin", "src", "dist"]) fs.mkdirSync(path.join(pkg, dir), { recursive: true });
+            const launcher = path.join(pkg, "bin/lean-lsp-mcp.js");
+            fs.copyFileSync(bin, launcher);
+            fs.writeFileSync(path.join(pkg, "package.json"), '{"type":"module"}');
+            fs.writeFileSync(path.join(pkg, "src/index.ts"), 'const entry: string = "source"; console.log(entry);');
+            if (withDist) {
+                const dist = path.join(pkg, "dist/index.js");
+                fs.writeFileSync(dist, 'export function main() { console.log("dist"); }');
+                fs.utimesSync(dist, new Date(0), new Date(0));
+            }
+            if (withDependencies) {
+                const deps = path.join(hoisted ? consumer : pkg, "node_modules");
+                for (const name of ["@modelcontextprotocol/sdk", "js-yaml"]) {
+                    const dep = path.join(deps, name);
+                    fs.mkdirSync(dep, { recursive: true });
+                    fs.writeFileSync(path.join(dep, "package.json"), '{"main":"index.js"}');
+                    fs.writeFileSync(path.join(dep, "index.js"), "");
+                }
+            }
+            const result = spawnSync(process.execPath, [launcher], {
+                cwd: consumer, env: { ...process.env, PATH: "" }, encoding: "utf8", timeout: 5000,
+            });
+            assert.ifError(result.error);
+            if (expected instanceof RegExp) {
+                assert.equal(result.status, 1, `${layout}: ${result.stderr}`);
+                assert.match(result.stderr, expected, layout);
+                assert.equal(result.stdout, "", layout);
+                if (installed) assert.doesNotMatch(result.stderr, /Bootstrapping/, layout);
+            } else {
+                assert.equal(result.status, 0, `${layout}: ${result.stderr}`);
+                assert.equal(result.stdout.trim(), expected, layout);
+                assert.equal(result.stderr, "", layout);
+            }
+        }
+        console.log("  - bin/lean-lsp-mcp.js installed and editable layouts: PASS");
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+}
+
 console.log("=== All lean4-lsp-mcp Tests Passed ===");
 
 
