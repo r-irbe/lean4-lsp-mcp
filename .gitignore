@@ -8,3 +8,7 @@ loom_proving_state.db*
 *.db-shm
 *.db-wal
 
+# Graph collections are supplied explicitly by the caller.
+*.kz
+*.kuzu
+*.kuzu.xz

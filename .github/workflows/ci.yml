@@ -24,5 +24,9 @@ jobs:
         run: node tools/check-wasm-size.mjs
       - name: Build (tsc)
         run: npm run build
+      - name: Keep graph archives out of npm
+        run: |
+          npm pack --dry-run --ignore-scripts --json > "$RUNNER_TEMP/npm-pack.json"
+          node -e 'const [{files}] = require(process.argv[1]); if (files.some(({path}) => /\.(kz|kuzu)(\.xz)?$/.test(path))) throw new Error("Graph archive in npm package")' "$RUNNER_TEMP/npm-pack.json"
       - name: Test suite
         run: npm test
