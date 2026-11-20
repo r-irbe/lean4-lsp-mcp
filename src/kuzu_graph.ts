@@ -258,7 +258,7 @@ export class KuzuKnowledgeGraph {
       (explicitDbPath.endsWith(".kz") ? explicitDbPath : "");
 
     if (explicitKz) {
-      this.kzPath = fs.existsSync(explicitKz) ? path.resolve(explicitKz) : "";
+      this.kzPath = path.resolve(explicitKz);
     } else {
       let configArchive = "";
       if (this.federationConfig && this.configPath) {
@@ -266,6 +266,7 @@ export class KuzuKnowledgeGraph {
         for (const db of this.federationConfig.databases) {
           if (db.enabled && db.archivePath) {
             const resolved = path.resolve(root, db.archivePath);
+            configArchive ||= resolved;
             if (fs.existsSync(resolved)) {
               configArchive = resolved;
               break;
@@ -276,6 +277,11 @@ export class KuzuKnowledgeGraph {
 
       this.kzPath = configArchive;
     }
+  }
+
+  public archiveStatus(): "ready" | "unavailable" | "unconfigured" {
+    if (this.load()) return "ready";
+    return this.kzPath ? "unavailable" : "unconfigured";
   }
 
   /**

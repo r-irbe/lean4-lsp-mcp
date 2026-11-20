@@ -127,40 +127,28 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
     const unbacked = toolNames.filter(n => !caseNames.has(n));
     assert.deepStrictEqual(unbacked, [], 'every advertised tool must have an executeTool case');
 
-    // Consolidated lean_search: graph source (Kuzu)
-    const callKuzu = await server.handleMessage({
-        jsonrpc: "2.0",
-        id: 3,
-        method: "tools/call",
-        params: {
-            name: "lean_search",
-            arguments: { query: "inductive proof", source: "graph", limit: 5 },
-        },
-    });
-    assert(callKuzu && callKuzu.result && !callKuzu.result.isError, "Kuzu graph search succeeds");
-    assert(callKuzu.result.content[0].text.includes("Section:"), "Kuzu graph returns indexed section results");
-
-    // Consolidated lean_blueprint: graph_neighborhood (Kuzu)
-    const callKuzuNeigh = await server.handleMessage({
-        jsonrpc: "2.0",
-        id: 4,
-        method: "tools/call",
-        params: {
-            name: "lean_blueprint",
-            arguments: { action: "graph_neighborhood", sectionId: "COQART s13.1 p1" },
-        },
-    });
-    assert(callKuzuNeigh && callKuzuNeigh.result && !callKuzuNeigh.result.isError, "Kuzu graph neighborhood succeeds");
-    assert(callKuzuNeigh.result.content[0].text.includes("Neighborhood:"), "Kuzu neighborhood returns formatted section");
-
-    // Federated Kuzu configuration and concept indexing assertions
-    const fedConfig = server.kuzuGraph.getFederatedConfig();
-    if (fedConfig) {
-        assert(Array.isArray(fedConfig.databases), "Federation config exposes databases array");
-        assert(fedConfig.databases.some(d => d.scope === "public_prover"), "Exposes public_prover scope");
+    // Protocol behavior when an explicit graph archive cannot be loaded.
+    // Browsing a configured graph is covered by the synthetic ZIP in test_mcp_upgrades.
+    const previousGraph = server.kuzuGraph;
+    const { KuzuKnowledgeGraph } = await import("../src/kuzu_graph.ts");
+    const missingGraphDir = fs.mkdtempSync(path.join(os.tmpdir(), "missing-graph-"));
+    try {
+        server.kuzuGraph = new KuzuKnowledgeGraph(path.join(missingGraphDir, "missing.kz"));
+        for (const [name, args] of [
+            ["lean_search", { query: "induction", source: "graph" }],
+            ["lean_blueprint", { action: "graph_neighborhood", sectionId: "example" }],
+        ]) {
+            const response = await server.handleMessage({
+                jsonrpc: "2.0", id: 3, method: "tools/call",
+                params: { name, arguments: args },
+            });
+            assert(response && response.result && !response.result.isError);
+            assert.match(response.result.content[0].text, /configured Kuzu archive could not be loaded/);
+        }
+    } finally {
+        server.kuzuGraph = previousGraph;
+        fs.rmSync(missingGraphDir, { recursive: true, force: true });
     }
-    const concepts = server.kuzuGraph.searchConcepts("induction", 3);
-    assert(Array.isArray(concepts), "searchConcepts returns array");
 
     // Consolidated lean_search: ontology source
     const callOnto = await server.handleMessage({
