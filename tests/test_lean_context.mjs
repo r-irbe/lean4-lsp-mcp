@@ -6,6 +6,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import cp from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { syncBuiltinESMExports } from "node:module";
 import { McpServer, TOOL_DEFINITIONS } from "../src/index.ts";
 import { planLeanInvocation } from "../src/project_root.ts";
@@ -52,6 +54,44 @@ mock.method(cp, "execFileSync", (command, args, options) => {
     throw err;
   }
   return `checked with ${ctx.targetVersion}`;
+});
+mock.method(cp, "spawn", (command, args, options) => {
+  const chunks = [];
+  const stdin = new PassThrough();
+  const stdout = new EventEmitter();
+  const stderr = new EventEmitter();
+  const child = new EventEmitter();
+  child.stdin = stdin;
+  child.stdout = stdout;
+  child.stderr = stderr;
+  child.pid = 12345;
+  child.kill = () => true;
+  stdin.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+  stdin.on("end", () => {
+    const input = Buffer.concat(chunks).toString("utf8");
+    calls.push({ command, args, options: { ...options, input } });
+    const ctx = command === a.compilerPath ? a : command === b.compilerPath ? b : null;
+    assert.ok(ctx, "only explicitly selected compiler is run");
+    assert.equal(options.cwd, root);
+    assert.equal(options.env.LEAN_PATH, modules, "global roots are replaced, not appended");
+    assert.equal(options.env.LEAN_SYSROOT, undefined);
+    assert.deepEqual(args, ["--stdin"]);
+    setImmediate(() => {
+      if (input.includes("BAD_SOURCE")) {
+        stdout.emit("data", Buffer.from("Main.lean:2:0: error: type mismatch"));
+        child.emit("close", 1, null);
+        return;
+      }
+      if (input.includes("MISSING_MODULE")) {
+        stdout.emit("data", Buffer.from("Main.lean:1:0: error: unknown module prefix 'Missing'"));
+        child.emit("close", 1, null);
+        return;
+      }
+      stdout.emit("data", Buffer.from(`checked with ${ctx.targetVersion}`));
+      child.emit("close", 0, null);
+    });
+  });
+  return child;
 });
 // Pre-fix execution is doubled: it should expose the wrong default, not run Lean.
 mock.method(cp, "execSync", () => "global Lean 4.33.1: unknown module prefix 'Helper'");
