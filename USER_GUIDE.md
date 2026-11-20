@@ -104,11 +104,33 @@ When `.lake/build/lib/**/*.ilean` files exist, navigate the project without spaw
 - `lean_module_hierarchy`: `{"moduleName": "MyProject.Basic", "direction": "both"}`
 - `lean_dependency_subgraph`: `{"moduleName": "MyProject.Basic", "format": "mermaid"}`
 
-### 3.5 Multi-Source Search & Cross-ITP Concordance
+### 3.5 Search and explore the knowledge graph
 
-- `lean_search`: Query local declarations (`source: "code"`), Loogle (`"loogle"`), ITP ontology (`"ontology"`), Lean Reservoir (`"reservoir"`), arXiv (`"arxiv"`), textbook indexes (`"book"`), or Kuzu graph (`"graph"`).
-- `lean_book_index_lookup`: Search 65+ theorem-proving textbook indexes (`{"term": "galois connection"}`).
-- `lean_cross_itp_concordance`: Translate proof idioms across Coq, Isabelle/HOL, HOL Light, and Lean 4 (`{"concept": "induction", "source_prover": "coq", "target_prover": "lean4"}`).
+| What you want | MCP tool | Arguments |
+| --- | --- | --- |
+| Find a graph record by keyword | `lean_search` | `{"source":"graph","query":"induction","limit":5}` |
+| See context around a section hit | `lean_blueprint` | `{"action":"graph_neighborhood","sectionId":"<Section ID from a search hit>"}` |
+| Look up a cross-prover tactic mapping | `lean_search` | `{"source":"concordance","query":"induction","source_prover":"coq","target_prover":"lean4"}` |
+| Look up a term in the shipped book indexes | `lean_search` | `{"source":"book","query":"galois connection"}` |
+
+Set `PROVER_KNOWLEDGE_KZ` to the proof-skills release archive in the MCP
+server environment, then restart the server. That archive has concepts and
+cross-prover mappings. A graph search will return concept hits. The
+concordance route uses the shipped concordance tables and works without an
+archive. An explicitly configured private archive can also supply section
+and zettel hits. Configure it only for MCP clients allowed to see those
+records and paths.
+
+Graph search ranks keyword matches within each record type and returns text.
+`limit` applies separately to sections, concepts and zettels, with a maximum
+of 50 per type. Use `"detail":"summary"` for one line per hit with its ID.
+Supply a section ID to get that section and up to two sections on each side
+in the same book, in archive order. A concept or zettel ID cannot be used as
+a section ID. The release archive has no sections to browse.
+
+For Lean declaration dependencies, use `lean_module_hierarchy` or
+`lean_cone_query`. The Kuzu calls above provide record lookup and same-book
+context. They do not traverse arbitrary graph edges or accept Cypher.
 
 ### 3.6 Audits, Blueprints, and C FFI
 

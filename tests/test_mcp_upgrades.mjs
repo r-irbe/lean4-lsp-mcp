@@ -138,6 +138,20 @@ test("KuzuKnowledgeGraph loads deflated and stored .kz entries in-process withou
     assert.match(graphOut, /Section: sec1/);
     assert.match(graphOut, /Concept: c_galois/);
     assert.match(graphOut, /Zettel: zt_101/);
+    const summary = await server.executeTool("lean_search", {
+      query: "galois", source: "graph", detail: "summary", limit: 1,
+    });
+    assert.match(summary, /^Concept: c_galois \| GaloisInsertion$/m);
+    const neighborhood = await server.executeTool("lean_blueprint", {
+      action: "graph_neighborhood", sectionId: "sec1",
+    });
+    assert.match(neighborhood, /Kuzu Knowledge Graph Neighborhood/);
+    assert.match(neighborhood, /CURRENT/);
+    const empty = await server.executeTool("lean_search", {
+      query: "no-such-indexed-term", source: "graph",
+    });
+    assert.match(empty, /No matching sections, concepts or zettels/);
+
   } finally {
     process.env.PATH = origPath;
     fs.rmSync(tmpDir, { recursive: true, force: true });

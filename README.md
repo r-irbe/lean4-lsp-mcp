@@ -128,3 +128,5 @@ its archive, or set `LEAN_KUZU_CONFIG_PATH` to an explicit federation config
 that lists its enabled databases. The server opens graphs only after explicit
 configuration. Point standalone deployments at the small proof-skills release
 archive when local collections must stay outside the search service.
+
+See the [graph examples and result limits](USER_GUIDE.md#35-search-and-explore-the-knowledge-graph).
