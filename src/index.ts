@@ -296,13 +296,13 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "lean_metrics",
-    description: "Module and project metrics: static code census, compiled kernel receipt check or explicit rebuild, module dependency hierarchy DAG, dependency subgraphs, dual Place-Link bigraph projection, axiom source scan, WASM proof_fidelity/SAIR audit, and AltProof elegance/tactic analysis",
+    description: "Module and project metrics: static code census, compiled kernel receipt check or explicit rebuild, module dependency hierarchy DAG, dependency subgraphs, dual Place-Link bigraph projection, axiom source scan, WASM proof_fidelity/kernel audit, and AltProof elegance/tactic analysis",
     inputSchema: {
       type: "object",
       properties: {
         action: {
           type: "string",
-          enum: ["census", "kernel_census", "hierarchy", "subgraph", "bigraph", "axiom_audit", "altproof", "autoslim", "proof_fidelity", "sair_audit", "tree_shake", "cone_audit", "proof_clones", "whnf_hotspots"],
+          enum: ["census", "kernel_census", "hierarchy", "subgraph", "bigraph", "axiom_audit", "altproof", "autoslim", "proof_fidelity", "kernel_audit", "tree_shake", "cone_audit", "proof_clones", "whnf_hotspots"],
           description: "Metric action to perform (default: census)",
         },
         target: { type: "string", description: "Target file path, directory path, module name, or goal string" },
@@ -621,7 +621,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "lean_theorem_preflight",
-    description: "Composite Phase-0 theorem preflight: runs Plausible counterexample search, WASM proof_fidelity/SAIR audit, AltProof route advisor, and Rango/CoqPilot BM25 similar_proofs retrieval in one structured report.",
+    description: "Composite Phase-0 theorem preflight: runs Plausible counterexample search, WASM proof_fidelity/kernel audit, AltProof route advisor, and Rango/CoqPilot BM25 similar_proofs retrieval in one structured report.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1389,6 +1389,13 @@ export class Lean4IleanIndex {
   private dagIndex: BitsetDAGIndex = new BitsetDAGIndex();
   /** decl (bare + module-qualified) -> constant ids "Module.name" it references. */
   private declToRefs: Map<string, Set<string>> = new Map();
+  /** Compiled reference edges partitioned by the producing Lake project. */
+  private coneRefsByProject = new Map<string, Map<string, Set<string>>>();
+
+  public getProjectConeIndex(projectRoot: string): { declToRefs: Map<string, Set<string>> } {
+    if (this.lastScanTime === 0) this.refresh();
+    return { declToRefs: this.coneRefsByProject.get(path.resolve(projectRoot)) ?? new Map() };
+  }
   /** constant id "Module.name" -> declarations that reference it. */
   private refToDecls: Map<string, Set<string>> = new Map();
   private lastScanTime: number = 0;
@@ -1460,6 +1467,7 @@ export class Lean4IleanIndex {
     this.symbolIndex.clear();
     this.moduleImportsMap.clear();
     this.declToRefs.clear();
+    this.coneRefsByProject.clear();
     this.refToDecls.clear();
     this.dagIndex.build(this.moduleImportsMap);
     this.scannedFiles = 0;
@@ -1547,6 +1555,7 @@ export class Lean4IleanIndex {
     this.symbolIndex.clear();
     this.moduleImportsMap.clear();
     this.declToRefs.clear();
+    this.coneRefsByProject.clear();
     this.refToDecls.clear();
     this.scannedFiles = 0;
     this.skipped = { overFileCap: 0, oversized: 0, escaped: 0 };
@@ -1925,6 +1934,19 @@ export class Lean4IleanIndex {
         this.moduleImportsMap.set(moduleName, imps);
       }
 
+      const buildBoundary = path.resolve(filePath).lastIndexOf(
+        path.sep + [".lake", "build"].join(path.sep) + path.sep
+      );
+      let projectRefs: Map<string, Set<string>> | undefined;
+      if (buildBoundary >= 0) {
+        const project = path.resolve(filePath).slice(0, buildBoundary) || path.parse(filePath).root;
+        projectRefs = this.coneRefsByProject.get(project);
+        if (!projectRefs) {
+          projectRefs = new Map();
+          this.coneRefsByProject.set(project, projectRefs);
+        }
+      }
+
       // 4. Process references: the lemma-level edges the decls table cannot give.
       //    Key = JSON-encoded {c:{m,n}}; usages[i][4] names the using declaration.
       if (parsed.references && typeof parsed.references === "object") {
@@ -1965,6 +1987,14 @@ export class Lean4IleanIndex {
                 this.declToRefs.set(key, refs);
               }
               refs.add(refId);
+              if (projectRefs) {
+                let localRefs = projectRefs.get(key);
+                if (!localRefs) {
+                  localRefs = new Set();
+                  projectRefs.set(key, localRefs);
+                }
+                localRefs.add(refId);
+              }
             }
             const refKeys = refId === refName ? [refId] : [refId, refName];
             for (const rk of refKeys) {
@@ -5503,7 +5533,7 @@ export class McpServer {
                   text: contentText,
                 },
               ],
-              isError: false,
+              isError: /^Error:\s*timeout_expired\b/m.test(contentText),
             },
           };
         }
@@ -7075,7 +7105,7 @@ export class McpServer {
         }
         const allDiags: Array<ProofFidelityDiagnostic & { file: string }> = [];
         const allWasmDiags: Array<any> = [];
-        const allSairDiags: Array<any> = [];
+        const allKernelDiags: Array<any> = [];
         let totalTheorems = 0;
         let totalBoolDefs = 0;
         for (const file of filesToScan) {
@@ -7090,8 +7120,8 @@ export class McpServer {
           for (const wd of rep.wasmDiagnostics) {
             allWasmDiags.push({ ...wd, file: relPath });
           }
-          for (const sd of rep.sairDiagnostics) {
-            allSairDiags.push({ ...sd, file: relPath });
+          for (const kd of rep.kernelDiagnostics) {
+            allKernelDiags.push({ ...kd, file: relPath });
           }
         }
         const format = String(args.format || "markdown").toLowerCase();
@@ -7104,7 +7134,7 @@ export class McpServer {
             clean: allDiags.length === 0,
             diagnostics: allDiags,
             wasmDiagnostics: allWasmDiags,
-            sairDiagnostics: allSairDiags,
+            kernelDiagnostics: allKernelDiags,
           }, null, 2);
         }
         const out = [
@@ -7115,7 +7145,7 @@ export class McpServer {
           `- **Scanned Bool Checkers**: ${totalBoolDefs}`,
           `- **Total Findings**: ${allDiags.length}`,
           `- **WASM Soundness/Fidelity Certificates**: ${allWasmDiags.length}`,
-          `- **SAIR 37-Law Diagnostics**: ${allSairDiags.length}`,
+          `- **Kernel 37-Law Diagnostics**: ${allKernelDiags.length}`,
         ];
         if (allDiags.length > 0) {
           out.push("", "## Findings");
@@ -7123,10 +7153,10 @@ export class McpServer {
             out.push(`- **[${d.kind}]** \`${d.theoremName}\` (\`${d.file}:${d.line}\`): ${d.summary} *Hint: ${d.remediationHint}*`);
           }
         }
-        if (allSairDiags.length > 0) {
-          out.push("", "## SAIR 37-Law Diagnostics");
-          for (const sd of allSairDiags) {
-            out.push(`- **[${sd.code}]** \`${sd.theoremName || "(module)"}\` (\`${sd.file}:${sd.line}\`): ${sd.message}`);
+        if (allKernelDiags.length > 0) {
+          out.push("", "## Kernel 37-Law Diagnostics");
+          for (const kd of allKernelDiags) {
+            out.push(`- **[${kd.code}]** \`${kd.theoremName || "(module)"}\` (\`${kd.file}:${kd.line}\`): ${kd.message}`);
           }
         }
         return out.join("\n");
@@ -7832,10 +7862,10 @@ export class McpServer {
             mpzThreshold: args.mpzThreshold,
             format: args.format,
           });
-        } else if (action === "proof_fidelity" || action === "fidelity_audit" || action === "sair_audit") {
+        } else if (action === "proof_fidelity" || action === "fidelity_audit" || action === "kernel_audit") {
           return await this.executeTool("lean_proof_fidelity_audit", {
             targetPath: target,
-            format: args.format || (action === "sair_audit" ? "json" : undefined),
+            format: args.format || (action === "kernel_audit" ? "json" : undefined),
           });
         } else {
           return await this.executeTool("lean_module_census", {
@@ -8026,7 +8056,9 @@ export class McpServer {
           filePath: resolvedFile,
           source: typeof args.source === "string" ? args.source : undefined,
           format: args.format === "markdown" ? "markdown" : "json",
-          index: this.ileanIndex,
+          index: resolvedFile
+            ? this.ileanIndex.getProjectConeIndex(this.lakeManager.findLeanRoot(resolvedFile))
+            : this.ileanIndex,
         });
         return args.format === "markdown" ? res.summary : JSON.stringify(res, null, 2);
       }

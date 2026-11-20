@@ -87,45 +87,45 @@ export type DiagnosticKind =
   | "OverConcreteFixedArity"
   | "UnannotatedCollectionLiteral"
   | "HaveSubgoalNatTruncation"
-  | "SairLaw01LetZetaTax"
-  | "SairLaw01bDagSharing"
-  | "SairLaw01cSiblingWhnfCse"
-  | "SairLaw02ClosedSubtreeHoist"
-  | "SairLaw02bInnerBinderOrder"
-  | "SairLaw03ConstantLeftOp"
-  | "SairLaw03bConstantLeftPow2Mask"
-  | "SairLaw04PointFreeEtaWrapper"
-  | "SairLaw05SharedAbbrevMotive"
+  | "KernelLaw01LetZetaTax"
+  | "KernelLaw01bDagSharing"
+  | "KernelLaw01cSiblingWhnfCse"
+  | "KernelLaw02ClosedSubtreeHoist"
+  | "KernelLaw02bInnerBinderOrder"
+  | "KernelLaw03ConstantLeftOp"
+  | "KernelLaw03bConstantLeftPow2Mask"
+  | "KernelLaw04PointFreeEtaWrapper"
+  | "KernelLaw05SharedAbbrevMotive"
   | "KernelBrecOnTax"
-  | "SairLaw07CsimpDualPath"
-  | "SairLaw08BoolRecOverIte"
-  | "SairLaw09UnboxedProductSpine"
-  | "SairLaw10CpsPairElim"
-  | "SairLaw11InductivePreHoist"
-  | "SairLaw12DirectNatRecSign"
-  | "SairLaw12bUnboxedQuotientSignDiff"
-  | "SairLaw13MultiLimbSquare"
-  | "SairLaw13bSingleLimbSquare"
+  | "KernelLaw07CsimpDualPath"
+  | "KernelLaw08BoolRecOverIte"
+  | "KernelLaw09UnboxedProductSpine"
+  | "KernelLaw10CpsPairElim"
+  | "KernelLaw11InductivePreHoist"
+  | "KernelLaw12DirectNatRecSign"
+  | "KernelLaw12bUnboxedQuotientSignDiff"
+  | "KernelLaw13MultiLimbSquare"
+  | "KernelLaw13bSingleLimbSquare"
   | "KernelPowerOfTwoDivMod"
-  | "SairLaw14bGmpHornerAsymmetry"
-  | "SairLaw14cBitwiseSubpipeline"
-  | "SairLaw15SwarWordPacking"
-  | "SairLaw16FixedTripUnroll"
-  | "SairLaw16bGmpLimbAlignment"
-  | "SairLaw17CbvStateCanonical"
-  | "SairLaw18FrontierZddMask"
-  | "SairLaw18bSingleBitPopcount"
-  | "SairLaw19CombinedLookaheadGuard"
-  | "SairLaw19bZeroMaskPrune"
-  | "SairLaw20AnfZhegalkinRotation"
-  | "SairLaw21HeuristicListPerm"
-  | "SairLaw22ZeroPropRuntimeCone"
-  | "SairLaw22bHotColdSeparation"
-  | "SairLaw22cNamedRecursorBinders"
-  | "SairLaw23ZeroTypeclassHotCone"
-  | "SairLaw24OptimalCpsArity"
-  | "SairLaw25ModuleHeaderHumanization"
-  | "SairLaw25bAbbrevLiteralExtraction"
+  | "KernelLaw14bGmpHornerAsymmetry"
+  | "KernelLaw14cBitwiseSubpipeline"
+  | "KernelLaw15SwarWordPacking"
+  | "KernelLaw16FixedTripUnroll"
+  | "KernelLaw16bGmpLimbAlignment"
+  | "KernelLaw17CbvStateCanonical"
+  | "KernelLaw18FrontierZddMask"
+  | "KernelLaw18bSingleBitPopcount"
+  | "KernelLaw19CombinedLookaheadGuard"
+  | "KernelLaw19bZeroMaskPrune"
+  | "KernelLaw20AnfZhegalkinRotation"
+  | "KernelLaw21HeuristicListPerm"
+  | "KernelLaw22ZeroPropRuntimeCone"
+  | "KernelLaw22bHotColdSeparation"
+  | "KernelLaw22cNamedRecursorBinders"
+  | "KernelLaw23ZeroTypeclassHotCone"
+  | "KernelLaw24OptimalCpsArity"
+  | "KernelLaw25ModuleHeaderHumanization"
+  | "KernelLaw25bAbbrevLiteralExtraction"
   | "AltProofRouteCandidate";
 
 export interface CodeReplacement {
@@ -1637,7 +1637,7 @@ export class LeanAbstractInterpreter {
   /**
    * Evaluates a Lean 4 goal and optional proof script using the hybrid
    * `lean-analyzer` + AltProof route/tactic/legibility/cost pipeline
-   * (`SPEC-ALT-PROOF-DES`, `ALT_PROOF_SAIR_BRIDGE`).
+   * (`SPEC-ALT-PROOF-DES`, `ALT_PROOF_KERNEL_BRIDGE`).
    */
   analyzeAltProof(goalText: string, proofText: string = ""): AltProofAnalysisReport {
     return analyzeAltProofGoalAndBlock(this, goalText, proofText);
@@ -1647,7 +1647,7 @@ export class LeanAbstractInterpreter {
    * Runs `lean_analyzer.wasm` (`diagnoseLeanSourceWasm`) over a Lean 4 source string
    * and returns structured `WasmSourceDiagnostic` records covering all 4 soundness defects,
    * 8+ proof-fidelity defects (including `OVER_CONCRETE_FIXED_ARITY`, `UNANNOTATED_COLLECTION_LITERAL`,
-   * `HAVE_SUBGOAL_NAT_TRUNCATION`), and 37 SAIR optimization laws.
+   * `HAVE_SUBGOAL_NAT_TRUNCATION`), and 37 kernel optimization laws.
    */
   diagnoseSourceText(
     sourceText: string,
@@ -1775,7 +1775,7 @@ export const ALTPROOF_ROUTE_TABLE: AltProofRoute[] = [
     matchShape: "exponential or unhoisted recursion with an equivalent closed-form or DP reduction",
     rewriteHint: "substitute algorithm class (e.g. in-place DP or structural sieve) and prove equivalence to spec",
     costHint: "highest kernel yield: 20-30x reduction in kernel steps / rfl time",
-    provenance: "SAIR Lean Kernel Challenge lanes (partition in-place DP S1/S1b, primecount sieve S6)"
+    provenance: "Kernel reduction lanes (partition in-place DP S1/S1b, primecount sieve S6)"
   },
   {
     id: "kernel-friendly-term-design",
@@ -1783,7 +1783,7 @@ export const ALTPROOF_ROUTE_TABLE: AltProofRoute[] = [
     matchShape: "structural recursion or helper calls with heavy defeq unfolding overhead",
     rewriteHint: "refactor to kernel-friendly primitives (structural Nat.rec, unrolled trial division, import-minimal path)",
     costHint: "high kernel yield: reduces defeq heartbeats and avoids WellFounded.fix traps",
-    provenance: "SAIR Lean Kernel Challenge lanes (primecount L1 structural trial division S5)"
+    provenance: "Kernel reduction lanes (primecount L1 structural trial division S5)"
   },
   {
     id: "constructive-decidable-reduction",
@@ -1799,7 +1799,7 @@ export const ALTPROOF_ROUTE_TABLE: AltProofRoute[] = [
     matchShape: "giant decimal nat_lit constants (>64 bits) or repeated closed shift-add/mask expressions inside Nat.rec/List.rec step lambdas",
     rewriteHint: "evaluate closed constant expressions to raw nat_lit at elaboration time via an elab 'eval_nat%' macro (import Lean has 0 exported Lean.* refs), or hoist into a closed top-level def C : Nat := <formula> with a := rfl spec bridge (cached in m_st->m_whnf after 1 evaluation per kernel invocation)",
     costHint: "eval_nat% gives 0 runtime instruction overhead (vs +160K/invocation for closed def C) and eliminates multi-hundred-digit magic literals",
-    provenance: "SAIR Lean Kernel Challenge C++ type_checker.cpp whnf/m_whnf audit (partition DerivedConstants eval_nat% vs partCplusSpec, sha256 shaPaddingSuffix)"
+    provenance: "Lean Kernel C++ type_checker.cpp whnf/m_whnf audit (partition DerivedConstants eval_nat% vs partCplusSpec, sha256 shaPaddingSuffix)"
   },
   {
     id: "gmp-swar-word-packing",
@@ -1807,7 +1807,7 @@ export const ALTPROOF_ROUTE_TABLE: AltProofRoute[] = [
     matchShape: "inner loops over fixed-width integer/boolean arrays or linear recurrences with bounded slot bit-width, or manually unrolled block trees",
     rewriteHint: "pack k lanes into a single b-bit GMP Nat word (Kronecker substitution / bitboard ANF) and use elaboration-time pre-unfolding (elab 'preunfold%' / 'unroll_top%') over binary-doubling combinators (t0..t6) to eliminate multi-thousand-line source inlining with 0 runtime unfold overhead",
     costHint: "15-30x kernel instruction reduction on convolution/bitboard loops; preunfold% matches manual inlining (12.72M vs 18.49M for runtime combinators) at 4.2x smaller source",
-    provenance: "SAIR Lean Kernel Challenge (partition Kronecker SWAR convolution, ca-rule110 4-gate ANF + preunfold% t0..t6 block tree, fib unroll_top%, sha256 512-bit schedule window)"
+    provenance: "Kernel reduction lanes (partition Kronecker SWAR convolution, ca-rule110 4-gate ANF + preunfold% t0..t6 block tree, fib unroll_top%, sha256 512-bit schedule window)"
   },
   {
     id: "bv_decide",
@@ -1850,12 +1850,12 @@ export const ALTPROOF_ROUTE_TABLE: AltProofRoute[] = [
     provenance: "lean-analyzer SOUND-04 NatZoneDomain::check_nat_sub_decreasing + FIDELITY-08"
   },
   {
-    id: "sair_decide",
+    id: "kernel_decide",
     family: "kernel-friendly-term-design",
     matchShape: "decidable Nat/Bool/Int equality or inequality on a strict 3-axiom kernel lane where Lean.ofReduceBool is forbidden",
-    rewriteHint: "close via sair_decide (first | rfl | decide +kernel | omega) without invoking native_decide or bv_decide",
+    rewriteHint: "close via kernel_decide (first | rfl | decide +kernel | omega) without invoking native_decide or bv_decide",
     costHint: "0 Lean.ofReduceBool axioms; direct WHNF or verified Presburger closure",
-    provenance: "Template_SairDecide.lean + SAIR 3-axiom contest gate"
+    provenance: "Template_KernelDecide.lean + 3-axiom kernel gate"
   },
   {
     id: "proof-carrying-codegen",
@@ -1901,7 +1901,7 @@ const ALTPROOF_RENDERABLE_PATTERNS: RegExp[] = [
   /^apply\s+\S/,
   /^have\s+\w+\s*:?=?\s*\S+/,
   /^(unfold|simp|simp_rw|rw|erw)\b/,
-  /^(linarith|nlinarith|omega|ring|ring_nf|field_simp|positivity|norm_num|rfl|exact\?|aesop|grind|decide|bv_decide|sair_decide|sum_congr_ring|calc_ring_sum|gcongr_pos|finset_nonneg|finset_mono|wellformed_tac|channel_fields|eqsat_rw|egg_rw|backchain|contra_direct|grind_close|push|alt_proof|elegance\?|bfs_elegance\?)\b/,
+  /^(linarith|nlinarith|omega|ring|ring_nf|field_simp|positivity|norm_num|rfl|exact\?|aesop|grind|decide|bv_decide|kernel_decide|sum_congr_ring|calc_ring_sum|gcongr_pos|finset_nonneg|finset_mono|wellformed_tac|channel_fields|eqsat_rw|egg_rw|backchain|contra_direct|grind_close|push|alt_proof|elegance\?|bfs_elegance\?)\b/,
   /^(constructor|refine|use|exists|intro|intros|induction|cases|rcases|obtain|fin_cases)\b/
 ];
 
@@ -2165,7 +2165,7 @@ export function analyzeAltProofGoalAndBlock(
         return features.hasFinsetMono || features.hasFinsetSum;
       case "induction-rescaling":
         return features.hasNatArith || features.hasWellFounded;
-      case "sair_decide":
+      case "kernel_decide":
         return features.hasIteOrDecide || features.hasNatArith;
       case "proof-carrying-codegen":
         return Boolean(features.hasBitVec);
@@ -2240,10 +2240,10 @@ export function analyzeAltProofGoalAndBlock(
       0.97
     );
   }
-  if (/\b(?:sair_decide|Lean\.ofReduceBool)\b/.test(combined) || /\bdecide[ \t]+\+kernel\b/.test(proof)) {
+  if (/\b(?:kernel_decide|Lean\.ofReduceBool)\b/.test(combined) || /\bdecide[ \t]+\+kernel\b/.test(proof)) {
     pushRec(
-      "sair_decide",
-      "sair_decide",
+      "kernel_decide",
+      "kernel_decide",
       "Strict 3-axiom kernel-clean decision macro (rfl | decide +kernel | omega) with zero Lean.ofReduceBool.",
       70,
       0.95

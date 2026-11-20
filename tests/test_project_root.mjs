@@ -2,7 +2,7 @@
 // Unit tests for src/project_root.ts and the root-scoped LakeBuildGuard check.
 // Scoped Unicode policy (INV-001; typographic-free by default).
 //
-// Regression origin: serving a `lakefile.toml`-only project (every sair contest
+// Regression origin: serving a `lakefile.toml`-only project (every kernel contest
 // lane) fell through the old `lakefile.lean`-only detector and was redirected to
 // a hardcoded host path, so project modules vanished from LEAN_PATH and every
 // `lean --stdin` verb answered `unknown module prefix 'Spec'`.

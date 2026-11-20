@@ -3,7 +3,7 @@
 //   - Question 2: lspRequestTimeoutMs (120000ms default + env override)
 //   - Question 5 (Proposal 3): lean_multi_attempt (lsp / repl / pantograph + shiftBaselineKeys + goalShapeHash + col='both')
 //   - Question 6 (Proposal 4A): Goedel-Prover-V2 <error> spans + APOLLO comment/string-safe sorrifyFailingLeafLines + solver cascade + Rule G-15
-//   - Question 7 (Proposal 5): WASM single-source proof_fidelity_audit (OVER_CONCRETE_FIXED_ARITY, UNANNOTATED_COLLECTION_LITERAL, HAVE_SUBGOAL_NAT_TRUNCATION, SAIR) + lean_minimal_hypotheses + lean_profile_proof
+//   - Question 7 (Proposal 5): WASM single-source proof_fidelity_audit (OVER_CONCRETE_FIXED_ARITY, UNANNOTATED_COLLECTION_LITERAL, HAVE_SUBGOAL_NAT_TRUNCATION, KERNEL) + lean_minimal_hypotheses + lean_profile_proof
 //   - Question 8 (Proposal 6): lean_search (similar_proofs BM25 + lean-explore dep boost, workspace_symbols RRF, detail='summary')
 //   - Questions 4a, 10, 12b: lean_skill_dispatch, lean_theorem_preflight, and Multi-Prover Router (.v / .thy)
 // Scoped Unicode policy (INV-001; typographic-free by default).
@@ -132,7 +132,7 @@ console.log("Running SOTA Upgrades Test Suite...");
   assert(kinds.has("UNANNOTATED_COLLECTION_LITERAL"), "detects UNANNOTATED_COLLECTION_LITERAL");
   assert(kinds.has("HAVE_SUBGOAL_NAT_TRUNCATION"), "detects HAVE_SUBGOAL_NAT_TRUNCATION");
   assert(Array.isArray(fidReport.wasmDiagnostics), "exposes WASM single-source diagnostics array");
-  assert(Array.isArray(fidReport.sairDiagnostics), "exposes SAIR 37-Law diagnostics array");
+  assert(Array.isArray(fidReport.kernelDiagnostics), "exposes Kernel 37-Law diagnostics array");
   console.log("  - Question 7 (grouped-binder pruning & WASM single-source proof_fidelity_audit): PASS");
 }
 
@@ -417,32 +417,32 @@ console.log("Running SOTA Upgrades Test Suite...");
       "workspace_symbols indexes @[to_additive] metaprogram-generated lemma names"
     );
 
-    // 6i. lean_metrics(action: "sair_audit") exposes wasmDiagnostics & sairDiagnostics
-    const sairLean = path.join(tmpDir, "SairSample.lean");
+    // 6i. lean_metrics(action: "kernel_audit") exposes wasmDiagnostics & kernelDiagnostics
+    const kernelLean = path.join(tmpDir, "KernelSample.lean");
     fs.writeFileSync(
-      sairLean,
+      kernelLean,
       [
         "def fastDiv (x : Nat) : Nat := x / 64",
-        "theorem sair_echo (a : Nat) (h : a > 5) : a > 5 := by",
+        "theorem kernel_echo (a : Nat) (h : a > 5) : a > 5 := by",
         "  exact h",
       ].join("\n"),
       "utf-8"
     );
-    const sairAuditJson = JSON.parse(
+    const kernelAuditJson = JSON.parse(
       await server.executeTool("lean_metrics", {
-        action: "sair_audit",
-        target: sairLean,
+        action: "kernel_audit",
+        target: kernelLean,
         format: "json",
       })
     );
-    assert(Array.isArray(sairAuditJson.wasmDiagnostics), "sair_audit JSON includes wasmDiagnostics array");
-    assert(Array.isArray(sairAuditJson.sairDiagnostics), "sair_audit JSON includes sairDiagnostics array");
+    assert(Array.isArray(kernelAuditJson.wasmDiagnostics), "kernel_audit JSON includes wasmDiagnostics array");
+    assert(Array.isArray(kernelAuditJson.kernelDiagnostics), "kernel_audit JSON includes kernelDiagnostics array");
     assert(
-      sairAuditJson.sairDiagnostics.some((d) => d.code === "SAIR-LAW-14"),
-      "sair_audit exposes SAIR-LAW-14 diagnostics from lean_analyzer.wasm"
+      kernelAuditJson.kernelDiagnostics.some((d) => d.code === "KERNEL-LAW-14"),
+      "kernel_audit exposes KERNEL-LAW-14 diagnostics from lean_analyzer.wasm"
     );
 
-    console.log("  - End-to-End McpServer SOTA Tools (6 tools + hybrid search + multi-prover + SAIR WASM): PASS");
+    console.log("  - End-to-End McpServer SOTA Tools (6 tools + hybrid search + multi-prover + Kernel WASM): PASS");
   } finally {
     delete process.env.LEAN_SKIP_LSP_FOR_TEST;
     fs.rmSync(tmpDir, { recursive: true, force: true });

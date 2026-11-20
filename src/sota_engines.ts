@@ -1577,7 +1577,7 @@ export function buildTheoremPreflightStatic(
       theoremName,
       phase0CounterexampleSearch: counterexampleResult,
       proofFidelityDiagnostics: thmDiags,
-      sairDiagnosticsCount: fidelityReport.sairDiagnostics.length,
+      kernelDiagnosticsCount: fidelityReport.kernelDiagnostics.length,
       altProofAdvisor: {
         bestTactic: altProof.bestTactic,
         bestEstimatedHeartbeats: altProof.bestEstimatedHeartbeats,

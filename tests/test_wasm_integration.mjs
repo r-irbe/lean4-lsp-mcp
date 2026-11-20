@@ -139,18 +139,18 @@ const fullBufDiags = diagnoseLeanSourceWasm(
   "def fastDiv (x : Nat) : Nat := x / 64\ntheorem refl_thm (x : Nat) : x = x := by rfl\n",
   1
 );
-assert.ok(fullBufDiags.some((d) => d.code === "SAIR-LAW-14"), "Expected SAIR-LAW-14 from diagnoseLeanSourceWasm");
+assert.ok(fullBufDiags.some((d) => d.code === "KERNEL-LAW-14"), "Expected KERNEL-LAW-14 from diagnoseLeanSourceWasm");
 assert.ok(fullBufDiags.some((d) => d.code === "FIDELITY-02"), "Expected FIDELITY-02 from diagnoseLeanSourceWasm");
 const reflDiag = fullBufDiags.find((d) => d.code === "FIDELITY-02");
 assert.ok(reflDiag, "Expected FIDELITY-02 diagnostic");
 assert.ok(!reflDiag.hint.includes("eval_nat%"), "Default profile must not recommend custom eval_nat% macro");
 assert.ok(!reflDiag.hint.includes("fast_decide"), "Default profile must not recommend custom fast_decide tactic");
 
-const sairDiags = diagnoseLeanSourceWasm(
+const kernelDiags = diagnoseLeanSourceWasm(
   "def step (x : Nat) : Nat := by\n  let y := x + 1\n  exact y\ndef nextDef : Nat := 1\n",
   1
 );
-assert.ok(sairDiags.some((d) => d.code === "SAIR-LAW-03"), "Expected SAIR-LAW-03 for let inside by-block followed by top-level def");
+assert.ok(kernelDiags.some((d) => d.code === "KERNEL-LAW-03"), "Expected KERNEL-LAW-03 for let inside by-block followed by top-level def");
 console.log("  [PASS] WASM Full-Buffer UTF-8 Source Diagnostics (lean_analyzer_diagnose_utf8)");
 
 // Test KnownBits64 transfer function in WASM

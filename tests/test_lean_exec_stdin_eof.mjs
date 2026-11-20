@@ -22,6 +22,34 @@ try {
   });
   assert.match(String(result), /Nat\s*:\s*Type/, "stdin must reach EOF and Lean must return before timeout");
   console.log("  - Lean stdin EOF delivery: PASS");
+
+  const bareDir = fs.mkdtempSync(path.join(os.tmpdir(), "lean-exec-timeout-"));
+  const origPath = process.env.PATH || "";
+  try {
+    const fakeBin = path.join(bareDir, "bin");
+    fs.mkdirSync(fakeBin, { recursive: true });
+    const fakeLean = path.join(fakeBin, "lean");
+    fs.writeFileSync(fakeLean, "#!/bin/sh\nsleep 5\n", "utf-8");
+    fs.chmodSync(fakeLean, 0o755);
+    process.env.PATH = `${fakeBin}${path.delimiter}${origPath}`;
+    const timeoutServer = new McpServer(bareDir);
+    const frame = await timeoutServer.handleMessage({
+      jsonrpc: "2.0",
+      id: 99,
+      method: "tools/call",
+      params: {
+        name: "lean_exec",
+        arguments: { code: "#check Nat\n", timeoutMs: 1000 },
+      },
+    });
+    assert.equal(frame?.result?.isError, true, "timeout_expired must surface as isError: true");
+    const text = String(frame?.result?.content?.[0]?.text || "");
+    assert.match(text, /^Error:\s*timeout_expired\b/, `expected timeout_expired output, got: ${text}`);
+    console.log("  - Lean exec timeout_expired returns isError: true: PASS");
+  } finally {
+    process.env.PATH = origPath;
+    fs.rmSync(bareDir, { recursive: true, force: true });
+  }
 } finally {
   fs.rmSync(projectRoot, { recursive: true, force: true });
 }

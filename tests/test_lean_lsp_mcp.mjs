@@ -510,7 +510,7 @@ console.log("=== Testing lean4-lsp-mcp Suite ===");
 
         // Check the executable AltProof routes against the same proof shapes as the CLI.
         const parityCases = [
-            ["\u22a2 (17 : Nat) % 3 = 2", "by decide +kernel", ["sair_decide"]],
+            ["\u22a2 (17 : Nat) % 3 = 2", "by decide +kernel", ["kernel_decide"]],
             ["a b c : Alpha\nhab : a = b\nhbc : b = c\n\u22a2 f a = f c", "by rw [hab, hbc]", ["eqsat_rw"]],
             ["p q r : Prop\nhp : p\nhpq : p \u2192 q\nhqr : q \u2192 r\n\u22a2 r", "by apply hqr; apply hpq; exact hp", ["backchain", "solve_by_elim"]],
             ["x : Nat\n\u22a2 x = x", "by rfl", []],

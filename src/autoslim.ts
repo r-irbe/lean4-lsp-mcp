@@ -244,7 +244,7 @@ export const ALTPROOF_CUSTOM_TACTICS = new Set<string>([
   "backchain",
   "contra_direct",
   "grind_close",
-  "sair_decide",
+  "kernel_decide",
   "elegance?",
   "bfs_elegance?",
   "alt_proof",
@@ -264,7 +264,7 @@ export const ROUTE_TACTIC_CASCADES: Record<string, readonly string[]> = {
     "by simp",
   ],
   bv_decide: ["by bv_decide", "by decide"],
-  sair_decide: ["by sair_decide", "by decide"],
+  kernel_decide: ["by kernel_decide", "by decide"],
 };
 
 /** Resolve the bundled or workspace `lean-analyzer` binary path. */

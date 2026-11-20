@@ -1,8 +1,8 @@
 // src/proof_fidelity_audit.ts
-// Automated specification, vacuity fidelity, and SAIR 37-Law audit for Lean 4 source files.
+// Automated specification, vacuity fidelity, and Kernel 37-Law audit for Lean 4 source files.
 // Delegates to `LeanAbstractInterpreter.diagnoseSourceText()` (`lean_analyzer.wasm`) merged
 // with structural theorem-block analysis so all 10 proof-fidelity defect classes,
-// 4 soundness classes (`SOUND-01..04`), and 37 `SAIR-LAW-*` diagnostics are reported from a single source.
+// 4 soundness classes (`SOUND-01..04`), and 37 `KERNEL-LAW-*` diagnostics are reported from a single source.
 // Scoped Unicode policy (INV-001; typographic-free by default).
 
 import { LeanAbstractInterpreter, type WasmSourceDiagnostic } from "./abstract_interpreter.ts";
@@ -35,7 +35,7 @@ export interface ProofFidelityAuditReport {
   diagnostics: ProofFidelityDiagnostic[];
   countsByKind: Record<ProofFidelityDefectKind, number>;
   wasmDiagnostics: WasmSourceDiagnostic[];
-  sairDiagnostics: WasmSourceDiagnostic[];
+  kernelDiagnostics: WasmSourceDiagnostic[];
   clean: boolean;
 }
 
@@ -1038,10 +1038,10 @@ export function auditLeanProofFidelity(sourceText: string): ProofFidelityAuditRe
     }
   }
 
-  // Delegate to WASM single-source engine (`lean_analyzer.wasm`) for 37 SAIR laws and soundness certificates
+  // Delegate to WASM single-source engine (`lean_analyzer.wasm`) for 37 kernel laws and soundness certificates
   const interp = new LeanAbstractInterpreter();
   const wasmDiagnostics = interp.diagnoseSourceText(sourceText, 1);
-  const sairDiagnostics = wasmDiagnostics.filter((d) => d.code.startsWith("SAIR-LAW-"));
+  const kernelDiagnostics = wasmDiagnostics.filter((d) => d.code.startsWith("KERNEL-LAW-"));
 
   return {
     theoremsScanned: theoremBlocks.length,
@@ -1049,7 +1049,7 @@ export function auditLeanProofFidelity(sourceText: string): ProofFidelityAuditRe
     diagnostics,
     countsByKind,
     wasmDiagnostics,
-    sairDiagnostics,
+    kernelDiagnostics,
     clean: diagnostics.length === 0,
   };
 }

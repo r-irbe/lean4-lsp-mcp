@@ -113,16 +113,16 @@ test("all 7 O6 rule-test YAML suites pass valid and invalid cases (plus 500+ lin
   }
 });
 
-test("parseArgs accepts inline --flag=value, space-separated --profile sair, and rejects unknown flags", () => {
+test("parseArgs accepts inline --flag=value, space-separated --profile kernel, and rejects unknown flags", () => {
   const inline = parseArgs([
-    "--profile=sair",
+    "--profile=kernel",
     "--min-severity=error",
     "--rules=/tmp/r1",
     "--config=/tmp/lean-project.toml",
     "--json",
     "Foo.lean",
   ]);
-  assert.equal(inline.profile, "sair");
+  assert.equal(inline.profile, "kernel");
   assert.equal(inline.minSeverity, "error");
   assert.deepEqual(inline.rulesDirs, ["/tmp/r1"]);
   assert.equal(inline.config, "/tmp/lean-project.toml");
@@ -139,12 +139,12 @@ test("parseArgs accepts inline --flag=value, space-separated --profile sair, and
   assert.throws(() => parseArgs(["--min-severity"]), CliUsageError);
 });
 
-test("sair profile activates rule-lean-sair-submission-gate via runScan and CLI --profile=sair while default stays clean", () => {
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lean-sair-profile-"));
+test("kernel profile activates rule-lean-kernel-submission-gate via runScan and CLI --profile=kernel while default stays clean", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "lean-kernel-profile-"));
   try {
-    const cleanSair = path.join(tmp, "CleanSair.leanfix");
+    const cleanKernel = path.join(tmp, "CleanKernel.leanfix");
     fs.writeFileSync(
-      cleanSair,
+      cleanKernel,
       [
         "def impl (n : Nat) : Nat := n + 1",
         "theorem impl_correct (n : Nat) : impl n = n + 1 := by",
@@ -152,7 +152,7 @@ test("sair profile activates rule-lean-sair-submission-gate via runScan and CLI 
       ].join("\n"),
     );
 
-    const sairCases = [
+    const kernelCases = [
       ["bv_decide.leanfix", "theorem bad_bv (x : BitVec 8) : x = x := by\n  bv_decide\n"],
       ["partial_def.leanfix", "partial def loop (n : Nat) : Nat := loop n\n"],
       ["unsafe_def.leanfix", "unsafe def rawCast (n : Nat) : Nat := n\n"],
@@ -163,12 +163,12 @@ test("sair profile activates rule-lean-sair-submission-gate via runScan and CLI 
     ];
 
     // Auto-resolved bundled rulesDir when omitted in runScan:
-    const defaultClean = runScan({ targets: [cleanSair] });
+    const defaultClean = runScan({ targets: [cleanKernel] });
     assert.equal(defaultClean.profile, "default");
     assert.equal(defaultClean.ruleCount, 16);
     assert.equal(defaultClean.findings.length, 0);
 
-    const coreCleanCli = spawnSync(process.execPath, [cliPath, "--profile=core", "--json", cleanSair], {
+    const coreCleanCli = spawnSync(process.execPath, [cliPath, "--profile=core", "--json", cleanKernel], {
       encoding: "utf-8",
     });
     assert.equal(coreCleanCli.status, 0, coreCleanCli.stderr);
@@ -176,16 +176,16 @@ test("sair profile activates rule-lean-sair-submission-gate via runScan and CLI 
     assert.equal(coreCleanJson.profile, "core");
     assert.equal(coreCleanJson.ruleCount, 16);
 
-    const sairCleanCli = spawnSync(process.execPath, [cliPath, "--profile=sair", "--json", cleanSair], {
+    const kernelCleanCli = spawnSync(process.execPath, [cliPath, "--profile=kernel", "--json", cleanKernel], {
       encoding: "utf-8",
     });
-    assert.equal(sairCleanCli.status, 0, sairCleanCli.stderr);
-    const sairCleanJson = JSON.parse(sairCleanCli.stdout);
-    assert.equal(sairCleanJson.profile, "sair");
-    assert.equal(sairCleanJson.ruleCount, 17);
-    assert.equal(sairCleanJson.findings.length, 0);
+    assert.equal(kernelCleanCli.status, 0, kernelCleanCli.stderr);
+    const kernelCleanJson = JSON.parse(kernelCleanCli.stdout);
+    assert.equal(kernelCleanJson.profile, "kernel");
+    assert.equal(kernelCleanJson.ruleCount, 17);
+    assert.equal(kernelCleanJson.findings.length, 0);
 
-    const fluidClean = runScan({ targets: [cleanSair], profile: "fluid-pde" });
+    const fluidClean = runScan({ targets: [cleanKernel], profile: "fluid-pde" });
     assert.equal(fluidClean.ruleCount, 21);
 
     // P2M profile + paths: glob filtering (`**/Theorems/**`, `**/Interface/**`)
@@ -217,31 +217,31 @@ test("sair profile activates rule-lean-sair-submission-gate via runScan and CLI 
       "Theorems/Card.leanfix must match paths: filter under --profile=p2m"
     );
 
-    for (const [name, source] of sairCases) {
+    for (const [name, source] of kernelCases) {
       const fp = path.join(tmp, name);
       fs.writeFileSync(fp, source);
 
-      // Default profile leaves SAIR-only constructs unflagged:
+      // Default profile leaves kernel-only constructs unflagged:
       const defRes = runScan({ targets: [fp], profile: "default" });
       assert.equal(
-        defRes.findings.filter((f) => f.ruleId === "rule-lean-sair-submission-gate").length,
+        defRes.findings.filter((f) => f.ruleId === "rule-lean-kernel-submission-gate").length,
         0,
         `${name} unexpectedly flagged under default profile`,
       );
 
-      // SAIR profile flags every forbidden construct via CLI `--profile=sair`:
-      const cliRes = spawnSync(process.execPath, [cliPath, "--profile=sair", "--json", fp], {
+      // Kernel profile flags every forbidden construct via CLI `--profile=kernel`:
+      const cliRes = spawnSync(process.execPath, [cliPath, "--profile=kernel", "--json", fp], {
         encoding: "utf-8",
       });
       assert.equal(cliRes.status, 1, `expected exit 1 for ${name}, got ${cliRes.status}: ${cliRes.stderr}`);
       const parsed = JSON.parse(cliRes.stdout);
       assert.ok(
-        parsed.findings.some((f) => f.ruleId === "rule-lean-sair-submission-gate"),
-        `${name} failed to trip rule-lean-sair-submission-gate under --profile=sair`,
+        parsed.findings.some((f) => f.ruleId === "rule-lean-kernel-submission-gate"),
+        `${name} failed to trip rule-lean-kernel-submission-gate under --profile=kernel`,
       );
     }
 
-    const badFlagCli = spawnSync(process.execPath, [cliPath, "--profile=bogus", cleanSair], {
+    const badFlagCli = spawnSync(process.execPath, [cliPath, "--profile=bogus", cleanKernel], {
       encoding: "utf-8",
     });
     assert.equal(badFlagCli.status, 2);

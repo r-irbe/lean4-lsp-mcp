@@ -4,7 +4,7 @@ severity: warning
 message: "Redundant idempotent tactic detected: consecutive identical tactic invocations"
 note: |
   Lean 4 tactic scripts that execute back-to-back identical idempotent tactics
-  (such as simp, ring, omega, norm_num, decide, bv_decide, sair_decide, grind,
+  (such as simp, ring, omega, norm_num, decide, bv_decide, kernel_decide, grind,
   aesop, trivial, rfl, abel, linarith, positivity, funext, congr, ext, tauto,
   exact, assumption, contradiction, dsimp, push_neg, norm_cast, ring_nf,
   sum_congr_ring, calc_ring_sum, finset_nonneg, finset_mono, alt_proof,
@@ -12,7 +12,7 @@ note: |
   transformation create dead simplifier/solver cycles and bloat elaboration traces.
   Combine arguments or remove the duplicate invocation.
 rule:
-  regex: "(?m)^([ \\t]*)(simp|ring_nf|ring|omega|norm_num|norm_cast|bv_decide|sair_decide|grind|decide|aesop|trivial|rfl|abel|linarith|positivity|funext|congr|ext|tauto|exact|assumption|contradiction|dsimp|push_neg|sum_congr_ring|calc_ring_sum|finset_nonneg|finset_mono|alt_proof|contra_direct|eqsat_rw|backchain)\\b([^\\n]*)\\n\\1\\2\\3\\s*$"
+  regex: "(?m)^([ \\t]*)(simp|ring_nf|ring|omega|norm_num|norm_cast|bv_decide|kernel_decide|grind|decide|aesop|trivial|rfl|abel|linarith|positivity|funext|congr|ext|tauto|exact|assumption|contradiction|dsimp|push_neg|sum_congr_ring|calc_ring_sum|finset_nonneg|finset_mono|alt_proof|contra_direct|eqsat_rw|backchain)\\b([^\\n]*)\\n\\1\\2\\3\\s*$"
 fix: ""
 metadata:
   category: performance

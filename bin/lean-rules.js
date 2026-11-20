@@ -10,7 +10,7 @@
 // RULE_COMPILE_WARNING, never a crash.
 //
 // Usage:
-//   lean-rules [files-or-dirs...] [--profile default|sair|all] [--rules <dir>]... [--config lean-project.toml] [--json] [--min-severity warning|error]
+//   lean-rules [files-or-dirs...] [--profile default|kernel|all] [--rules <dir>]... [--config lean-project.toml] [--json] [--min-severity warning|error]
 //   (both `--flag value` and `--flag=value` forms are accepted; with no
 //    positional targets, scans the current directory recursively for *.lean)
 // Exit codes: 0 = no findings at or above the severity floor, 1 = findings,
@@ -23,10 +23,10 @@ import yaml from "js-yaml";
 import { parseToml, findConfig, checkArchitecture } from "./lean-architecture.mjs";
 
 const SEVERITY_ORDER = { hint: 0, info: 1, warning: 2, error: 3 };
-const VALID_PROFILES = new Set(["core", "default", "sair", "fluid-pde", "p2m", "all"]);
+const VALID_PROFILES = new Set(["core", "default", "kernel", "fluid-pde", "p2m", "all"]);
 const DEFAULT_RULES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "rules");
 const USAGE_LINE =
-  "usage: lean-rules [files-or-dirs...] [--profile core|default|sair|fluid-pde|p2m|all] [--rules <dir>]... [--config lean-project.toml] [--json] [--min-severity warning|error]";
+  "usage: lean-rules [files-or-dirs...] [--profile core|default|kernel|fluid-pde|p2m|all] [--rules <dir>]... [--config lean-project.toml] [--json] [--min-severity warning|error]";
 
 export class CliUsageError extends Error {
   constructor(message) {
@@ -101,7 +101,7 @@ export function parseArgs(argv) {
     throw new CliUsageError(`unknown severity: ${opts.minSeverity}`);
   }
   if (!VALID_PROFILES.has(opts.profile)) {
-    throw new CliUsageError(`unknown profile: ${opts.profile} (expected core|default|sair|fluid-pde|p2m|all)`);
+    throw new CliUsageError(`unknown profile: ${opts.profile} (expected core|default|kernel|fluid-pde|p2m|all)`);
   }
   return opts;
 }
@@ -294,7 +294,7 @@ export function runScan({
 }) {
   const normalizedProfile = String(profile || "default").toLowerCase();
   if (!VALID_PROFILES.has(normalizedProfile)) {
-    throw new CliUsageError(`unknown profile: ${profile} (expected core|default|sair|fluid-pde|p2m|all)`);
+    throw new CliUsageError(`unknown profile: ${profile} (expected core|default|kernel|fluid-pde|p2m|all)`);
   }
   const dirs =
     rulesDirs ??
