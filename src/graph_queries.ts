@@ -354,7 +354,7 @@ export interface ConeQueryResult {
   csimpTwins: CsimpTwinPair[];
   propLeakage: PropLeakageFinding[];
   axiomClosure: AxiomClosureCheck;
-  verdict: "PASS" | "FAIL";
+  verdict: "PASS" | "FAIL" | "UNVERIFIED";
   summary: string;
 }
 
@@ -571,8 +571,9 @@ export class LeanConeQueryEngine {
       }
     }
 
-    const passed = propLeakage.length === 0 && axiomCheck.status !== "FAILED";
-    const verdict = passed ? "PASS" : "FAIL";
+    const verdict = propLeakage.length > 0 || axiomCheck.status === "FAILED"
+      ? "FAIL"
+      : axiomCheck.status === "PASSED" ? "PASS" : "UNVERIFIED";
 
     const summary = [
       `=== Lean 4 Cone Query: ${verdict} ===`,

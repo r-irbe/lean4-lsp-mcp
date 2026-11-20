@@ -110,7 +110,8 @@ test("LeanConeQueryEngine: computes clean runtime cone and proof cone", () => {
     strictZeroProp: true,
   });
 
-  assert.equal(res.verdict, "PASS");
+  assert.equal(res.verdict, "UNVERIFIED");
+  assert.equal(res.axiomClosure.status, "SKIPPED");
   assert.equal(res.propLeakage.length, 0);
   assert.equal(res.runtimeCone.root, "compute");
   assert.ok(res.runtimeCone.count >= 3); // compute, helperTwo, helperOne
@@ -180,7 +181,7 @@ test("LeanConeQueryEngine: integrates with Lean4IleanIndex .ilean references", (
     index,
   });
 
-  assert.equal(res.verdict, "PASS");
+  assert.equal(res.verdict, "UNVERIFIED");
   assert.equal(res.propLeakage.length, 0);
   const names = res.runtimeCone.declarations.map((d) => d.name);
   assert.ok(names.some((n) => n.includes("stepA")), "stepA in runtime cone");
@@ -327,7 +328,8 @@ test("McpServer: dispatches lean_cone_query, lean_proof_clones, lean_kernel_whnf
   });
   assert.ok(typeof coneOut === "string");
   const coneJson = JSON.parse(coneOut);
-  assert.equal(coneJson.verdict, "PASS");
+  assert.equal(coneJson.verdict, "UNVERIFIED");
+  assert.equal(coneJson.axiomClosure.status, "SKIPPED");
 
   // 2. Tool dispatch: lean_proof_clones
   const cloneOut = await server.executeTool("lean_proof_clones", {
@@ -354,7 +356,7 @@ test("McpServer: dispatches lean_cone_query, lean_proof_clones, lean_kernel_whnf
     filePath: testFile,
   });
   assert.ok(typeof metricCone === "string");
-  assert.equal(JSON.parse(metricCone).verdict, "PASS");
+  assert.equal(JSON.parse(metricCone).verdict, "UNVERIFIED");
 
   const metricHotspot = await server.executeTool("lean_metrics", {
     action: "whnf_hotspots",
@@ -364,4 +366,38 @@ test("McpServer: dispatches lean_cone_query, lean_proof_clones, lean_kernel_whnf
   assert.equal(JSON.parse(metricHotspot).clean, true);
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test("McpServer: graph tool file reads stay inside the workspace", async (t) => {
+  const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "mcp-graph-scope-"));
+  t.after(() => fs.rmSync(fixture, { recursive: true, force: true }));
+  const workspace = path.join(fixture, "workspace");
+  const sibling = path.join(fixture, "workspace-other");
+  fs.mkdirSync(workspace);
+  fs.mkdirSync(sibling);
+  const inside = path.join(workspace, "Inside.lean");
+  const outside = path.join(sibling, "Outside.lean");
+  fs.writeFileSync(inside, CLEAN_CONE_FIXTURE);
+  fs.writeFileSync(outside, CLEAN_CONE_FIXTURE);
+  fs.symlinkSync(outside, path.join(workspace, "Linked.lean"), "file");
+  const server = new McpServer(workspace);
+
+  for (const [name, args] of [
+    ["lean_cone_query", { runtimeRoot: "compute" }],
+    ["lean_proof_clones", {}],
+    ["lean_kernel_whnf_hotspots", {}],
+    ["lean_metrics", { action: "cone_audit", runtimeRoot: "compute" }],
+    ["lean_metrics", { action: "proof_clones" }],
+    ["lean_metrics", { action: "whnf_hotspots" }],
+  ]) {
+    const result = await server.executeTool(name, { ...args, filePath: "Inside.lean" });
+    assert.ok(JSON.parse(result), name);
+    for (const filePath of [outside, "../workspace-other/Outside.lean", "Linked.lean"]) {
+      await assert.rejects(
+        server.executeTool(name, { ...args, filePath }),
+        /graph query file is outside the workspace/,
+        `${name}: ${filePath}`,
+      );
+    }
+  }
 });

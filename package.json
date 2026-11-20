@@ -211,7 +211,7 @@
       },
       {
         "name": "lean_cone_query",
-        "description": "Declaration-level transitive closure graph query separating runtime computation cone from proof verification cone",
+        "description": "Inspects declaration references for runtime and proof cones, possible Prop leakage, and csimp twin pairs. Use lean_axiom_closure for a compiled axiom check.",
         "access": "read",
         "scope": "workspace",
         "network": false

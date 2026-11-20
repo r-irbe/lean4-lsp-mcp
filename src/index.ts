@@ -742,7 +742,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
   },
   {
     name: "lean_cone_query",
-    description: "Declaration-level transitive closure graph query separating runtime computation cone from proof verification cone. Audits for 0 Prop leakage, tracks @[csimp] twin pairs, and verifies strict axiom ceilings.",
+    description: "Inspects declaration references for runtime and proof cones, possible Prop leakage, and @[csimp] twin pairs. Use lean_axiom_closure for a compiled axiom check.",
     inputSchema: {
       type: "object",
       properties: {
@@ -750,7 +750,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         proofRoot: { type: "string", description: "Root of formal proof cone (e.g. 'Submission.impl_correct')" },
         trackCsimp: { type: "boolean", description: "Track paired @[csimp] twin declarations (default: true)" },
         strictZeroProp: { type: "boolean", description: "Flag any Prop-typed constant or proof lemma in runtime cone (default: true)" },
-        permittedAxioms: { type: "array", items: { type: "string" }, description: "Permitted axioms list (default: [propext, Classical.choice, Quot.sound])" },
+        permittedAxioms: { type: "array", items: { type: "string" }, description: "Expected axiom ceiling shown in the report (default: [propext, Classical.choice, Quot.sound])" },
         filePath: { type: "string", description: "Optional path to Lean source file" },
         format: { type: "string", enum: ["json", "markdown"], description: "Output format (default: json)" },
       },
@@ -5314,6 +5314,23 @@ export class McpServer {
     return this.lakeManager.resolveTargetPath(filePath);
   }
 
+  private resolveGraphSourcePath(filePath: unknown): string | undefined {
+    if (filePath === undefined) return;
+    if (typeof filePath !== "string" || path.extname(filePath) !== ".lean") {
+      throw new Error("Invalid graph query file: expected a .lean source");
+    }
+    const root = fs.realpathSync(this.projectRoot);
+    const real = fs.realpathSync(path.resolve(root, filePath));
+    const relative = path.relative(root, real);
+    if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) {
+      throw new Error("graph query file is outside the workspace");
+    }
+    if (path.extname(real) !== ".lean" || !fs.statSync(real).isFile()) {
+      throw new Error("Invalid graph query file: expected a regular .lean source");
+    }
+    return real;
+  }
+
   public getKuzuGraph(): KuzuKnowledgeGraph {
     return this.kuzuGraph;
   }
@@ -7797,7 +7814,7 @@ export class McpServer {
             trackCsimp: args.trackCsimp,
             strictZeroProp: args.strictZeroProp,
             permittedAxioms: args.permittedAxioms,
-            filePath: args.filePath || (typeof target === "string" && target !== "." ? target : undefined),
+            filePath: args.filePath ?? (typeof target === "string" && target.endsWith(".lean") ? target : undefined),
             format: args.format,
           });
         } else if (action === "proof_clones" || action === "clones") {
@@ -7999,10 +8016,7 @@ export class McpServer {
         if (!runtimeRoot) {
           throw new Error("Missing required argument: 'runtimeRoot'");
         }
-        const rawFile = args.filePath || args.path || args.file;
-        const resolvedFile = rawFile
-          ? (path.isAbsolute(String(rawFile)) ? String(rawFile) : path.resolve(this.projectRoot, String(rawFile)))
-          : undefined;
+        const resolvedFile = this.resolveGraphSourcePath(args.filePath ?? args.path ?? args.file);
         const res = LeanConeQueryEngine.execute({
           runtimeRoot,
           proofRoot: args.proofRoot ? String(args.proofRoot) : undefined,
@@ -8018,10 +8032,7 @@ export class McpServer {
       }
 
       case "lean_proof_clones": {
-        const rawFile = args.filePath || args.path || args.file || args.target;
-        const resolvedFile = rawFile
-          ? (path.isAbsolute(String(rawFile)) ? String(rawFile) : path.resolve(this.projectRoot, String(rawFile)))
-          : undefined;
+        const resolvedFile = this.resolveGraphSourcePath(args.filePath ?? args.path ?? args.file ?? args.target);
         if (!resolvedFile && typeof args.source !== "string") {
           throw new Error("Missing required argument: 'filePath'");
         }
@@ -8037,10 +8048,7 @@ export class McpServer {
       }
 
       case "lean_kernel_whnf_hotspots": {
-        const rawFile = args.filePath || args.path || args.file || args.target;
-        const resolvedFile = rawFile
-          ? (path.isAbsolute(String(rawFile)) ? String(rawFile) : path.resolve(this.projectRoot, String(rawFile)))
-          : undefined;
+        const resolvedFile = this.resolveGraphSourcePath(args.filePath ?? args.path ?? args.file ?? args.target);
         if (!resolvedFile && typeof args.source !== "string") {
           throw new Error("Missing required argument: 'filePath'");
         }
