@@ -4909,7 +4909,7 @@ export class McpServer {
     this.ileanIndex = new Lean4IleanIndex(projectRoot, this.leanContext);
     this.ileanIndex.refresh();
     this.lakeManager = new LakeServerManager(projectRoot, this.leanContext, options);
-    this.kuzuGraph = new KuzuKnowledgeGraph(undefined, { workspaceRoot: projectRoot });
+    this.kuzuGraph = new KuzuKnowledgeGraph();
   }
 
   /** Atomically re-bind admitted context across both live LSP sessions and the .ilean index (NavigationLifecycle ReAdmitContext). */

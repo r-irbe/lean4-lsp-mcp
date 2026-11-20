@@ -118,3 +118,13 @@ See [`instructions.md`](./instructions.md) for copy-paste JSON payloads and agen
 
 [^mcp]: **Model Context Protocol (MCP)**: An open standard that lets AI coding assistants call external tools and language servers over stdio JSON-RPC.
 [^plausible]: **Plausible**: Lean 4's property-based testing library (similar to QuickCheck) that generates test inputs to find counterexamples to a theorem statement.
+
+
+## Optional knowledge graph
+
+Set `PROVER_KNOWLEDGE_KZ` to the proof-skills release archive to enable concept
+and tactic concordance lookup. For a private graph, set `KUZU_ARCHIVE_PATH` to
+its archive, or set `LEAN_KUZU_CONFIG_PATH` to an explicit federation config
+that lists its enabled databases. The server opens graphs only after explicit
+configuration. Point standalone deployments at the small proof-skills release
+archive when local collections must stay outside the search service.
