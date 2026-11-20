@@ -2,13 +2,13 @@
   "schema_version": "1.0.0",
   "version": "1.0.0",
   "description": "Compiled Goal-Shape Templates, Intent-to-Tactic Phrasebook, Error-to-Fix tables, and Cross-ITP Dialect Mechanisms.",
-  "handbooks_count": 38,
+  "handbooks_count": 43,
   "dialects_count": 6,
   "counts": {
-    "goal_shape_templates": 149,
-    "intent_phrasebook": 134,
-    "error_to_fix": 111,
-    "total_rows": 394
+    "goal_shape_templates": 174,
+    "intent_phrasebook": 154,
+    "error_to_fix": 131,
+    "total_rows": 459
   },
   "goal_shape_templates": [
     {
@@ -298,6 +298,61 @@
       }
     },
     {
+      "handbook": "lean-asymptotic-algorithms-handbook",
+      "goal_shape": "Univariate polynomial discriminant in `Int[x]`",
+      "route_or_concordance": "`Subresultant PRS Algorithm`",
+      "template": "`subresultantPRS p (deriv p) 1 1`",
+      "columns": {
+        "Goal Shape": "Univariate polynomial discriminant in `Int[x]`",
+        "Target Typeclass / Lemma": "`Subresultant PRS Algorithm`",
+        "Proof Template": "`subresultantPRS p (deriv p) 1 1`"
+      }
+    },
+    {
+      "handbook": "lean-asymptotic-algorithms-handbook",
+      "goal_shape": "Sparse matrix permanent `perm(A)`",
+      "route_or_concordance": "`Dulmage-Mendelsohn Factorization`",
+      "template": "`perm(A) = prod (perm(A_i))`",
+      "columns": {
+        "Goal Shape": "Sparse matrix permanent `perm(A)`",
+        "Target Typeclass / Lemma": "`Dulmage-Mendelsohn Factorization`",
+        "Proof Template": "`perm(A) = prod (perm(A_i))`"
+      }
+    },
+    {
+      "handbook": "lean-asymptotic-algorithms-handbook",
+      "goal_shape": "Prime count `pi(x)` without seed tables",
+      "route_or_concordance": "`Dynamic Meissel-Lehmer Tree`",
+      "template": "`pi(x) = phi(x, a) + a - 1 - P2(x, a)`",
+      "columns": {
+        "Goal Shape": "Prime count `pi(x)` without seed tables",
+        "Target Typeclass / Lemma": "`Dynamic Meissel-Lehmer Tree`",
+        "Proof Template": "`pi(x) = phi(x, a) + a - 1 - P2(x, a)`"
+      }
+    },
+    {
+      "handbook": "lean-asymptotic-algorithms-handbook",
+      "goal_shape": "Prefix sum of Mobius `M(x)`",
+      "route_or_concordance": "`Deleglise-Rivat Hyperbola Sieve`",
+      "template": "`M(x) = sum_{k <= u} mu(k) + dynamic_hyperbola`",
+      "columns": {
+        "Goal Shape": "Prefix sum of Mobius `M(x)`",
+        "Target Typeclass / Lemma": "`Deleglise-Rivat Hyperbola Sieve`",
+        "Proof Template": "`M(x) = sum_{k <= u} mu(k) + dynamic_hyperbola`"
+      }
+    },
+    {
+      "handbook": "lean-asymptotic-algorithms-handbook",
+      "goal_shape": "Fixed padding hash schedule",
+      "route_or_concordance": "`Courtois-Naik-Song Schedule Folding`",
+      "template": "`w16 = sigma0(w1) + w0; fold_zero_words`",
+      "columns": {
+        "Goal Shape": "Fixed padding hash schedule",
+        "Target Typeclass / Lemma": "`Courtois-Naik-Song Schedule Folding`",
+        "Proof Template": "`w16 = sigma0(w1) + w0; fold_zero_words`"
+      }
+    },
+    {
       "handbook": "lean-bisect-handbook",
       "goal_shape": "Proof broke across Lean nightly / release range",
       "route_or_concordance": "`git bisect run lake env lean Repro.lean`",
@@ -364,6 +419,61 @@
       }
     },
     {
+      "handbook": "lean-computational-reflection-handbook",
+      "goal_shape": "`fastStep s = specStep s` on fixed schedule",
+      "route_or_concordance": "`Computational Reflection`",
+      "template": "`change denote env (compileFast s) = denote env (compileSpec s); rw [compile_sound]; rfl`",
+      "columns": {
+        "Goal Shape": "`fastStep s = specStep s` on fixed schedule",
+        "Target Typeclass / Lemma": "`Computational Reflection`",
+        "Proof Template": "`change denote env (compileFast s) = denote env (compileSpec s); rw [compile_sound]; rfl`"
+      }
+    },
+    {
+      "handbook": "lean-computational-reflection-handbook",
+      "goal_shape": "`impl n = spec n` over inductive domain",
+      "route_or_concordance": "`Section 1/2/3 Induction Bridge`",
+      "template": "`intro n; induction n with | zero => rfl | succ n ih => exact step_bridge n ih`",
+      "columns": {
+        "Goal Shape": "`impl n = spec n` over inductive domain",
+        "Target Typeclass / Lemma": "`Section 1/2/3 Induction Bridge`",
+        "Proof Template": "`intro n; induction n with | zero => rfl | succ n ih => exact step_bridge n ih`"
+      }
+    },
+    {
+      "handbook": "lean-computational-reflection-handbook",
+      "goal_shape": "Monolithic 2,000-line tactic unfolding",
+      "route_or_concordance": "`Reflective Normalization`",
+      "template": "`have h : e = reify e' := rfl; rw [h, <- norm_sound]; rfl`",
+      "columns": {
+        "Goal Shape": "Monolithic 2,000-line tactic unfolding",
+        "Target Typeclass / Lemma": "`Reflective Normalization`",
+        "Proof Template": "`have h : e = reify e' := rfl; rw [h, <- norm_sound]; rfl`"
+      }
+    },
+    {
+      "handbook": "lean-computational-reflection-handbook",
+      "goal_shape": "Equivalence of 64-round word circuits",
+      "route_or_concordance": "`denote (compile c) = eval c`",
+      "template": "`refine Circuit.soundness_reflection _ _ _ rfl`",
+      "columns": {
+        "Goal Shape": "Equivalence of 64-round word circuits",
+        "Target Typeclass / Lemma": "`denote (compile c) = eval c`",
+        "Proof Template": "`refine Circuit.soundness_reflection _ _ _ rfl`"
+      }
+    },
+    {
+      "handbook": "lean-computational-reflection-handbook",
+      "goal_shape": "Proof-cone isolation audit",
+      "route_or_concordance": "`KERNEL-LAW-22 0-Prop Leakage`",
+      "template": "`set_option pp.all true in #check impl -- verify 0 Prop dependencies`",
+      "columns": {
+        "Goal Shape": "Proof-cone isolation audit",
+        "Target Typeclass / Lemma": "`KERNEL-LAW-22 0-Prop Leakage`",
+        "Proof Template": "`set_option pp.all true in #check impl -- verify 0 Prop dependencies`"
+      }
+    },
+    {
       "handbook": "lean-core-only-handbook",
       "goal_shape": "Linear arithmetic over `Nat` / `Int` without Mathlib",
       "route_or_concordance": "`omega`",
@@ -388,11 +498,11 @@
     {
       "handbook": "lean-core-only-handbook",
       "goal_shape": "Decidable finite identity without `Lean.ofReduceBool`",
-      "route_or_concordance": "`sair_decide` (`rfl",
+      "route_or_concordance": "`kernel_decide` (`rfl",
       "template": "decide +kernel",
       "columns": {
         "Goal / Term Shape": "Decidable finite identity without `Lean.ofReduceBool`",
-        "Primary Tactic / Pattern": "`sair_decide` (`rfl",
+        "Primary Tactic / Pattern": "`kernel_decide` (`rfl",
         "Canonical Recipe / Notes": "decide +kernel"
       }
     },
@@ -485,6 +595,61 @@
       }
     },
     {
+      "handbook": "lean-egraph-cpsat-superopt-handbook",
+      "goal_shape": "Common subexpressions across e-graph",
+      "route_or_concordance": "`CP-SAT Exact DAG Extraction`",
+      "template": "`model := CpModel(); model.Minimize(sum(cost * x)); solver.Solve(model)`",
+      "columns": {
+        "Goal Shape": "Common subexpressions across e-graph",
+        "Target Typeclass / Lemma": "`CP-SAT Exact DAG Extraction`",
+        "Proof Template": "`model := CpModel(); model.Minimize(sum(cost * x)); solver.Solve(model)`"
+      }
+    },
+    {
+      "handbook": "lean-egraph-cpsat-superopt-handbook",
+      "goal_shape": "Candidate rewrite rule `lhs -> rhs`",
+      "route_or_concordance": "`Dual-Certified Rewriting`",
+      "template": "`theorem sound : eval lhs = eval rhs; theorem cost : cost rhs <= cost lhs`",
+      "columns": {
+        "Goal Shape": "Candidate rewrite rule `lhs -> rhs`",
+        "Target Typeclass / Lemma": "`Dual-Certified Rewriting`",
+        "Proof Template": "`theorem sound : eval lhs = eval rhs; theorem cost : cost rhs <= cost lhs`"
+      }
+    },
+    {
+      "handbook": "lean-egraph-cpsat-superopt-handbook",
+      "goal_shape": "Bitwise logic simplification",
+      "route_or_concordance": "`3-Gate Zhegalkin Normal Form`",
+      "template": "`theorem maj_zhegalkin : (a &&& (b ^^^ c)) ^^^ (b &&& c) = (a &&& b) ^^^ (a &&& c) ^^^ (b &&& c)`",
+      "columns": {
+        "Goal Shape": "Bitwise logic simplification",
+        "Target Typeclass / Lemma": "`3-Gate Zhegalkin Normal Form`",
+        "Proof Template": "`theorem maj_zhegalkin : (a &&& (b ^^^ c)) ^^^ (b &&& c) = (a &&& b) ^^^ (a &&& c) ^^^ (b &&& c)`"
+      }
+    },
+    {
+      "handbook": "lean-egraph-cpsat-superopt-handbook",
+      "goal_shape": "Fixed schedule constant folding",
+      "route_or_concordance": "`E-Graph Equality Saturation`",
+      "template": "`egg_saturate rules [const_fold, shift_fold]; extract_dag`",
+      "columns": {
+        "Goal Shape": "Fixed schedule constant folding",
+        "Target Typeclass / Lemma": "`E-Graph Equality Saturation`",
+        "Proof Template": "`egg_saturate rules [const_fold, shift_fold]; extract_dag`"
+      }
+    },
+    {
+      "handbook": "lean-egraph-cpsat-superopt-handbook",
+      "goal_shape": "SWAR lane bit-budget allocation",
+      "route_or_concordance": "`CP-SAT Knapsack Model`",
+      "template": "`model.Add(sum(lane_widths) <= 62); solver.Solve(model)`",
+      "columns": {
+        "Goal Shape": "SWAR lane bit-budget allocation",
+        "Target Typeclass / Lemma": "`CP-SAT Knapsack Model`",
+        "Proof Template": "`model.Add(sum(lane_widths) <= 62); solver.Solve(model)`"
+      }
+    },
+    {
       "handbook": "lean-gateway-handbook",
       "goal_shape": "New informal conjecture or paper section",
       "route_or_concordance": "`specifier` -> `@lean-specification`",
@@ -509,12 +674,180 @@
     {
       "handbook": "lean-gateway-handbook",
       "goal_shape": "Slow `rfl` / `decide` or C++/SIMD extraction",
-      "route_or_concordance": "`prover`/`editor` -> `@lean-sair-kernel-optimization`",
-      "template": "Bridge clean spec via `@[csimp]` twin (`SAIR-LAW-07`)",
+      "route_or_concordance": "`prover`/`editor` -> `@lean-kernel-optimization`",
+      "template": "Bridge clean spec via `@[csimp]` twin (`KERNEL-LAW-07`)",
       "columns": {
         "Goal / Term Shape": "Slow `rfl` / `decide` or C++/SIMD extraction",
-        "Primary Tactic / Pattern": "`prover`/`editor` -> `@lean-sair-kernel-optimization`",
-        "Canonical Recipe / Notes": "Bridge clean spec via `@[csimp]` twin (`SAIR-LAW-07`)"
+        "Primary Tactic / Pattern": "`prover`/`editor` -> `@lean-kernel-optimization`",
+        "Canonical Recipe / Notes": "Bridge clean spec via `@[csimp]` twin (`KERNEL-LAW-07`)"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "goal_shape": "`let x := e` inside hot `@Nat.rec` step body",
+      "route_or_concordance": "`KERNEL-LAW-01`, `KERNEL-LAW-01B`, `ADR-INV-0025`",
+      "template": "`kernel-friendly-term-design`",
+      "columns": {
+        "Goal / Term Shape": "`let x := e` inside hot `@Nat.rec` step body",
+        "Primary Kernel Law(s)": "`KERNEL-LAW-01`, `KERNEL-LAW-01B`, `ADR-INV-0025`",
+        "Recommended AltProof Route": "`kernel-friendly-term-design`",
+        "Canonical Kernel Pattern / Tactic": "Inline single-use `let` bindings (`Expr::Let` + zeta tax); bind `let x := e` only when `>= 2` uses are dynamically evaluated on the active path AND confirmed by `real - twinlit` PMU"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "goal_shape": "Sibling calls `(f x, g (f x))` or `Nat.add (f x) (f x)`",
+      "route_or_concordance": "`KERNEL-LAW-01C`",
+      "template": "`kernel-friendly-term-design`",
+      "columns": {
+        "Goal / Term Shape": "Sibling calls `(f x, g (f x))` or `Nat.add (f x) (f x)`",
+        "Primary Kernel Law(s)": "`KERNEL-LAW-01C`",
+        "Recommended AltProof Route": "`kernel-friendly-term-design`",
+        "Canonical Kernel Pattern / Tactic": "Lean's WHNF cache is NOT shared across sibling `Expr` nodes; hoist `let fx := f x` once when `f` is non-trivial"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "goal_shape": "Closed expression `(1 <<< 64) - 1` or table inside lambda",
+      "route_or_concordance": "`KERNEL-LAW-02`, `KERNEL-LAW-11`",
+      "template": "`closed-def-whnf-caching`",
+      "columns": {
+        "Goal / Term Shape": "Closed expression `(1 <<< 64) - 1` or table inside lambda",
+        "Primary Kernel Law(s)": "`KERNEL-LAW-02`, `KERNEL-LAW-11`",
+        "Recommended AltProof Route": "`closed-def-whnf-caching`",
+        "Canonical Kernel Pattern / Tactic": "Hoist to a top-level closed `def` (memoized in `m_st->m_whnf`) or pre-evaluate at elaboration time via `eval_nat%`"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "goal_shape": "Deeply curried `fun a b c d => ...` or `k + 1` step increment",
+      "route_or_concordance": "`KERNEL-LAW-02B`, `KERNEL-LAW-03`, `KERNEL-LAW-03B`",
+      "template": "`kernel-friendly-term-design`",
+      "columns": {
+        "Goal / Term Shape": "Deeply curried `fun a b c d => ...` or `k + 1` step increment",
+        "Primary Kernel Law(s)": "`KERNEL-LAW-02B`, `KERNEL-LAW-03`, `KERNEL-LAW-03B`",
+        "Recommended AltProof Route": "`kernel-friendly-term-design`",
+        "Canonical Kernel Pattern / Tactic": "Place invariant binders outermost; prefer `Nat.succ k` on `@Nat.rec` step accumulators and `Nat.add 1 q` (constant on LHS) on non-structural counters (`ADR-INV-0025`)"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "goal_shape": "`termination_by` / `brecOn` or `if h : c then ... else ...`",
+      "route_or_concordance": "`KERNEL-LAW-06`, `KERNEL-LAW-07`, `KERNEL-LAW-08`",
+      "template": "`kernel-friendly-term-design`",
+      "columns": {
+        "Goal / Term Shape": "`termination_by` / `brecOn` or `if h : c then ... else ...`",
+        "Primary Kernel Law(s)": "`KERNEL-LAW-06`, `KERNEL-LAW-07`, `KERNEL-LAW-08`",
+        "Recommended AltProof Route": "`kernel-friendly-term-design`",
+        "Canonical Kernel Pattern / Tactic": "Replace `WellFounded.fix`/`brecOn` with direct `@Nat.rec`; replace `ite`/`dite` (`Decidable` synthesis) with `@Bool.rec` or `cond` (`cond` also compiles in LCNF)"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "goal_shape": "Nested tuple state `(a, (b, (c, d)))` or wide CPS arity",
+      "route_or_concordance": "`KERNEL-LAW-09`, `KERNEL-LAW-10`, `KERNEL-LAW-24`",
+      "template": "`kernel-friendly-term-design`",
+      "columns": {
+        "Goal / Term Shape": "Nested tuple state `(a, (b, (c, d)))` or wide CPS arity",
+        "Primary Kernel Law(s)": "`KERNEL-LAW-09`, `KERNEL-LAW-10`, `KERNEL-LAW-24`",
+        "Recommended AltProof Route": "`kernel-friendly-term-design`",
+        "Canonical Kernel Pattern / Tactic": "Flatten into unboxed CPS (`<= 6` scalar registers) or SWAR width-2 word pairs (`KERNEL-LAW-24`: width-2 + 1-bit step beats width-1, width-3, and width-4)"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "goal_shape": "Signed recurrence `a - b` or modular polynomial GCD",
+      "route_or_concordance": "`KERNEL-LAW-12`, `KERNEL-LAW-12B`",
+      "template": "`kernel-friendly-term-design`",
+      "columns": {
+        "Goal / Term Shape": "Signed recurrence `a - b` or modular polynomial GCD",
+        "Primary Kernel Law(s)": "`KERNEL-LAW-12`, `KERNEL-LAW-12B`",
+        "Recommended AltProof Route": "`kernel-friendly-term-design`",
+        "Canonical Kernel Pattern / Tactic": "Avoid `Int`/`Rat`/`ZMod` boxing in hot kernels; use direct `@Nat.rec` sign-magnitude or unnormalized `(pos, neg)` `Nat` pairs"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "goal_shape": "`x * x` on multi-limb (`>= 32` limbs) vs single-limb `Nat`",
+      "route_or_concordance": "`KERNEL-LAW-13`, `KERNEL-LAW-13B`",
+      "template": "`gmp-swar-word-packing`",
+      "columns": {
+        "Goal / Term Shape": "`x * x` on multi-limb (`>= 32` limbs) vs single-limb `Nat`",
+        "Primary Kernel Law(s)": "`KERNEL-LAW-13`, `KERNEL-LAW-13B`",
+        "Recommended AltProof Route": "`gmp-swar-word-packing`",
+        "Canonical Kernel Pattern / Tactic": "`mpz_mul(r, a, a)` triggers `mpn_sqr` above `SQR_TOOM2_THRESHOLD` (~30 limbs), saving `-14%..-21%` in own window (`NR-076`); below ~20 limbs `let`-sharing overhead dominates"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "goal_shape": "`n / 2^k`, `n % 2^k`, or base-`B` Horner digit packing",
+      "route_or_concordance": "`KERNEL-LAW-14`, `KERNEL-LAW-14B`, `KERNEL-LAW-14C`",
+      "template": "`gmp-swar-word-packing`",
+      "columns": {
+        "Goal / Term Shape": "`n / 2^k`, `n % 2^k`, or base-`B` Horner digit packing",
+        "Primary Kernel Law(s)": "`KERNEL-LAW-14`, `KERNEL-LAW-14B`, `KERNEL-LAW-14C`",
+        "Recommended AltProof Route": "`gmp-swar-word-packing`",
+        "Canonical Kernel Pattern / Tactic": "Replace `/ 2^k` and `% 2^k` with `Nat.shiftRight` and `Nat.land`; aggregate Horner digits in balanced binary chunks aligned to 64-bit GMP limbs (`KERNEL-LAW-16B`)"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "goal_shape": "Fixed-width array/DP recurrence or bitboard transition",
+      "route_or_concordance": "`KERNEL-LAW-15`, `KERNEL-LAW-16`, `KERNEL-LAW-20`",
+      "template": "`gmp-swar-word-packing`",
+      "columns": {
+        "Goal / Term Shape": "Fixed-width array/DP recurrence or bitboard transition",
+        "Primary Kernel Law(s)": "`KERNEL-LAW-15`, `KERNEL-LAW-16`, `KERNEL-LAW-20`",
+        "Recommended AltProof Route": "`gmp-swar-word-packing`",
+        "Canonical Kernel Pattern / Tactic": "Pack `k` lanes into one GMP `Nat` word (Kronecker SWAR); unroll fixed-trip kernels via binary-doubling combinators (`t0..t6`); evaluate cellular/crypto rules in ANF (`^^^`, `&&&`, `"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "goal_shape": "Finite-state graph/polyomino/automaton frontier search",
+      "route_or_concordance": "`KERNEL-LAW-17`, `KERNEL-LAW-18`, `KERNEL-LAW-18B`",
+      "template": "`algorithm-class-substitution`",
+      "columns": {
+        "Goal / Term Shape": "Finite-state graph/polyomino/automaton frontier search",
+        "Primary Kernel Law(s)": "`KERNEL-LAW-17`, `KERNEL-LAW-18`, `KERNEL-LAW-18B`",
+        "Recommended AltProof Route": "`algorithm-class-substitution`",
+        "Canonical Kernel Pattern / Tactic": "Canonicalize states as CBV `Nat` words (never tree-recurse over lists); compress frontiers as ZDD/bitmasks; count/test 1-bit shift overlaps (`overlap := w &&& (w >>> 1)`) without `Nat` underflow"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "goal_shape": "Branching search with lookahead constraints & symmetry",
+      "route_or_concordance": "`KERNEL-LAW-19`, `KERNEL-LAW-19B`, `KERNEL-LAW-21`",
+      "template": "`algorithm-class-substitution`",
+      "columns": {
+        "Goal / Term Shape": "Branching search with lookahead constraints & symmetry",
+        "Primary Kernel Law(s)": "`KERNEL-LAW-19`, `KERNEL-LAW-19B`, `KERNEL-LAW-21`",
+        "Recommended AltProof Route": "`algorithm-class-substitution`",
+        "Canonical Kernel Pattern / Tactic": "Fuse lookahead checks into one bitwise mask guard; short-circuit `Nat.beq avail 0` immediately; prove finite symmetry/heuristic reorderings via decoupled `List.Perm` certificates"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "goal_shape": "Parametric hot `def step (cfg : Config)` vs concrete loop",
+      "route_or_concordance": "`KERNEL-LAW-22..25B`, `WAVE-13 G1`",
+      "template": "`abstraction-concrete-duality`",
+      "columns": {
+        "Goal / Term Shape": "Parametric hot `def step (cfg : Config)` vs concrete loop",
+        "Primary Kernel Law(s)": "`KERNEL-LAW-22..25B`, `WAVE-13 G1`",
+        "Recommended AltProof Route": "`abstraction-concrete-duality`",
+        "Canonical Kernel Pattern / Tactic": "Specialize hot `def`s to raw unboxed `Nat` literals (`1,600x..3,345x` penalty for parametric hot steps!); state general parametric theorems separately and bridge via `rfl` (`<= 1%` cost)"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "goal_shape": "Hardware codegen from verified Lean bit/word kernel",
+      "route_or_concordance": "`PolyBitOp`, Exact-vs-Packed Lowering",
+      "template": "`proof-carrying-codegen`",
+      "columns": {
+        "Goal / Term Shape": "Hardware codegen from verified Lean bit/word kernel",
+        "Primary Kernel Law(s)": "`PolyBitOp`, Exact-vs-Packed Lowering",
+        "Recommended AltProof Route": "`proof-carrying-codegen`",
+        "Canonical Kernel Pattern / Tactic": "Emit MLIR (`ctpop`/`gpu.shuffle xor`), Ada `sm_89` PTX, AVX2/AVX-512 Rust, or freestanding C++20; enforce `exact` (`GMP`/`rug`) vs `checked-small -> NeedsWide` overflow traps (`N01..N12`)"
       }
     },
     {
@@ -1048,11 +1381,11 @@
     {
       "handbook": "lean-proof-refactor-handbook",
       "goal_shape": "Slow `Prop`-friendly `specFn` vs fast monomorphic `fastFn`",
-      "route_or_concordance": "`@[csimp] theorem specFn_eq_fastFn` (`SAIR-LAW-07`)",
+      "route_or_concordance": "`@[csimp] theorem specFn_eq_fastFn` (`KERNEL-LAW-07`)",
       "template": "Keep `specFn` clean for proofs; route LCNF execution & `rw` to `fastFn`",
       "columns": {
         "Goal / Term Shape": "Slow `Prop`-friendly `specFn` vs fast monomorphic `fastFn`",
-        "Primary Tactic / Pattern": "`@[csimp] theorem specFn_eq_fastFn` (`SAIR-LAW-07`)",
+        "Primary Tactic / Pattern": "`@[csimp] theorem specFn_eq_fastFn` (`KERNEL-LAW-07`)",
         "Canonical Recipe / Notes": "Keep `specFn` clean for proofs; route LCNF execution & `rw` to `fastFn`"
       }
     },
@@ -1233,174 +1566,6 @@
       }
     },
     {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "goal_shape": "`let x := e` inside hot `@Nat.rec` step body",
-      "route_or_concordance": "`SAIR-LAW-01`, `SAIR-LAW-01B`, `ADR-INV-0025`",
-      "template": "`kernel-friendly-term-design`",
-      "columns": {
-        "Goal / Term Shape": "`let x := e` inside hot `@Nat.rec` step body",
-        "Primary SAIR Law(s)": "`SAIR-LAW-01`, `SAIR-LAW-01B`, `ADR-INV-0025`",
-        "Recommended AltProof Route": "`kernel-friendly-term-design`",
-        "Canonical Kernel Pattern / Tactic": "Inline single-use `let` bindings (`Expr::Let` + zeta tax); bind `let x := e` only when `>= 2` uses are dynamically evaluated on the active path AND confirmed by `real - twinlit` PMU"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "goal_shape": "Sibling calls `(f x, g (f x))` or `Nat.add (f x) (f x)`",
-      "route_or_concordance": "`SAIR-LAW-01C`",
-      "template": "`kernel-friendly-term-design`",
-      "columns": {
-        "Goal / Term Shape": "Sibling calls `(f x, g (f x))` or `Nat.add (f x) (f x)`",
-        "Primary SAIR Law(s)": "`SAIR-LAW-01C`",
-        "Recommended AltProof Route": "`kernel-friendly-term-design`",
-        "Canonical Kernel Pattern / Tactic": "Lean's WHNF cache is NOT shared across sibling `Expr` nodes; hoist `let fx := f x` once when `f` is non-trivial"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "goal_shape": "Closed expression `(1 <<< 64) - 1` or table inside lambda",
-      "route_or_concordance": "`SAIR-LAW-02`, `SAIR-LAW-11`",
-      "template": "`closed-def-whnf-caching`",
-      "columns": {
-        "Goal / Term Shape": "Closed expression `(1 <<< 64) - 1` or table inside lambda",
-        "Primary SAIR Law(s)": "`SAIR-LAW-02`, `SAIR-LAW-11`",
-        "Recommended AltProof Route": "`closed-def-whnf-caching`",
-        "Canonical Kernel Pattern / Tactic": "Hoist to a top-level closed `def` (memoized in `m_st->m_whnf`) or pre-evaluate at elaboration time via `eval_nat%`"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "goal_shape": "Deeply curried `fun a b c d => ...` or `k + 1` step increment",
-      "route_or_concordance": "`SAIR-LAW-02B`, `SAIR-LAW-03`, `SAIR-LAW-03B`",
-      "template": "`kernel-friendly-term-design`",
-      "columns": {
-        "Goal / Term Shape": "Deeply curried `fun a b c d => ...` or `k + 1` step increment",
-        "Primary SAIR Law(s)": "`SAIR-LAW-02B`, `SAIR-LAW-03`, `SAIR-LAW-03B`",
-        "Recommended AltProof Route": "`kernel-friendly-term-design`",
-        "Canonical Kernel Pattern / Tactic": "Place invariant binders outermost; prefer `Nat.succ k` on `@Nat.rec` step accumulators and `Nat.add 1 q` (constant on LHS) on non-structural counters (`ADR-INV-0025`)"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "goal_shape": "`termination_by` / `brecOn` or `if h : c then ... else ...`",
-      "route_or_concordance": "`SAIR-LAW-06`, `SAIR-LAW-07`, `SAIR-LAW-08`",
-      "template": "`kernel-friendly-term-design`",
-      "columns": {
-        "Goal / Term Shape": "`termination_by` / `brecOn` or `if h : c then ... else ...`",
-        "Primary SAIR Law(s)": "`SAIR-LAW-06`, `SAIR-LAW-07`, `SAIR-LAW-08`",
-        "Recommended AltProof Route": "`kernel-friendly-term-design`",
-        "Canonical Kernel Pattern / Tactic": "Replace `WellFounded.fix`/`brecOn` with direct `@Nat.rec`; replace `ite`/`dite` (`Decidable` synthesis) with `@Bool.rec` or `cond` (`cond` also compiles in LCNF)"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "goal_shape": "Nested tuple state `(a, (b, (c, d)))` or wide CPS arity",
-      "route_or_concordance": "`SAIR-LAW-09`, `SAIR-LAW-10`, `SAIR-LAW-24`",
-      "template": "`kernel-friendly-term-design`",
-      "columns": {
-        "Goal / Term Shape": "Nested tuple state `(a, (b, (c, d)))` or wide CPS arity",
-        "Primary SAIR Law(s)": "`SAIR-LAW-09`, `SAIR-LAW-10`, `SAIR-LAW-24`",
-        "Recommended AltProof Route": "`kernel-friendly-term-design`",
-        "Canonical Kernel Pattern / Tactic": "Flatten into unboxed CPS (`<= 6` scalar registers) or SWAR width-2 word pairs (`SAIR-LAW-24`: width-2 + 1-bit step beats width-1, width-3, and width-4)"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "goal_shape": "Signed recurrence `a - b` or modular polynomial GCD",
-      "route_or_concordance": "`SAIR-LAW-12`, `SAIR-LAW-12B`",
-      "template": "`kernel-friendly-term-design`",
-      "columns": {
-        "Goal / Term Shape": "Signed recurrence `a - b` or modular polynomial GCD",
-        "Primary SAIR Law(s)": "`SAIR-LAW-12`, `SAIR-LAW-12B`",
-        "Recommended AltProof Route": "`kernel-friendly-term-design`",
-        "Canonical Kernel Pattern / Tactic": "Avoid `Int`/`Rat`/`ZMod` boxing in hot kernels; use direct `@Nat.rec` sign-magnitude or unnormalized `(pos, neg)` `Nat` pairs"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "goal_shape": "`x * x` on multi-limb (`>= 32` limbs) vs single-limb `Nat`",
-      "route_or_concordance": "`SAIR-LAW-13`, `SAIR-LAW-13B`",
-      "template": "`gmp-swar-word-packing`",
-      "columns": {
-        "Goal / Term Shape": "`x * x` on multi-limb (`>= 32` limbs) vs single-limb `Nat`",
-        "Primary SAIR Law(s)": "`SAIR-LAW-13`, `SAIR-LAW-13B`",
-        "Recommended AltProof Route": "`gmp-swar-word-packing`",
-        "Canonical Kernel Pattern / Tactic": "`mpz_mul(r, a, a)` triggers `mpn_sqr` above `SQR_TOOM2_THRESHOLD` (~30 limbs), saving `-14%..-21%` in own window (`NR-076`); below ~20 limbs `let`-sharing overhead dominates"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "goal_shape": "`n / 2^k`, `n % 2^k`, or base-`B` Horner digit packing",
-      "route_or_concordance": "`SAIR-LAW-14`, `SAIR-LAW-14B`, `SAIR-LAW-14C`",
-      "template": "`gmp-swar-word-packing`",
-      "columns": {
-        "Goal / Term Shape": "`n / 2^k`, `n % 2^k`, or base-`B` Horner digit packing",
-        "Primary SAIR Law(s)": "`SAIR-LAW-14`, `SAIR-LAW-14B`, `SAIR-LAW-14C`",
-        "Recommended AltProof Route": "`gmp-swar-word-packing`",
-        "Canonical Kernel Pattern / Tactic": "Replace `/ 2^k` and `% 2^k` with `Nat.shiftRight` and `Nat.land`; aggregate Horner digits in balanced binary chunks aligned to 64-bit GMP limbs (`SAIR-LAW-16B`)"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "goal_shape": "Fixed-width array/DP recurrence or bitboard transition",
-      "route_or_concordance": "`SAIR-LAW-15`, `SAIR-LAW-16`, `SAIR-LAW-20`",
-      "template": "`gmp-swar-word-packing`",
-      "columns": {
-        "Goal / Term Shape": "Fixed-width array/DP recurrence or bitboard transition",
-        "Primary SAIR Law(s)": "`SAIR-LAW-15`, `SAIR-LAW-16`, `SAIR-LAW-20`",
-        "Recommended AltProof Route": "`gmp-swar-word-packing`",
-        "Canonical Kernel Pattern / Tactic": "Pack `k` lanes into one GMP `Nat` word (Kronecker SWAR); unroll fixed-trip kernels via binary-doubling combinators (`t0..t6`); evaluate cellular/crypto rules in ANF (`^^^`, `&&&`, `"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "goal_shape": "Finite-state graph/polyomino/automaton frontier search",
-      "route_or_concordance": "`SAIR-LAW-17`, `SAIR-LAW-18`, `SAIR-LAW-18B`",
-      "template": "`algorithm-class-substitution`",
-      "columns": {
-        "Goal / Term Shape": "Finite-state graph/polyomino/automaton frontier search",
-        "Primary SAIR Law(s)": "`SAIR-LAW-17`, `SAIR-LAW-18`, `SAIR-LAW-18B`",
-        "Recommended AltProof Route": "`algorithm-class-substitution`",
-        "Canonical Kernel Pattern / Tactic": "Canonicalize states as CBV `Nat` words (never tree-recurse over lists); compress frontiers as ZDD/bitmasks; count/test 1-bit shift overlaps (`overlap := w &&& (w >>> 1)`) without `Nat` underflow"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "goal_shape": "Branching search with lookahead constraints & symmetry",
-      "route_or_concordance": "`SAIR-LAW-19`, `SAIR-LAW-19B`, `SAIR-LAW-21`",
-      "template": "`algorithm-class-substitution`",
-      "columns": {
-        "Goal / Term Shape": "Branching search with lookahead constraints & symmetry",
-        "Primary SAIR Law(s)": "`SAIR-LAW-19`, `SAIR-LAW-19B`, `SAIR-LAW-21`",
-        "Recommended AltProof Route": "`algorithm-class-substitution`",
-        "Canonical Kernel Pattern / Tactic": "Fuse lookahead checks into one bitwise mask guard; short-circuit `Nat.beq avail 0` immediately; prove finite symmetry/heuristic reorderings via decoupled `List.Perm` certificates"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "goal_shape": "Parametric hot `def step (cfg : Config)` vs concrete loop",
-      "route_or_concordance": "`SAIR-LAW-22..25B`, `WAVE-13 G1`",
-      "template": "`abstraction-concrete-duality`",
-      "columns": {
-        "Goal / Term Shape": "Parametric hot `def step (cfg : Config)` vs concrete loop",
-        "Primary SAIR Law(s)": "`SAIR-LAW-22..25B`, `WAVE-13 G1`",
-        "Recommended AltProof Route": "`abstraction-concrete-duality`",
-        "Canonical Kernel Pattern / Tactic": "Specialize hot `def`s to raw unboxed `Nat` literals (`1,600x..3,345x` penalty for parametric hot steps!); state general parametric theorems separately and bridge via `rfl` (`<= 1%` cost)"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "goal_shape": "Hardware codegen from verified Lean bit/word kernel",
-      "route_or_concordance": "`PolyBitOp`, Exact-vs-Packed Lowering",
-      "template": "`proof-carrying-codegen`",
-      "columns": {
-        "Goal / Term Shape": "Hardware codegen from verified Lean bit/word kernel",
-        "Primary SAIR Law(s)": "`PolyBitOp`, Exact-vs-Packed Lowering",
-        "Recommended AltProof Route": "`proof-carrying-codegen`",
-        "Canonical Kernel Pattern / Tactic": "Emit MLIR (`ctpop`/`gpu.shuffle xor`), Ada `sm_89` PTX, AVX2/AVX-512 Rust, or freestanding C++20; enforce `exact` (`GMP`/`rug`) vs `checked-small -> NeedsWide` overflow traps (`N01..N12`)"
-      }
-    },
-    {
       "handbook": "lean-security-formalization-handbook",
       "goal_shape": "Confidentiality / no-read-up & no-write-down policy",
       "route_or_concordance": "Bell-LaPadula / Biba lattice monotonicity (`s <= s`)",
@@ -1522,6 +1687,61 @@
       }
     },
     {
+      "handbook": "lean-unboxed-limbs-swar-handbook",
+      "goal_shape": "Wide state accumulator (256/512-bit)",
+      "route_or_concordance": "`Fiat-Crypto Unsaturated Limbs`",
+      "template": "`structure Limbs where (l0 l1 l2 l3 l4 : Nat); def add := ...`",
+      "columns": {
+        "Goal Shape": "Wide state accumulator (256/512-bit)",
+        "Target Typeclass / Lemma": "`Fiat-Crypto Unsaturated Limbs`",
+        "Proof Template": "`structure Limbs where (l0 l1 l2 l3 l4 : Nat); def add := ...`"
+      }
+    },
+    {
+      "handbook": "lean-unboxed-limbs-swar-handbook",
+      "goal_shape": "Parallel 2-lane 31-bit addition",
+      "route_or_concordance": "`Guarded SWAR Addition`",
+      "template": "`((a &&& mask) + (b &&& mask)) ^^^ ((a ^^^ b) &&& guard)`",
+      "columns": {
+        "Goal Shape": "Parallel 2-lane 31-bit addition",
+        "Target Typeclass / Lemma": "`Guarded SWAR Addition`",
+        "Proof Template": "`((a &&& mask) + (b &&& mask)) ^^^ ((a ^^^ b) &&& guard)`"
+      }
+    },
+    {
+      "handbook": "lean-unboxed-limbs-swar-handbook",
+      "goal_shape": "Bitfield extraction `(x / 2^s) % 2^k`",
+      "route_or_concordance": "`Branch-Free Low Cut`",
+      "template": "`(w >>> s) &&& ((1 <<< k) - 1)`",
+      "columns": {
+        "Goal Shape": "Bitfield extraction `(x / 2^s) % 2^k`",
+        "Target Typeclass / Lemma": "`Branch-Free Low Cut`",
+        "Proof Template": "`(w >>> s) &&& ((1 <<< k) - 1)`"
+      }
+    },
+    {
+      "handbook": "lean-unboxed-limbs-swar-handbook",
+      "goal_shape": "Ternary conditional `if c then a else b`",
+      "route_or_concordance": "`Zhegalkin Multiplexer`",
+      "template": "`b ^^^ (c &&& (a ^^^ b))`",
+      "columns": {
+        "Goal Shape": "Ternary conditional `if c then a else b`",
+        "Target Typeclass / Lemma": "`Zhegalkin Multiplexer`",
+        "Proof Template": "`b ^^^ (c &&& (a ^^^ b))`"
+      }
+    },
+    {
+      "handbook": "lean-unboxed-limbs-swar-handbook",
+      "goal_shape": "Bitwise choice `(e &&& f) ^^^ (~~~e &&& g)`",
+      "route_or_concordance": "`3-Gate Ch Circuit`",
+      "template": "`g ^^^ (e &&& (f ^^^ g))`",
+      "columns": {
+        "Goal Shape": "Bitwise choice `(e &&& f) ^^^ (~~~e &&& g)`",
+        "Target Typeclass / Lemma": "`3-Gate Ch Circuit`",
+        "Proof Template": "`g ^^^ (e &&& (f ^^^ g))`"
+      }
+    },
+    {
       "handbook": "lean-upstream-pr-handbook",
       "goal_shape": "Reusable general lemma inside domain repo",
       "route_or_concordance": "Generalize + Mathlib4 style pass",
@@ -1574,6 +1794,61 @@
         "Goal / Term Shape": "File missing `set_option autoImplicit false`",
         "Primary Tactic / Pattern": "Static enforcement lint",
         "Canonical Recipe / Notes": "Add `set_option autoImplicit false` immediately after `import`"
+      }
+    },
+    {
+      "handbook": "lean-worker-wrapper-cps-handbook",
+      "goal_shape": "Typeclass dictionaries in tight recursor",
+      "route_or_concordance": "`Worker/Wrapper Monomorphization`",
+      "template": "`def worker (x : Nat) : Nat; @[inline] def wrapper [C] (x) := worker x`",
+      "columns": {
+        "Goal Shape": "Typeclass dictionaries in tight recursor",
+        "Target Typeclass / Lemma": "`Worker/Wrapper Monomorphization`",
+        "Proof Template": "`def worker (x : Nat) : Nat; @[inline] def wrapper [C] (x) := worker x`"
+      }
+    },
+    {
+      "handbook": "lean-worker-wrapper-cps-handbook",
+      "goal_shape": "Merge branch subterms duplicating AST",
+      "route_or_concordance": "`Join Point Abstraction`",
+      "template": "`let joinPt := fun acc => ...; if c then joinPt a else joinPt b`",
+      "columns": {
+        "Goal Shape": "Merge branch subterms duplicating AST",
+        "Target Typeclass / Lemma": "`Join Point Abstraction`",
+        "Proof Template": "`let joinPt := fun acc => ...; if c then joinPt a else joinPt b`"
+      }
+    },
+    {
+      "handbook": "lean-worker-wrapper-cps-handbook",
+      "goal_shape": "Inductive constructor match in loop body",
+      "route_or_concordance": "`SpecConstr Specialization`",
+      "template": "`def workerA ...; def workerB ...; match c with | .A => workerA | .B => workerB`",
+      "columns": {
+        "Goal Shape": "Inductive constructor match in loop body",
+        "Target Typeclass / Lemma": "`SpecConstr Specialization`",
+        "Proof Template": "`def workerA ...; def workerB ...; match c with | .A => workerA | .B => workerB`"
+      }
+    },
+    {
+      "handbook": "lean-worker-wrapper-cps-handbook",
+      "goal_shape": "Higher-order continuation closure `(a -> b) -> b`",
+      "route_or_concordance": "`Defunctionalized Inductive Cont`",
+      "template": "`inductive Cont | halt | step (k : Cont); def applyCont : Cont -> a -> b`",
+      "columns": {
+        "Goal Shape": "Higher-order continuation closure `(a -> b) -> b`",
+        "Target Typeclass / Lemma": "`Defunctionalized Inductive Cont`",
+        "Proof Template": "`inductive Cont | halt | step (k : Cont); def applyCont : Cont -> a -> b`"
+      }
+    },
+    {
+      "handbook": "lean-worker-wrapper-cps-handbook",
+      "goal_shape": "Non-tail-recursive tuple re-boxing",
+      "route_or_concordance": "`Tail-Call Scalar Accumulator`",
+      "template": "`@Nat.rec (fun _ => Nat -> Nat -> Nat) (fun a b => a) (fun _ loop a b => loop (a+1) b)`",
+      "columns": {
+        "Goal Shape": "Non-tail-recursive tuple re-boxing",
+        "Target Typeclass / Lemma": "`Tail-Call Scalar Accumulator`",
+        "Proof Template": "`@Nat.rec (fun _ => Nat -> Nat -> Nat) (fun a b => a) (fun _ loop a b => loop (a+1) b)`"
       }
     },
     {
@@ -1986,6 +2261,50 @@
       }
     },
     {
+      "handbook": "lean-asymptotic-algorithms-handbook",
+      "intent": "Compute polynomial GCD without coefficient explosion",
+      "tactic_or_idiom": "`Ducos Subresultant PRS`",
+      "notes": "Exactly divides pseudo-remainder by `g * h^delta`",
+      "columns": {
+        "Mathematical Intent": "Compute polynomial GCD without coefficient explosion",
+        "Lean 4 / Mathlib Tactic": "`Ducos Subresultant PRS`",
+        "Notes": "Exactly divides pseudo-remainder by `g * h^delta`"
+      }
+    },
+    {
+      "handbook": "lean-asymptotic-algorithms-handbook",
+      "intent": "Factor reducible sparse matrix",
+      "tactic_or_idiom": "`Hopcroft-Karp + SCC decomposition`",
+      "notes": "Prunes non-matching zero-edges and factors permanent",
+      "columns": {
+        "Mathematical Intent": "Factor reducible sparse matrix",
+        "Lean 4 / Mathlib Tactic": "`Hopcroft-Karp + SCC decomposition`",
+        "Notes": "Prunes non-matching zero-edges and factors permanent"
+      }
+    },
+    {
+      "handbook": "lean-asymptotic-algorithms-handbook",
+      "intent": "Evaluate `phi(x, a)` dynamically",
+      "tactic_or_idiom": "`Legendre tree with square-root cutoff`",
+      "notes": "Prunes branches when `x < p_a^2` to bound recursion depth",
+      "columns": {
+        "Mathematical Intent": "Evaluate `phi(x, a)` dynamically",
+        "Lean 4 / Mathlib Tactic": "`Legendre tree with square-root cutoff`",
+        "Notes": "Prunes branches when `x < p_a^2` to bound recursion depth"
+      }
+    },
+    {
+      "handbook": "lean-asymptotic-algorithms-handbook",
+      "intent": "Fold zero-word message schedule",
+      "tactic_or_idiom": "`Algebraic simplification`",
+      "notes": "Simplifies words `w_9..w_14 = 0` out of recurrence equations",
+      "columns": {
+        "Mathematical Intent": "Fold zero-word message schedule",
+        "Lean 4 / Mathlib Tactic": "`Algebraic simplification`",
+        "Notes": "Simplifies words `w_9..w_14 = 0` out of recurrence equations"
+      }
+    },
+    {
       "handbook": "lean-bisect-handbook",
       "intent": "Find exact Mathlib commit that renamed/removed lemma",
       "tactic_or_idiom": "`git bisect` with `lean_lookup_symbol` / `lake env lean`",
@@ -2049,6 +2368,50 @@
         "User / Engineer Intent": "Recover from stale `.olean` hash mismatch",
         "Recommended Tool / Idiom": "`lake build <Target>` (or `lake clean` as last resort)",
         "Actionable Recipe": "Rebuild upstream `.Defs` module first"
+      }
+    },
+    {
+      "handbook": "lean-computational-reflection-handbook",
+      "intent": "Compress 3,000-line tactical proof into reflection",
+      "tactic_or_idiom": "`rw [<- norm_sound]; rfl`",
+      "notes": "Replaces repetitive rewrite sequences with certified decision procedure",
+      "columns": {
+        "Mathematical Intent": "Compress 3,000-line tactical proof into reflection",
+        "Lean 4 / Mathlib Tactic": "`rw [<- norm_sound]; rfl`",
+        "Notes": "Replaces repetitive rewrite sequences with certified decision procedure"
+      }
+    },
+    {
+      "handbook": "lean-computational-reflection-handbook",
+      "intent": "Enforce Section 1/2/3 Abstraction-Concrete Split",
+      "tactic_or_idiom": "`#verso split directives`",
+      "notes": "Separates motives, concrete kernel implementation, and correctness proofs",
+      "columns": {
+        "Mathematical Intent": "Enforce Section 1/2/3 Abstraction-Concrete Split",
+        "Lean 4 / Mathlib Tactic": "`#verso split directives`",
+        "Notes": "Separates motives, concrete kernel implementation, and correctness proofs"
+      }
+    },
+    {
+      "handbook": "lean-computational-reflection-handbook",
+      "intent": "Eliminate Prop leakage from computational core",
+      "tactic_or_idiom": "`extract_pure_computation`",
+      "notes": "Audits runtime definitions to ensure zero equality witnesses or proof types",
+      "columns": {
+        "Mathematical Intent": "Eliminate Prop leakage from computational core",
+        "Lean 4 / Mathlib Tactic": "`extract_pure_computation`",
+        "Notes": "Audits runtime definitions to ensure zero equality witnesses or proof types"
+      }
+    },
+    {
+      "handbook": "lean-computational-reflection-handbook",
+      "intent": "Verify reflection soundness via structural induction",
+      "tactic_or_idiom": "`induction e with ... <;> (dsimp [simplify]; omega)`",
+      "notes": "Establishes `denote (norm e) = denote e` for all AST instances",
+      "columns": {
+        "Mathematical Intent": "Verify reflection soundness via structural induction",
+        "Lean 4 / Mathlib Tactic": "`induction e with ... <;> (dsimp [simplify]; omega)`",
+        "Notes": "Establishes `denote (norm e) = denote e` for all AST instances"
       }
     },
     {
@@ -2140,6 +2503,50 @@
       }
     },
     {
+      "handbook": "lean-egraph-cpsat-superopt-handbook",
+      "intent": "Extract sharing-optimal DAG from e-graph",
+      "tactic_or_idiom": "`CP-SAT ILP solver`",
+      "notes": "Solves 0-1 integer model minimizing shared node cost with acyclicity levels",
+      "columns": {
+        "Mathematical Intent": "Extract sharing-optimal DAG from e-graph",
+        "Lean 4 / Mathlib Tactic": "`CP-SAT ILP solver`",
+        "Notes": "Solves 0-1 integer model minimizing shared node cost with acyclicity levels"
+      }
+    },
+    {
+      "handbook": "lean-egraph-cpsat-superopt-handbook",
+      "intent": "Prove semantic soundness of rewrite rule",
+      "tactic_or_idiom": "`omega / bitwise lemmas`",
+      "notes": "Discharges algebraic equivalence without `bv_decide` or `native_decide`",
+      "columns": {
+        "Mathematical Intent": "Prove semantic soundness of rewrite rule",
+        "Lean 4 / Mathlib Tactic": "`omega / bitwise lemmas`",
+        "Notes": "Discharges algebraic equivalence without `bv_decide` or `native_decide`"
+      }
+    },
+    {
+      "handbook": "lean-egraph-cpsat-superopt-handbook",
+      "intent": "Prove cost reduction under KernelModel",
+      "tactic_or_idiom": "`by decide`",
+      "notes": "Verifies `whnfCost rhs <= whnfCost lhs` counting AST nodes and scalar limbs",
+      "columns": {
+        "Mathematical Intent": "Prove cost reduction under KernelModel",
+        "Lean 4 / Mathlib Tactic": "`by decide`",
+        "Notes": "Verifies `whnfCost rhs <= whnfCost lhs` counting AST nodes and scalar limbs"
+      }
+    },
+    {
+      "handbook": "lean-egraph-cpsat-superopt-handbook",
+      "intent": "Synthesize optimal schedule unrolling",
+      "tactic_or_idiom": "`CP-SAT sequence formulation`",
+      "notes": "Finds optimal operation ordering minimizing peak register pressure",
+      "columns": {
+        "Mathematical Intent": "Synthesize optimal schedule unrolling",
+        "Lean 4 / Mathlib Tactic": "`CP-SAT sequence formulation`",
+        "Notes": "Finds optimal operation ordering minimizing peak register pressure"
+      }
+    },
+    {
       "handbook": "lean-gateway-handbook",
       "intent": "Route a multi-phase formalization campaign",
       "tactic_or_idiom": "5-Role Swarm (`Specifier -> Prover -> Auditor -> Editor -> Gardener`)",
@@ -2159,6 +2566,83 @@
         "User / Engineer Intent": "Resolve legacy skill name after v0.4.0 consolidation",
         "Recommended Tool / Idiom": "`agents/facets/registry.json` (`skill_aliases`)",
         "Actionable Recipe": "Map retired slug to its canonical active skill"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "intent": "\"Speed up `rfl` / `decide +kernel` on a recursive function\"",
+      "tactic_or_idiom": "`KERNEL-LAW-06`, `KERNEL-LAW-02`, `KERNEL-LAW-23`",
+      "notes": "Replace `WellFounded.fix` with direct `@Nat.rec`; hoist closed constants outside step lambdas; replace polymorphic `+`/`*` with `Nat.add`/`Nat.mul`",
+      "columns": {
+        "User / Engineer Intent": "\"Speed up `rfl` / `decide +kernel` on a recursive function\"",
+        "Target Kernel Law(s)": "`KERNEL-LAW-06`, `KERNEL-LAW-02`, `KERNEL-LAW-23`",
+        "Actionable Transformation Recipe": "Replace `WellFounded.fix` with direct `@Nat.rec`; hoist closed constants outside step lambdas; replace polymorphic `+`/`*` with `Nat.add`/`Nat.mul`"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "intent": "\"Abstract repeated proof logic without slowing down the kernel\"",
+      "tactic_or_idiom": "`WAVE-13 G1`, `KERNEL-LAW-07`, `KERNEL-LAW-22B`",
+      "notes": "Keep hot `def` specialized to raw unboxed `Nat` + inline `nat_lit`s; state a parametric proof theorem over abstract step parameters and discharge the concrete instance by `rfl`",
+      "columns": {
+        "User / Engineer Intent": "\"Abstract repeated proof logic without slowing down the kernel\"",
+        "Target Kernel Law(s)": "`WAVE-13 G1`, `KERNEL-LAW-07`, `KERNEL-LAW-22B`",
+        "Actionable Transformation Recipe": "Keep hot `def` specialized to raw unboxed `Nat` + inline `nat_lit`s; state a parametric proof theorem over abstract step parameters and discharge the concrete instance by `rfl`"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "intent": "\"Choose `Nat.succ k` vs `Nat.add 1 k` in a tight loop\"",
+      "tactic_or_idiom": "`ADR-INV-0025`, `KERNEL-LAW-03`",
+      "notes": "Use `Nat.succ k` when `k` is consumed by a structural `@Nat.rec` eliminator (`Expr::App(Const(\"Nat.succ\"), k)` directly matches the `succ` arm); use `Nat.add 1 q` for arithmetic counters evaluated to `nat_lit`",
+      "columns": {
+        "User / Engineer Intent": "\"Choose `Nat.succ k` vs `Nat.add 1 k` in a tight loop\"",
+        "Target Kernel Law(s)": "`ADR-INV-0025`, `KERNEL-LAW-03`",
+        "Actionable Transformation Recipe": "Use `Nat.succ k` when `k` is consumed by a structural `@Nat.rec` eliminator (`Expr::App(Const(\"Nat.succ\"), k)` directly matches the `succ` arm); use `Nat.add 1 q` for arithmetic counters evaluated to `nat_lit`"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "intent": "\"Eliminate `Classical.choice` and `Lean.ofReduceBool` from a proof\"",
+      "tactic_or_idiom": "`KERNEL-LAW-08`, `KERNEL-LAW-22`, `kernel_decide`",
+      "notes": "Replace `if`/`split` with `@Bool.rec`/`cond`; close concrete goals with 3-rung `kernel_decide` (`first",
+      "columns": {
+        "User / Engineer Intent": "\"Eliminate `Classical.choice` and `Lean.ofReduceBool` from a proof\"",
+        "Target Kernel Law(s)": "`KERNEL-LAW-08`, `KERNEL-LAW-22`, `kernel_decide`",
+        "Actionable Transformation Recipe": "Replace `if`/`split` with `@Bool.rec`/`cond`; close concrete goals with 3-rung `kernel_decide` (`first"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "intent": "\"Implement branch-free low-bit cut/mask on `Nat` words\"",
+      "tactic_or_idiom": "`KERNEL-LAW-14`, Nov 11-12 Cut/Mask Contract",
+      "notes": "Exploit truncating `Nat.sub`: when `k <= s`, `k - s = 0` yields `1 <<< 0 - 1 = 0` mask automatically; guard multi-limb shifts with `Nat.ble a (1 <<< (k - s) - 1)` skip-to-plain-shift when profitable",
+      "columns": {
+        "User / Engineer Intent": "\"Implement branch-free low-bit cut/mask on `Nat` words\"",
+        "Target Kernel Law(s)": "`KERNEL-LAW-14`, Nov 11-12 Cut/Mask Contract",
+        "Actionable Transformation Recipe": "Exploit truncating `Nat.sub`: when `k <= s`, `k - s = 0` yields `1 <<< 0 - 1 = 0` mask automatically; guard multi-limb shifts with `Nat.ble a (1 <<< (k - s) - 1)` skip-to-plain-shift when profitable"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "intent": "\"Lower a Lean SWAR/BitVec kernel to C++20, Rust SIMD, or CUDA PTX\"",
+      "tactic_or_idiom": "`PolyBitOp`, Exact-vs-Packed Lowering",
+      "notes": "Prove equivalence to spec in Lean (`Template_ProofCarryingCodegen.lean`), lower pure bitwise kernels via `PolyBitOp`, and guard multi-limb arithmetic with `checked-small -> NeedsWide` + operand snapshotting",
+      "columns": {
+        "User / Engineer Intent": "\"Lower a Lean SWAR/BitVec kernel to C++20, Rust SIMD, or CUDA PTX\"",
+        "Target Kernel Law(s)": "`PolyBitOp`, Exact-vs-Packed Lowering",
+        "Actionable Transformation Recipe": "Prove equivalence to spec in Lean (`Template_ProofCarryingCodegen.lean`), lower pure bitwise kernels via `PolyBitOp`, and guard multi-limb arithmetic with `checked-small -> NeedsWide` + operand snapshotting"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "intent": "\"Stream verified state transitions over zero-copy IPC / NVMe\"",
+      "tactic_or_idiom": "`alignas(128)` SPSC, `.leangrph`, `io_uring`",
+      "notes": "Separate cache lines to `128 B` (Zen 3 L2 streamer prefetch pair), align `.leangrph` CSR headers to `128 B` (`64 B` magic/counts + `64 B` SHA-256), and register `2 MB` `HugeTLB` buffers with `io_uring`",
+      "columns": {
+        "User / Engineer Intent": "\"Stream verified state transitions over zero-copy IPC / NVMe\"",
+        "Target Kernel Law(s)": "`alignas(128)` SPSC, `.leangrph`, `io_uring`",
+        "Actionable Transformation Recipe": "Separate cache lines to `128 B` (Zen 3 L2 streamer prefetch pair), align `.leangrph` CSR headers to `128 B` (`64 B` magic/counts + `64 B` SHA-256), and register `2 MB` `HugeTLB` buffers with `io_uring`"
       }
     },
     {
@@ -2273,11 +2757,11 @@
     },
     {
       "handbook": "lean-math-analysis-handbook",
-      "intent": "Work with eventualities `forall  x in l, P x`",
+      "intent": "Work with eventualities `forall ^f x in l, P x`",
       "tactic_or_idiom": "`filter_upwards [h1, h2] with x hx1 hx2`",
       "notes": "Avoids unfolding `Filter.Eventually`",
       "columns": {
-        "Mathematical Intent": "Work with eventualities `forall  x in l, P x`",
+        "Mathematical Intent": "Work with eventualities `forall ^f x in l, P x`",
         "Lean 4 / Mathlib Tactic": "`filter_upwards [h1, h2] with x hx1 hx2`",
         "Notes": "Avoids unfolding `Filter.Eventually`"
       }
@@ -2583,11 +3067,11 @@
       "handbook": "lean-proof-handbook",
       "intent": "Get ranked alternative proof candidates",
       "tactic_or_idiom": "`lean_goal(filePath, line, col, target: \"altproof\")`",
-      "notes": "Queries SAIR/AltProof advisor",
+      "notes": "Queries AltProof/kernel advisor",
       "columns": {
         "Proving Intent": "Get ranked alternative proof candidates",
         "Canonical Action (`lean-lsp` + Lean 4)": "`lean_goal(filePath, line, col, target: \"altproof\")`",
-        "Notes": "Queries SAIR/AltProof advisor"
+        "Notes": "Queries AltProof/kernel advisor"
       }
     },
     {
@@ -2822,83 +3306,6 @@
       }
     },
     {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "intent": "\"Speed up `rfl` / `decide +kernel` on a recursive function\"",
-      "tactic_or_idiom": "`SAIR-LAW-06`, `SAIR-LAW-02`, `SAIR-LAW-23`",
-      "notes": "Replace `WellFounded.fix` with direct `@Nat.rec`; hoist closed constants outside step lambdas; replace polymorphic `+`/`*` with `Nat.add`/`Nat.mul`",
-      "columns": {
-        "User / Engineer Intent": "\"Speed up `rfl` / `decide +kernel` on a recursive function\"",
-        "Target SAIR Law(s)": "`SAIR-LAW-06`, `SAIR-LAW-02`, `SAIR-LAW-23`",
-        "Actionable Transformation Recipe": "Replace `WellFounded.fix` with direct `@Nat.rec`; hoist closed constants outside step lambdas; replace polymorphic `+`/`*` with `Nat.add`/`Nat.mul`"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "intent": "\"Abstract repeated proof logic without slowing down the kernel\"",
-      "tactic_or_idiom": "`WAVE-13 G1`, `SAIR-LAW-07`, `SAIR-LAW-22B`",
-      "notes": "Keep hot `def` specialized to raw unboxed `Nat` + inline `nat_lit`s; state a parametric proof theorem over abstract step parameters and discharge the concrete instance by `rfl`",
-      "columns": {
-        "User / Engineer Intent": "\"Abstract repeated proof logic without slowing down the kernel\"",
-        "Target SAIR Law(s)": "`WAVE-13 G1`, `SAIR-LAW-07`, `SAIR-LAW-22B`",
-        "Actionable Transformation Recipe": "Keep hot `def` specialized to raw unboxed `Nat` + inline `nat_lit`s; state a parametric proof theorem over abstract step parameters and discharge the concrete instance by `rfl`"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "intent": "\"Choose `Nat.succ k` vs `Nat.add 1 k` in a tight loop\"",
-      "tactic_or_idiom": "`ADR-INV-0025`, `SAIR-LAW-03`",
-      "notes": "Use `Nat.succ k` when `k` is consumed by a structural `@Nat.rec` eliminator (`Expr::App(Const(\"Nat.succ\"), k)` directly matches the `succ` arm); use `Nat.add 1 q` for arithmetic counters evaluated to `nat_lit`",
-      "columns": {
-        "User / Engineer Intent": "\"Choose `Nat.succ k` vs `Nat.add 1 k` in a tight loop\"",
-        "Target SAIR Law(s)": "`ADR-INV-0025`, `SAIR-LAW-03`",
-        "Actionable Transformation Recipe": "Use `Nat.succ k` when `k` is consumed by a structural `@Nat.rec` eliminator (`Expr::App(Const(\"Nat.succ\"), k)` directly matches the `succ` arm); use `Nat.add 1 q` for arithmetic counters evaluated to `nat_lit`"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "intent": "\"Eliminate `Classical.choice` and `Lean.ofReduceBool` from a proof\"",
-      "tactic_or_idiom": "`SAIR-LAW-08`, `SAIR-LAW-22`, `sair_decide`",
-      "notes": "Replace `if`/`split` with `@Bool.rec`/`cond`; close concrete goals with 3-rung `sair_decide` (`first",
-      "columns": {
-        "User / Engineer Intent": "\"Eliminate `Classical.choice` and `Lean.ofReduceBool` from a proof\"",
-        "Target SAIR Law(s)": "`SAIR-LAW-08`, `SAIR-LAW-22`, `sair_decide`",
-        "Actionable Transformation Recipe": "Replace `if`/`split` with `@Bool.rec`/`cond`; close concrete goals with 3-rung `sair_decide` (`first"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "intent": "\"Implement branch-free low-bit cut/mask on `Nat` words\"",
-      "tactic_or_idiom": "`SAIR-LAW-14`, Nov 11-12 Cut/Mask Contract",
-      "notes": "Exploit truncating `Nat.sub`: when `k <= s`, `k - s = 0` yields `1 <<< 0 - 1 = 0` mask automatically; guard multi-limb shifts with `Nat.ble a (1 <<< (k - s) - 1)` skip-to-plain-shift when profitable",
-      "columns": {
-        "User / Engineer Intent": "\"Implement branch-free low-bit cut/mask on `Nat` words\"",
-        "Target SAIR Law(s)": "`SAIR-LAW-14`, Nov 11-12 Cut/Mask Contract",
-        "Actionable Transformation Recipe": "Exploit truncating `Nat.sub`: when `k <= s`, `k - s = 0` yields `1 <<< 0 - 1 = 0` mask automatically; guard multi-limb shifts with `Nat.ble a (1 <<< (k - s) - 1)` skip-to-plain-shift when profitable"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "intent": "\"Lower a Lean SWAR/BitVec kernel to C++20, Rust SIMD, or CUDA PTX\"",
-      "tactic_or_idiom": "`PolyBitOp`, Exact-vs-Packed Lowering",
-      "notes": "Prove equivalence to spec in Lean (`Template_ProofCarryingCodegen.lean`), lower pure bitwise kernels via `PolyBitOp`, and guard multi-limb arithmetic with `checked-small -> NeedsWide` + operand snapshotting",
-      "columns": {
-        "User / Engineer Intent": "\"Lower a Lean SWAR/BitVec kernel to C++20, Rust SIMD, or CUDA PTX\"",
-        "Target SAIR Law(s)": "`PolyBitOp`, Exact-vs-Packed Lowering",
-        "Actionable Transformation Recipe": "Prove equivalence to spec in Lean (`Template_ProofCarryingCodegen.lean`), lower pure bitwise kernels via `PolyBitOp`, and guard multi-limb arithmetic with `checked-small -> NeedsWide` + operand snapshotting"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "intent": "\"Stream verified state transitions over zero-copy IPC / NVMe\"",
-      "tactic_or_idiom": "`alignas(128)` SPSC, `.leangrph`, `io_uring`",
-      "notes": "Separate cache lines to `128 B` (Zen 3 L2 streamer prefetch pair), align `.leangrph` CSR headers to `128 B` (`64 B` magic/counts + `64 B` SHA-256), and register `2 MB` `HugeTLB` buffers with `io_uring`",
-      "columns": {
-        "User / Engineer Intent": "\"Stream verified state transitions over zero-copy IPC / NVMe\"",
-        "Target SAIR Law(s)": "`alignas(128)` SPSC, `.leangrph`, `io_uring`",
-        "Actionable Transformation Recipe": "Separate cache lines to `128 B` (Zen 3 L2 streamer prefetch pair), align `.leangrph` CSR headers to `128 B` (`64 B` magic/counts + `64 B` SHA-256), and register `2 MB` `HugeTLB` buffers with `io_uring`"
-      }
-    },
-    {
       "handbook": "lean-security-formalization-handbook",
       "intent": "Formalize information-flow or access-control guarantees",
       "tactic_or_idiom": "Abstract lattice spec + concrete bitmask `@[csimp]` twin",
@@ -2987,6 +3394,50 @@
       }
     },
     {
+      "handbook": "lean-unboxed-limbs-swar-handbook",
+      "intent": "Eliminate heap GMP allocations in wide states",
+      "tactic_or_idiom": "`Limb tuple unboxing`",
+      "notes": "Replaces single `Nat >= 2^63` with 5-tuple of 52-bit `< 2^63` limbs",
+      "columns": {
+        "Mathematical Intent": "Eliminate heap GMP allocations in wide states",
+        "Lean 4 / Mathlib Tactic": "`Limb tuple unboxing`",
+        "Notes": "Replaces single `Nat >= 2^63` with 5-tuple of 52-bit `< 2^63` limbs"
+      }
+    },
+    {
+      "handbook": "lean-unboxed-limbs-swar-handbook",
+      "intent": "Pack two 31-bit lanes into one 63-bit scalar",
+      "tactic_or_idiom": "`(x &&& 0x7FFFFFFF) ||| ((y &&& 0x7FFFFFFF) <<< 31)`",
+      "notes": "Keeps value strictly `< 2^62 < 2^63` (lean_box scalar)",
+      "columns": {
+        "Mathematical Intent": "Pack two 31-bit lanes into one 63-bit scalar",
+        "Lean 4 / Mathlib Tactic": "`(x &&& 0x7FFFFFFF) ||| ((y &&& 0x7FFFFFFF) <<< 31)`",
+        "Notes": "Keeps value strictly `< 2^62 < 2^63` (lean_box scalar)"
+      }
+    },
+    {
+      "handbook": "lean-unboxed-limbs-swar-handbook",
+      "intent": "Prevent cross-lane carry corruption",
+      "tactic_or_idiom": "`Bitwise SWAR guard mask`",
+      "notes": "Separates carry bits with top-lane zero guard positions",
+      "columns": {
+        "Mathematical Intent": "Prevent cross-lane carry corruption",
+        "Lean 4 / Mathlib Tactic": "`Bitwise SWAR guard mask`",
+        "Notes": "Separates carry bits with top-lane zero guard positions"
+      }
+    },
+    {
+      "handbook": "lean-unboxed-limbs-swar-handbook",
+      "intent": "Prove branch-free circuit equivalence",
+      "tactic_or_idiom": "`dsimp; omega`",
+      "notes": "Verifies `g ^^^ (e &&& (f ^^^ g)) = (e &&& f) ^^^ (~~~e &&& g)`",
+      "columns": {
+        "Mathematical Intent": "Prove branch-free circuit equivalence",
+        "Lean 4 / Mathlib Tactic": "`dsimp; omega`",
+        "Notes": "Verifies `g ^^^ (e &&& (f ^^^ g)) = (e &&& f) ^^^ (~~~e &&& g)`"
+      }
+    },
+    {
       "handbook": "lean-upstream-pr-handbook",
       "intent": "Check if lemma already exists in Mathlib",
       "tactic_or_idiom": "`lean_search(source: \"loogle\"",
@@ -3028,6 +3479,50 @@
         "User / Engineer Intent": "Verify proofs survive fresh kernel check",
         "Recommended Tool / Idiom": "Cold replay (`lake clean` / targeted rebuild)",
         "Actionable Recipe": "Quote scanned module & declaration counts in gate verdict"
+      }
+    },
+    {
+      "handbook": "lean-worker-wrapper-cps-handbook",
+      "intent": "Apply Worker/Wrapper split",
+      "tactic_or_idiom": "`Unpack structure at entry`",
+      "notes": "Keeps inner loop free of projections, dictionaries, and boxing",
+      "columns": {
+        "Mathematical Intent": "Apply Worker/Wrapper split",
+        "Lean 4 / Mathlib Tactic": "`Unpack structure at entry`",
+        "Notes": "Keeps inner loop free of projections, dictionaries, and boxing"
+      }
+    },
+    {
+      "handbook": "lean-worker-wrapper-cps-handbook",
+      "intent": "Establish Join Point in recursor",
+      "tactic_or_idiom": "`let joinPt := fun ...`",
+      "notes": "Retains single shared subterm node in kernel pointer cache",
+      "columns": {
+        "Mathematical Intent": "Establish Join Point in recursor",
+        "Lean 4 / Mathlib Tactic": "`let joinPt := fun ...`",
+        "Notes": "Retains single shared subterm node in kernel pointer cache"
+      }
+    },
+    {
+      "handbook": "lean-worker-wrapper-cps-handbook",
+      "intent": "Specialize call pattern (SpecConstr)",
+      "tactic_or_idiom": "`Split into monomorphic workers`",
+      "notes": "Eliminates inner pattern matching and branching overhead",
+      "columns": {
+        "Mathematical Intent": "Specialize call pattern (SpecConstr)",
+        "Lean 4 / Mathlib Tactic": "`Split into monomorphic workers`",
+        "Notes": "Eliminates inner pattern matching and branching overhead"
+      }
+    },
+    {
+      "handbook": "lean-worker-wrapper-cps-handbook",
+      "intent": "Defunctionalize closure continuation",
+      "tactic_or_idiom": "`First-order inductive dispatch`",
+      "notes": "Replaces lambda closures with token constructor matching",
+      "columns": {
+        "Mathematical Intent": "Defunctionalize closure continuation",
+        "Lean 4 / Mathlib Tactic": "`First-order inductive dispatch`",
+        "Notes": "Replaces lambda closures with token constructor matching"
       }
     },
     {
@@ -3212,11 +3707,11 @@
       "handbook": "hol-metamath-adapter-handbook",
       "error_pattern": "Punctured limit mismatch on `(f --> l) (at a)`",
       "cause": "HOL Light `at a` excludes `a` (`0 < dist(x,a) < e`)",
-      "fix": "Translate `at a` to `[!=] a` (`nhdsWithin a {a}`) in Mathlib (`CONC-20`)",
+      "fix": "Translate `at a` to `[!=] a` (`nhdsWithin a {a}^c`) in Mathlib (`CONC-20`)",
       "columns": {
         "Porting Bug / Error": "Punctured limit mismatch on `(f --> l) (at a)`",
         "Foundational Cause (HOL / Metamath vs Lean 4)": "HOL Light `at a` excludes `a` (`0 < dist(x,a) < e`)",
-        "Deterministic Fix": "Translate `at a` to `[!=] a` (`nhdsWithin a {a}`) in Mathlib (`CONC-20`)"
+        "Deterministic Fix": "Translate `at a` to `[!=] a` (`nhdsWithin a {a}^c`) in Mathlib (`CONC-20`)"
       }
     },
     {
@@ -3256,11 +3751,11 @@
       "handbook": "isabelle-isar-adapter-handbook",
       "error_pattern": "`(sumxinA. f x)` lacks `Finset` in Lean",
       "cause": "Isabelle `sum` takes `'a set` and returns `0` if `infinite A`",
-      "fix": "Either type `A : Finset ` with `sum x in A, f x` or use `sum x in A, f x` (`finsum`)",
+      "fix": "Either type `A : Finset ` with `sum x in A, f x` or use `sum^f x in A, f x` (`finsum`)",
       "columns": {
         "Porting Pitfall / Error": "`(sumxinA. f x)` lacks `Finset` in Lean",
         "Semantic Delta (Isabelle vs Lean 4)": "Isabelle `sum` takes `'a set` and returns `0` if `infinite A`",
-        "Deterministic Fix": "Either type `A : Finset ` with `sum x in A, f x` or use `sum x in A, f x` (`finsum`)"
+        "Deterministic Fix": "Either type `A : Finset ` with `sum x in A, f x` or use `sum^f x in A, f x` (`finsum`)"
       }
     },
     {
@@ -3311,11 +3806,11 @@
       "handbook": "itp-cross-porting-handbook",
       "error_pattern": "Limit theorem fails at `x` (`Tendsto f ( x)`)",
       "cause": "Source (`Isabelle` / `HOL Light`) `at x` excludes `x` (`0 < dist y x`)",
-      "fix": "Replace ` x` with punctured neighborhood `[!=] x` (`nhdsWithin x {x}`)",
+      "fix": "Replace ` x` with punctured neighborhood `[!=] x` (`nhdsWithin x {x}^c`)",
       "columns": {
         "Porting Defect / Error": "Limit theorem fails at `x` (`Tendsto f ( x)`)",
         "Foundational Cause": "Source (`Isabelle` / `HOL Light`) `at x` excludes `x` (`0 < dist y x`)",
-        "Fix": "Replace ` x` with punctured neighborhood `[!=] x` (`nhdsWithin x {x}`)"
+        "Fix": "Replace ` x` with punctured neighborhood `[!=] x` (`nhdsWithin x {x}^c`)"
       }
     },
     {
@@ -3371,6 +3866,50 @@
         "Error / Symptom": "`Nat.sub` underflow in trust-decay update",
         "Root Cause": "`trust - penalty` truncates at `0`",
         "Fix": "Guard with `min trust penalty` or `if penalty <= trust` + `omega`"
+      }
+    },
+    {
+      "handbook": "lean-asymptotic-algorithms-handbook",
+      "error_pattern": "Integer coefficient overflow in polynomial PRS",
+      "cause": "Standard Euclidean pseudo-division blows up coefficients",
+      "fix": "Divide by Collins-Brown-Traub factor `g * h^delta` on each step",
+      "columns": {
+        "Error / Symptom": "Integer coefficient overflow in polynomial PRS",
+        "Root Cause": "Standard Euclidean pseudo-division blows up coefficients",
+        "Fix": "Divide by Collins-Brown-Traub factor `g * h^delta` on each step"
+      }
+    },
+    {
+      "handbook": "lean-asymptotic-algorithms-handbook",
+      "error_pattern": "Exponential state explosion in permanent",
+      "cause": "Dense evaluation of reducible matrix",
+      "fix": "Apply Dulmage-Mendelsohn decomposition to split into smaller diagonal blocks",
+      "columns": {
+        "Error / Symptom": "Exponential state explosion in permanent",
+        "Root Cause": "Dense evaluation of reducible matrix",
+        "Fix": "Apply Dulmage-Mendelsohn decomposition to split into smaller diagonal blocks"
+      }
+    },
+    {
+      "handbook": "lean-asymptotic-algorithms-handbook",
+      "error_pattern": "Memory exhaustion in prime sieve",
+      "cause": "Static table or naive sieve allocates `O(x)` memory",
+      "fix": "Use segmented dynamic wheel sieve running in `O(sqrt(x))` space",
+      "columns": {
+        "Error / Symptom": "Memory exhaustion in prime sieve",
+        "Root Cause": "Static table or naive sieve allocates `O(x)` memory",
+        "Fix": "Use segmented dynamic wheel sieve running in `O(sqrt(x))` space"
+      }
+    },
+    {
+      "handbook": "lean-asymptotic-algorithms-handbook",
+      "error_pattern": "Range-gated fallback triggered",
+      "cause": "Artificial contest band threshold",
+      "fix": "Replace band dispatch with single dynamic algorithm scaling for all `n`",
+      "columns": {
+        "Error / Symptom": "Range-gated fallback triggered",
+        "Root Cause": "Artificial contest band threshold",
+        "Fix": "Replace band dispatch with single dynamic algorithm scaling for all `n`"
       }
     },
     {
@@ -3437,6 +3976,50 @@
         "Symptom / Error / Bottleneck": "Multiple `lean --server` processes exhausting RAM",
         "Root Cause": "Direct `lake serve` spawned outside broker",
         "Remediating Fix": "Stop stray servers via `lean-serve-broker stop`"
+      }
+    },
+    {
+      "handbook": "lean-computational-reflection-handbook",
+      "error_pattern": "`maximum recursion depth exceeded during rfl`",
+      "cause": "Reified AST contains unreduced non-constructor redexes",
+      "fix": "Ensure reified expressions use closed inductive constructors; avoid unfolding large lambdas",
+      "columns": {
+        "Error / Symptom": "`maximum recursion depth exceeded during rfl`",
+        "Root Cause": "Reified AST contains unreduced non-constructor redexes",
+        "Fix": "Ensure reified expressions use closed inductive constructors; avoid unfolding large lambdas"
+      }
+    },
+    {
+      "handbook": "lean-computational-reflection-handbook",
+      "error_pattern": "`Lean.ofReduceBool introduced in axiom check`",
+      "cause": "Usage of `native_decide` or `bv_decide` on proof path",
+      "fix": "Replace with computational reflection (`rfl`) or kernel-verified decision procedure",
+      "columns": {
+        "Error / Symptom": "`Lean.ofReduceBool introduced in axiom check`",
+        "Root Cause": "Usage of `native_decide` or `bv_decide` on proof path",
+        "Fix": "Replace with computational reflection (`rfl`) or kernel-verified decision procedure"
+      }
+    },
+    {
+      "handbook": "lean-computational-reflection-handbook",
+      "error_pattern": "`motive is not type correct in Nat.rec`",
+      "cause": "Dependent motive in recursor carries `Prop` payload",
+      "fix": "Use monomorphic non-dependent motive; separate proof witness from computational accumulator",
+      "columns": {
+        "Error / Symptom": "`motive is not type correct in Nat.rec`",
+        "Root Cause": "Dependent motive in recursor carries `Prop` payload",
+        "Fix": "Use monomorphic non-dependent motive; separate proof witness from computational accumulator"
+      }
+    },
+    {
+      "handbook": "lean-computational-reflection-handbook",
+      "error_pattern": "`kernel WHNF heartbeat timeout on step`",
+      "cause": "Complex branching step body inside recursor",
+      "fix": "Factor branch arms into top-level helper definitions (`stepAux`) or use branch-free ANF",
+      "columns": {
+        "Error / Symptom": "`kernel WHNF heartbeat timeout on step`",
+        "Root Cause": "Complex branching step body inside recursor",
+        "Fix": "Factor branch arms into top-level helper definitions (`stepAux`) or use branch-free ANF"
       }
     },
     {
@@ -3528,6 +4111,50 @@
       }
     },
     {
+      "handbook": "lean-egraph-cpsat-superopt-handbook",
+      "error_pattern": "Tree-greedy extractor increases instruction count",
+      "cause": "Greedy tree extraction duplicates shared subterms",
+      "fix": "Use CP-SAT sharing-aware DAG extractor with e-class activation variables",
+      "columns": {
+        "Error / Symptom": "Tree-greedy extractor increases instruction count",
+        "Root Cause": "Greedy tree extraction duplicates shared subterms",
+        "Fix": "Use CP-SAT sharing-aware DAG extractor with e-class activation variables"
+      }
+    },
+    {
+      "handbook": "lean-egraph-cpsat-superopt-handbook",
+      "error_pattern": "Cycle detected in extracted e-graph expression",
+      "cause": "E-graph rewrite cycles permitted circular dependency",
+      "fix": "Add topological level constraints `l_c >= l_child + 1` in CP-SAT model",
+      "columns": {
+        "Error / Symptom": "Cycle detected in extracted e-graph expression",
+        "Root Cause": "E-graph rewrite cycles permitted circular dependency",
+        "Fix": "Add topological level constraints `l_c >= l_child + 1` in CP-SAT model"
+      }
+    },
+    {
+      "handbook": "lean-egraph-cpsat-superopt-handbook",
+      "error_pattern": "`Nat` subtraction underflow in rewrite proof",
+      "cause": "Truncated subtraction hazard on `Nat`",
+      "fix": "Guard rewrite with hypothesis `b <= a` or use bitwise XOR masking",
+      "columns": {
+        "Error / Symptom": "`Nat` subtraction underflow in rewrite proof",
+        "Root Cause": "Truncated subtraction hazard on `Nat`",
+        "Fix": "Guard rewrite with hypothesis `b <= a` or use bitwise XOR masking"
+      }
+    },
+    {
+      "handbook": "lean-egraph-cpsat-superopt-handbook",
+      "error_pattern": "Solver timeout on massive e-graphs",
+      "cause": "Excessive e-class count without pruning",
+      "fix": "Apply e-graph class compaction and greedy domain tightening before CP-SAT",
+      "columns": {
+        "Error / Symptom": "Solver timeout on massive e-graphs",
+        "Root Cause": "Excessive e-class count without pruning",
+        "Fix": "Apply e-graph class compaction and greedy domain tightening before CP-SAT"
+      }
+    },
+    {
       "handbook": "lean-gateway-handbook",
       "error_pattern": "Context bloat from loading 50 KB handbooks",
       "cause": "Skipped Layer-1 lookup card",
@@ -3547,6 +4174,72 @@
         "Symptom / Error / Bottleneck": "Generative prover edits its own soundness audit",
         "Root Cause": "Role-container boundary violation",
         "Remediating Fix": "Keep `auditor` strictly read-only in a separate subagent turn"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "error_pattern": "`(deterministic) timeout at whnf, maximum number of heartbeats`",
+      "cause": "Unfolding `WellFounded.fix`/`brecOn`, parametric typeclass dictionaries in hot step (`WAVE-13 G1`), or unshared sibling WHNF trees",
+      "fix": "`KERNEL-LAW-06` (`@Nat.rec`), `KERNEL-LAW-23` (primitive `Nat.*` constants), `WAVE-13 G1` (monomorphize hot `def`)",
+      "columns": {
+        "Symptom / Elaborator Error / Bottleneck": "`(deterministic) timeout at whnf, maximum number of heartbeats`",
+        "Root Cause in `type_checker.cpp` / Lowering": "Unfolding `WellFounded.fix`/`brecOn`, parametric typeclass dictionaries in hot step (`WAVE-13 G1`), or unshared sibling WHNF trees",
+        "Remediating Kernel Law(s) & Fix": "`KERNEL-LAW-06` (`@Nat.rec`), `KERNEL-LAW-23` (primitive `Nat.*` constants), `WAVE-13 G1` (monomorphize hot `def`)"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "error_pattern": "`code generator does not support recursor 'Nat.rec' / 'Bool.rec'`",
+      "cause": "Raw `@Nat.rec` / `@Bool.rec` is fast in kernel WHNF (`rfl`), but Lean 4's LCNF native compiler requires structural `match` / `cond`",
+      "fix": "Use `@Nat.rec`/`@Bool.rec` only in kernel-evaluated `rfl` lanes, OR pair with a computable `@[csimp]` twin using `cond` + structural pattern matching (`KERNEL-LAW-07`, `KERNEL-LAW-08`)",
+      "columns": {
+        "Symptom / Elaborator Error / Bottleneck": "`code generator does not support recursor 'Nat.rec' / 'Bool.rec'`",
+        "Root Cause in `type_checker.cpp` / Lowering": "Raw `@Nat.rec` / `@Bool.rec` is fast in kernel WHNF (`rfl`), but Lean 4's LCNF native compiler requires structural `match` / `cond`",
+        "Remediating Kernel Law(s) & Fix": "Use `@Nat.rec`/`@Bool.rec` only in kernel-evaluated `rfl` lanes, OR pair with a computable `@[csimp]` twin using `cond` + structural pattern matching (`KERNEL-LAW-07`, `KERNEL-LAW-08`)"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "error_pattern": "Microbenchmark win (`-5%`) turns into full-file regression (`+3%`)",
+      "cause": "`ADR-INV-0025` Single-Consumer Isolation Paradox: microbench evaluated result directly to WHNF without realistic downstream consumer",
+      "fix": "Always benchmark inside the real consumer pipeline using `real - twinlit` PMU **sum-of-per-slot-medians-of-three** (`instructions:u`)",
+      "columns": {
+        "Symptom / Elaborator Error / Bottleneck": "Microbenchmark win (`-5%`) turns into full-file regression (`+3%`)",
+        "Root Cause in `type_checker.cpp` / Lowering": "`ADR-INV-0025` Single-Consumer Isolation Paradox: microbench evaluated result directly to WHNF without realistic downstream consumer",
+        "Remediating Kernel Law(s) & Fix": "Always benchmark inside the real consumer pipeline using `real - twinlit` PMU **sum-of-per-slot-medians-of-three** (`instructions:u`)"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "error_pattern": "Wrong answer `0` when isolating lowest set bit with `x &&& (0 - x)`",
+      "cause": "Truncating `Nat` subtraction evaluates `0 - x = 0` for all `x : Nat`! Two's-complement `-x` only holds on `BitVec w` / `UInt64`",
+      "fix": "Never write `0 - x` on `Nat`! On `BitVec w` use `x &&& (-x)`; on `Nat` clear lowest bit via `x &&& (x - 1)` (for `x > 0`) or compute 1-bit shift overlap `x &&& (x >>> 1)` (`KERNEL-LAW-18B`)",
+      "columns": {
+        "Symptom / Elaborator Error / Bottleneck": "Wrong answer `0` when isolating lowest set bit with `x &&& (0 - x)`",
+        "Root Cause in `type_checker.cpp` / Lowering": "Truncating `Nat` subtraction evaluates `0 - x = 0` for all `x : Nat`! Two's-complement `-x` only holds on `BitVec w` / `UInt64`",
+        "Remediating Kernel Law(s) & Fix": "Never write `0 - x` on `Nat`! On `BitVec w` use `x &&& (-x)`; on `Nat` clear lowest bit via `x &&& (x - 1)` (for `x > 0`) or compute 1-bit shift overlap `x &&& (x >>> 1)` (`KERNEL-LAW-18B`)"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "error_pattern": "`depends on axiom Lean.ofReduceBool` / `Lean.trustCompiler`",
+      "cause": "Proof invoked `native_decide`, `decide +native`, or `bv_decide` on a strict 3-axiom target",
+      "fix": "Switch to 3-rung `kernel_decide` (`first",
+      "columns": {
+        "Symptom / Elaborator Error / Bottleneck": "`depends on axiom Lean.ofReduceBool` / `Lean.trustCompiler`",
+        "Root Cause in `type_checker.cpp` / Lowering": "Proof invoked `native_decide`, `decide +native`, or `bv_decide` on a strict 3-axiom target",
+        "Remediating Kernel Law(s) & Fix": "Switch to 3-rung `kernel_decide` (`first"
+      }
+    },
+    {
+      "handbook": "lean-kernel-optimization-handbook",
+      "error_pattern": "Native Rust/C++ port silently overflows or corrupts aliased buffer",
+      "cause": "Arbitrary-precision Lean `Nat`/`Int` lowered to fixed `u64`/`i64` without width guard, or in-place `out == lhs` clobbered before read",
+      "fix": "Enforce `checked-small -> NeedsWide` fallback to `GMP`/`rug`, snapshot aliased inputs before mutation, and run `#eval` vs native conformance vectors `N01..N12`",
+      "columns": {
+        "Symptom / Elaborator Error / Bottleneck": "Native Rust/C++ port silently overflows or corrupts aliased buffer",
+        "Root Cause in `type_checker.cpp` / Lowering": "Arbitrary-precision Lean `Nat`/`Int` lowered to fixed `u64`/`i64` without width guard, or in-place `out == lhs` clobbered before read",
+        "Remediating Kernel Law(s) & Fix": "Enforce `checked-small -> NeedsWide` fallback to `GMP`/`rug`, snapshot aliased inputs before mutation, and run `#eval` vs native conformance vectors `N01..N12`"
       }
     },
     {
@@ -4004,11 +4697,11 @@
       "handbook": "lean-proof-review-handbook",
       "error_pattern": "`#print axioms` reveals `Classical.choice` in constructive lane",
       "cause": "`open Classical` or `by_cases` used on decidable predicate",
-      "fix": "Route to `@lean-sair-kernel-optimization` Route 9 (`Bool.rec` / `decide`)",
+      "fix": "Route to `@lean-kernel-optimization` Route 9 (`Bool.rec` / `decide`)",
       "columns": {
         "Symptom / Error / Bottleneck": "`#print axioms` reveals `Classical.choice` in constructive lane",
         "Root Cause": "`open Classical` or `by_cases` used on decidable predicate",
-        "Remediating Fix": "Route to `@lean-sair-kernel-optimization` Route 9 (`Bool.rec` / `decide`)"
+        "Remediating Fix": "Route to `@lean-kernel-optimization` Route 9 (`Bool.rec` / `decide`)"
       }
     },
     {
@@ -4086,72 +4779,6 @@
         "Symptom / Error / Bottleneck": "RALPH loop exceeds 3 iterations without convergence",
         "Root Cause": "Specification ambiguity rather than tactic defect",
         "Remediating Fix": "Escalate specification dispute to human / `specifier` ADR"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "error_pattern": "`(deterministic) timeout at whnf, maximum number of heartbeats`",
-      "cause": "Unfolding `WellFounded.fix`/`brecOn`, parametric typeclass dictionaries in hot step (`WAVE-13 G1`), or unshared sibling WHNF trees",
-      "fix": "`SAIR-LAW-06` (`@Nat.rec`), `SAIR-LAW-23` (primitive `Nat.*` constants), `WAVE-13 G1` (monomorphize hot `def`)",
-      "columns": {
-        "Symptom / Elaborator Error / Bottleneck": "`(deterministic) timeout at whnf, maximum number of heartbeats`",
-        "Root Cause in `type_checker.cpp` / Lowering": "Unfolding `WellFounded.fix`/`brecOn`, parametric typeclass dictionaries in hot step (`WAVE-13 G1`), or unshared sibling WHNF trees",
-        "Remediating SAIR Law(s) & Fix": "`SAIR-LAW-06` (`@Nat.rec`), `SAIR-LAW-23` (primitive `Nat.*` constants), `WAVE-13 G1` (monomorphize hot `def`)"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "error_pattern": "`code generator does not support recursor 'Nat.rec' / 'Bool.rec'`",
-      "cause": "Raw `@Nat.rec` / `@Bool.rec` is fast in kernel WHNF (`rfl`), but Lean 4's LCNF native compiler requires structural `match` / `cond`",
-      "fix": "Use `@Nat.rec`/`@Bool.rec` only in kernel-evaluated `rfl` lanes, OR pair with a computable `@[csimp]` twin using `cond` + structural pattern matching (`SAIR-LAW-07`, `SAIR-LAW-08`)",
-      "columns": {
-        "Symptom / Elaborator Error / Bottleneck": "`code generator does not support recursor 'Nat.rec' / 'Bool.rec'`",
-        "Root Cause in `type_checker.cpp` / Lowering": "Raw `@Nat.rec` / `@Bool.rec` is fast in kernel WHNF (`rfl`), but Lean 4's LCNF native compiler requires structural `match` / `cond`",
-        "Remediating SAIR Law(s) & Fix": "Use `@Nat.rec`/`@Bool.rec` only in kernel-evaluated `rfl` lanes, OR pair with a computable `@[csimp]` twin using `cond` + structural pattern matching (`SAIR-LAW-07`, `SAIR-LAW-08`)"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "error_pattern": "Microbenchmark win (`-5%`) turns into full-file regression (`+3%`)",
-      "cause": "`ADR-INV-0025` Single-Consumer Isolation Paradox: microbench evaluated result directly to WHNF without realistic downstream consumer",
-      "fix": "Always benchmark inside the real consumer pipeline using `real - twinlit` PMU **sum-of-per-slot-medians-of-three** (`instructions:u`)",
-      "columns": {
-        "Symptom / Elaborator Error / Bottleneck": "Microbenchmark win (`-5%`) turns into full-file regression (`+3%`)",
-        "Root Cause in `type_checker.cpp` / Lowering": "`ADR-INV-0025` Single-Consumer Isolation Paradox: microbench evaluated result directly to WHNF without realistic downstream consumer",
-        "Remediating SAIR Law(s) & Fix": "Always benchmark inside the real consumer pipeline using `real - twinlit` PMU **sum-of-per-slot-medians-of-three** (`instructions:u`)"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "error_pattern": "Wrong answer `0` when isolating lowest set bit with `x &&& (0 - x)`",
-      "cause": "Truncating `Nat` subtraction evaluates `0 - x = 0` for all `x : Nat`! Two's-complement `-x` only holds on `BitVec w` / `UInt64`",
-      "fix": "Never write `0 - x` on `Nat`! On `BitVec w` use `x &&& (-x)`; on `Nat` clear lowest bit via `x &&& (x - 1)` (for `x > 0`) or compute 1-bit shift overlap `x &&& (x >>> 1)` (`SAIR-LAW-18B`)",
-      "columns": {
-        "Symptom / Elaborator Error / Bottleneck": "Wrong answer `0` when isolating lowest set bit with `x &&& (0 - x)`",
-        "Root Cause in `type_checker.cpp` / Lowering": "Truncating `Nat` subtraction evaluates `0 - x = 0` for all `x : Nat`! Two's-complement `-x` only holds on `BitVec w` / `UInt64`",
-        "Remediating SAIR Law(s) & Fix": "Never write `0 - x` on `Nat`! On `BitVec w` use `x &&& (-x)`; on `Nat` clear lowest bit via `x &&& (x - 1)` (for `x > 0`) or compute 1-bit shift overlap `x &&& (x >>> 1)` (`SAIR-LAW-18B`)"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "error_pattern": "`depends on axiom Lean.ofReduceBool` / `Lean.trustCompiler`",
-      "cause": "Proof invoked `native_decide`, `decide +native`, or `bv_decide` on a strict 3-axiom target",
-      "fix": "Switch to 3-rung `sair_decide` (`first",
-      "columns": {
-        "Symptom / Elaborator Error / Bottleneck": "`depends on axiom Lean.ofReduceBool` / `Lean.trustCompiler`",
-        "Root Cause in `type_checker.cpp` / Lowering": "Proof invoked `native_decide`, `decide +native`, or `bv_decide` on a strict 3-axiom target",
-        "Remediating SAIR Law(s) & Fix": "Switch to 3-rung `sair_decide` (`first"
-      }
-    },
-    {
-      "handbook": "lean-sair-kernel-optimization-handbook",
-      "error_pattern": "Native Rust/C++ port silently overflows or corrupts aliased buffer",
-      "cause": "Arbitrary-precision Lean `Nat`/`Int` lowered to fixed `u64`/`i64` without width guard, or in-place `out == lhs` clobbered before read",
-      "fix": "Enforce `checked-small -> NeedsWide` fallback to `GMP`/`rug`, snapshot aliased inputs before mutation, and run `#eval` vs native conformance vectors `N01..N12`",
-      "columns": {
-        "Symptom / Elaborator Error / Bottleneck": "Native Rust/C++ port silently overflows or corrupts aliased buffer",
-        "Root Cause in `type_checker.cpp` / Lowering": "Arbitrary-precision Lean `Nat`/`Int` lowered to fixed `u64`/`i64` without width guard, or in-place `out == lhs` clobbered before read",
-        "Remediating SAIR Law(s) & Fix": "Enforce `checked-small -> NeedsWide` fallback to `GMP`/`rug`, snapshot aliased inputs before mutation, and run `#eval` vs native conformance vectors `N01..N12`"
       }
     },
     {
@@ -4243,6 +4870,50 @@
       }
     },
     {
+      "handbook": "lean-unboxed-limbs-swar-handbook",
+      "error_pattern": "Kernel WHNF slows down by 10x",
+      "cause": "Limb value exceeded `2^63 - 1`, allocating GMP mpz",
+      "fix": "Insert `&&& 0xFFFFFFFFFFFFF` mask at consumption points to maintain unboxed bound",
+      "columns": {
+        "Error / Symptom": "Kernel WHNF slows down by 10x",
+        "Root Cause": "Limb value exceeded `2^63 - 1`, allocating GMP mpz",
+        "Fix": "Insert `&&& 0xFFFFFFFFFFFFF` mask at consumption points to maintain unboxed bound"
+      }
+    },
+    {
+      "handbook": "lean-unboxed-limbs-swar-handbook",
+      "error_pattern": "`0 - x evaluates to 0 on Nat`",
+      "cause": "Truncated subtraction on Lean 4 `Nat`",
+      "fix": "Use bitwise NOT via XOR with explicit mask `x ^^^ 0xFFFFFFFF` rather than subtraction from zero",
+      "columns": {
+        "Error / Symptom": "`0 - x evaluates to 0 on Nat`",
+        "Root Cause": "Truncated subtraction on Lean 4 `Nat`",
+        "Fix": "Use bitwise NOT via XOR with explicit mask `x ^^^ 0xFFFFFFFF` rather than subtraction from zero"
+      }
+    },
+    {
+      "handbook": "lean-unboxed-limbs-swar-handbook",
+      "error_pattern": "Carry bits corrupt adjacent SWAR lane",
+      "cause": "Insufficient guard bits in SWAR packing",
+      "fix": "Restrict lane width to 31 bits with explicit MSB zero guard bit",
+      "columns": {
+        "Error / Symptom": "Carry bits corrupt adjacent SWAR lane",
+        "Root Cause": "Insufficient guard bits in SWAR packing",
+        "Fix": "Restrict lane width to 31 bits with explicit MSB zero guard bit"
+      }
+    },
+    {
+      "handbook": "lean-unboxed-limbs-swar-handbook",
+      "error_pattern": "Recursion timeout on wide limb propagation",
+      "cause": "Monolithic loop unrolling",
+      "fix": "Factor carry chain into linear unrolled struct update with tail-call passing",
+      "columns": {
+        "Error / Symptom": "Recursion timeout on wide limb propagation",
+        "Root Cause": "Monolithic loop unrolling",
+        "Fix": "Factor carry chain into linear unrolled struct update with tail-call passing"
+      }
+    },
+    {
       "handbook": "lean-upstream-pr-handbook",
       "error_pattern": "`#lint` fails on `docBlame` or `unusedArguments`",
       "cause": "Missing `/-- ... -/` docstring or extra typeclass",
@@ -4279,11 +4950,55 @@
       "handbook": "lean-verification-gate-handbook",
       "error_pattern": "`depends on axiom Lean.ofReduceBool`",
       "cause": "`native_decide` or `bv_decide` used in strict kernel lane",
-      "fix": "Replace with `sair_decide` (`rfl",
+      "fix": "Replace with `kernel_decide` (`rfl",
       "columns": {
         "Symptom / Error / Bottleneck": "`depends on axiom Lean.ofReduceBool`",
         "Root Cause": "`native_decide` or `bv_decide` used in strict kernel lane",
-        "Remediating Fix": "Replace with `sair_decide` (`rfl"
+        "Remediating Fix": "Replace with `kernel_decide` (`rfl"
+      }
+    },
+    {
+      "handbook": "lean-worker-wrapper-cps-handbook",
+      "error_pattern": "Excessive `instantiate_rev` overhead in kernel",
+      "cause": "Lambda abstractions with open bound variables in loop",
+      "fix": "Lift to top-level auxiliary definition or defunctionalize into first-order inductive type",
+      "columns": {
+        "Error / Symptom": "Excessive `instantiate_rev` overhead in kernel",
+        "Root Cause": "Lambda abstractions with open bound variables in loop",
+        "Fix": "Lift to top-level auxiliary definition or defunctionalize into first-order inductive type"
+      }
+    },
+    {
+      "handbook": "lean-worker-wrapper-cps-handbook",
+      "error_pattern": "Heap allocation inside recursor step",
+      "cause": "Constructor boxing `(a, b)` on each step",
+      "fix": "Unbox into separate scalar accumulator arguments in `@Nat.rec`",
+      "columns": {
+        "Error / Symptom": "Heap allocation inside recursor step",
+        "Root Cause": "Constructor boxing `(a, b)` on each step",
+        "Fix": "Unbox into separate scalar accumulator arguments in `@Nat.rec`"
+      }
+    },
+    {
+      "handbook": "lean-worker-wrapper-cps-handbook",
+      "error_pattern": "Typeclass projection cannot be reduced",
+      "cause": "Opaque dictionary in kernel",
+      "fix": "Supply explicit monomorphic instance or use Worker/Wrapper to eliminate typeclass before loop",
+      "columns": {
+        "Error / Symptom": "Typeclass projection cannot be reduced",
+        "Root Cause": "Opaque dictionary in kernel",
+        "Fix": "Supply explicit monomorphic instance or use Worker/Wrapper to eliminate typeclass before loop"
+      }
+    },
+    {
+      "handbook": "lean-worker-wrapper-cps-handbook",
+      "error_pattern": "Stack overflow on deep CPS reduction",
+      "cause": "Non-tail-recursive continuation chain",
+      "fix": "Convert continuation evaluator to tail-recursive accumulator loop",
+      "columns": {
+        "Error / Symptom": "Stack overflow on deep CPS reduction",
+        "Root Cause": "Non-tail-recursive continuation chain",
+        "Fix": "Convert continuation evaluator to tail-recursive accumulator loop"
       }
     },
     {
@@ -4712,11 +5427,11 @@
           "handbook": "hol-metamath-adapter-handbook",
           "error_pattern": "Punctured limit mismatch on `(f --> l) (at a)`",
           "cause": "HOL Light `at a` excludes `a` (`0 < dist(x,a) < e`)",
-          "fix": "Translate `at a` to `[!=] a` (`nhdsWithin a {a}`) in Mathlib (`CONC-20`)",
+          "fix": "Translate `at a` to `[!=] a` (`nhdsWithin a {a}^c`) in Mathlib (`CONC-20`)",
           "columns": {
             "Porting Bug / Error": "Punctured limit mismatch on `(f --> l) (at a)`",
             "Foundational Cause (HOL / Metamath vs Lean 4)": "HOL Light `at a` excludes `a` (`0 < dist(x,a) < e`)",
-            "Deterministic Fix": "Translate `at a` to `[!=] a` (`nhdsWithin a {a}`) in Mathlib (`CONC-20`)"
+            "Deterministic Fix": "Translate `at a` to `[!=] a` (`nhdsWithin a {a}^c`) in Mathlib (`CONC-20`)"
           }
         },
         {
@@ -4923,11 +5638,11 @@
           "handbook": "isabelle-isar-adapter-handbook",
           "error_pattern": "`(sumxinA. f x)` lacks `Finset` in Lean",
           "cause": "Isabelle `sum` takes `'a set` and returns `0` if `infinite A`",
-          "fix": "Either type `A : Finset ` with `sum x in A, f x` or use `sum x in A, f x` (`finsum`)",
+          "fix": "Either type `A : Finset ` with `sum x in A, f x` or use `sum^f x in A, f x` (`finsum`)",
           "columns": {
             "Porting Pitfall / Error": "`(sumxinA. f x)` lacks `Finset` in Lean",
             "Semantic Delta (Isabelle vs Lean 4)": "Isabelle `sum` takes `'a set` and returns `0` if `infinite A`",
-            "Deterministic Fix": "Either type `A : Finset ` with `sum x in A, f x` or use `sum x in A, f x` (`finsum`)"
+            "Deterministic Fix": "Either type `A : Finset ` with `sum x in A, f x` or use `sum^f x in A, f x` (`finsum`)"
           }
         },
         {
@@ -5123,11 +5838,11 @@
           "handbook": "itp-cross-porting-handbook",
           "error_pattern": "Limit theorem fails at `x` (`Tendsto f ( x)`)",
           "cause": "Source (`Isabelle` / `HOL Light`) `at x` excludes `x` (`0 < dist y x`)",
-          "fix": "Replace ` x` with punctured neighborhood `[!=] x` (`nhdsWithin x {x}`)",
+          "fix": "Replace ` x` with punctured neighborhood `[!=] x` (`nhdsWithin x {x}^c`)",
           "columns": {
             "Porting Defect / Error": "Limit theorem fails at `x` (`Tendsto f ( x)`)",
             "Foundational Cause": "Source (`Isabelle` / `HOL Light`) `at x` excludes `x` (`0 < dist y x`)",
-            "Fix": "Replace ` x` with punctured neighborhood `[!=] x` (`nhdsWithin x {x}`)"
+            "Fix": "Replace ` x` with punctured neighborhood `[!=] x` (`nhdsWithin x {x}^c`)"
           }
         },
         {
@@ -5262,6 +5977,162 @@
             "Error / Symptom": "`Nat.sub` underflow in trust-decay update",
             "Root Cause": "`trust - penalty` truncates at `0`",
             "Fix": "Guard with `min trust penalty` or `if penalty <= trust` + `omega`"
+          }
+        }
+      ]
+    },
+    "lean-asymptotic-algorithms-handbook": {
+      "file": "references/handbooks/lean-asymptotic-algorithms-handbook.md",
+      "skill_ref": "skills/lean-math-discrete/SKILL.md",
+      "goal_shape_count": 5,
+      "intent_count": 4,
+      "error_count": 4,
+      "goal_shape_templates": [
+        {
+          "handbook": "lean-asymptotic-algorithms-handbook",
+          "goal_shape": "Univariate polynomial discriminant in `Int[x]`",
+          "route_or_concordance": "`Subresultant PRS Algorithm`",
+          "template": "`subresultantPRS p (deriv p) 1 1`",
+          "columns": {
+            "Goal Shape": "Univariate polynomial discriminant in `Int[x]`",
+            "Target Typeclass / Lemma": "`Subresultant PRS Algorithm`",
+            "Proof Template": "`subresultantPRS p (deriv p) 1 1`"
+          }
+        },
+        {
+          "handbook": "lean-asymptotic-algorithms-handbook",
+          "goal_shape": "Sparse matrix permanent `perm(A)`",
+          "route_or_concordance": "`Dulmage-Mendelsohn Factorization`",
+          "template": "`perm(A) = prod (perm(A_i))`",
+          "columns": {
+            "Goal Shape": "Sparse matrix permanent `perm(A)`",
+            "Target Typeclass / Lemma": "`Dulmage-Mendelsohn Factorization`",
+            "Proof Template": "`perm(A) = prod (perm(A_i))`"
+          }
+        },
+        {
+          "handbook": "lean-asymptotic-algorithms-handbook",
+          "goal_shape": "Prime count `pi(x)` without seed tables",
+          "route_or_concordance": "`Dynamic Meissel-Lehmer Tree`",
+          "template": "`pi(x) = phi(x, a) + a - 1 - P2(x, a)`",
+          "columns": {
+            "Goal Shape": "Prime count `pi(x)` without seed tables",
+            "Target Typeclass / Lemma": "`Dynamic Meissel-Lehmer Tree`",
+            "Proof Template": "`pi(x) = phi(x, a) + a - 1 - P2(x, a)`"
+          }
+        },
+        {
+          "handbook": "lean-asymptotic-algorithms-handbook",
+          "goal_shape": "Prefix sum of Mobius `M(x)`",
+          "route_or_concordance": "`Deleglise-Rivat Hyperbola Sieve`",
+          "template": "`M(x) = sum_{k <= u} mu(k) + dynamic_hyperbola`",
+          "columns": {
+            "Goal Shape": "Prefix sum of Mobius `M(x)`",
+            "Target Typeclass / Lemma": "`Deleglise-Rivat Hyperbola Sieve`",
+            "Proof Template": "`M(x) = sum_{k <= u} mu(k) + dynamic_hyperbola`"
+          }
+        },
+        {
+          "handbook": "lean-asymptotic-algorithms-handbook",
+          "goal_shape": "Fixed padding hash schedule",
+          "route_or_concordance": "`Courtois-Naik-Song Schedule Folding`",
+          "template": "`w16 = sigma0(w1) + w0; fold_zero_words`",
+          "columns": {
+            "Goal Shape": "Fixed padding hash schedule",
+            "Target Typeclass / Lemma": "`Courtois-Naik-Song Schedule Folding`",
+            "Proof Template": "`w16 = sigma0(w1) + w0; fold_zero_words`"
+          }
+        }
+      ],
+      "intent_phrasebook": [
+        {
+          "handbook": "lean-asymptotic-algorithms-handbook",
+          "intent": "Compute polynomial GCD without coefficient explosion",
+          "tactic_or_idiom": "`Ducos Subresultant PRS`",
+          "notes": "Exactly divides pseudo-remainder by `g * h^delta`",
+          "columns": {
+            "Mathematical Intent": "Compute polynomial GCD without coefficient explosion",
+            "Lean 4 / Mathlib Tactic": "`Ducos Subresultant PRS`",
+            "Notes": "Exactly divides pseudo-remainder by `g * h^delta`"
+          }
+        },
+        {
+          "handbook": "lean-asymptotic-algorithms-handbook",
+          "intent": "Factor reducible sparse matrix",
+          "tactic_or_idiom": "`Hopcroft-Karp + SCC decomposition`",
+          "notes": "Prunes non-matching zero-edges and factors permanent",
+          "columns": {
+            "Mathematical Intent": "Factor reducible sparse matrix",
+            "Lean 4 / Mathlib Tactic": "`Hopcroft-Karp + SCC decomposition`",
+            "Notes": "Prunes non-matching zero-edges and factors permanent"
+          }
+        },
+        {
+          "handbook": "lean-asymptotic-algorithms-handbook",
+          "intent": "Evaluate `phi(x, a)` dynamically",
+          "tactic_or_idiom": "`Legendre tree with square-root cutoff`",
+          "notes": "Prunes branches when `x < p_a^2` to bound recursion depth",
+          "columns": {
+            "Mathematical Intent": "Evaluate `phi(x, a)` dynamically",
+            "Lean 4 / Mathlib Tactic": "`Legendre tree with square-root cutoff`",
+            "Notes": "Prunes branches when `x < p_a^2` to bound recursion depth"
+          }
+        },
+        {
+          "handbook": "lean-asymptotic-algorithms-handbook",
+          "intent": "Fold zero-word message schedule",
+          "tactic_or_idiom": "`Algebraic simplification`",
+          "notes": "Simplifies words `w_9..w_14 = 0` out of recurrence equations",
+          "columns": {
+            "Mathematical Intent": "Fold zero-word message schedule",
+            "Lean 4 / Mathlib Tactic": "`Algebraic simplification`",
+            "Notes": "Simplifies words `w_9..w_14 = 0` out of recurrence equations"
+          }
+        }
+      ],
+      "error_to_fix": [
+        {
+          "handbook": "lean-asymptotic-algorithms-handbook",
+          "error_pattern": "Integer coefficient overflow in polynomial PRS",
+          "cause": "Standard Euclidean pseudo-division blows up coefficients",
+          "fix": "Divide by Collins-Brown-Traub factor `g * h^delta` on each step",
+          "columns": {
+            "Error / Symptom": "Integer coefficient overflow in polynomial PRS",
+            "Root Cause": "Standard Euclidean pseudo-division blows up coefficients",
+            "Fix": "Divide by Collins-Brown-Traub factor `g * h^delta` on each step"
+          }
+        },
+        {
+          "handbook": "lean-asymptotic-algorithms-handbook",
+          "error_pattern": "Exponential state explosion in permanent",
+          "cause": "Dense evaluation of reducible matrix",
+          "fix": "Apply Dulmage-Mendelsohn decomposition to split into smaller diagonal blocks",
+          "columns": {
+            "Error / Symptom": "Exponential state explosion in permanent",
+            "Root Cause": "Dense evaluation of reducible matrix",
+            "Fix": "Apply Dulmage-Mendelsohn decomposition to split into smaller diagonal blocks"
+          }
+        },
+        {
+          "handbook": "lean-asymptotic-algorithms-handbook",
+          "error_pattern": "Memory exhaustion in prime sieve",
+          "cause": "Static table or naive sieve allocates `O(x)` memory",
+          "fix": "Use segmented dynamic wheel sieve running in `O(sqrt(x))` space",
+          "columns": {
+            "Error / Symptom": "Memory exhaustion in prime sieve",
+            "Root Cause": "Static table or naive sieve allocates `O(x)` memory",
+            "Fix": "Use segmented dynamic wheel sieve running in `O(sqrt(x))` space"
+          }
+        },
+        {
+          "handbook": "lean-asymptotic-algorithms-handbook",
+          "error_pattern": "Range-gated fallback triggered",
+          "cause": "Artificial contest band threshold",
+          "fix": "Replace band dispatch with single dynamic algorithm scaling for all `n`",
+          "columns": {
+            "Error / Symptom": "Range-gated fallback triggered",
+            "Root Cause": "Artificial contest band threshold",
+            "Fix": "Replace band dispatch with single dynamic algorithm scaling for all `n`"
           }
         }
       ]
@@ -5503,6 +6374,162 @@
         }
       ]
     },
+    "lean-computational-reflection-handbook": {
+      "file": "references/handbooks/lean-computational-reflection-handbook.md",
+      "skill_ref": "skills/lean-proof-refactor/SKILL.md",
+      "goal_shape_count": 5,
+      "intent_count": 4,
+      "error_count": 4,
+      "goal_shape_templates": [
+        {
+          "handbook": "lean-computational-reflection-handbook",
+          "goal_shape": "`fastStep s = specStep s` on fixed schedule",
+          "route_or_concordance": "`Computational Reflection`",
+          "template": "`change denote env (compileFast s) = denote env (compileSpec s); rw [compile_sound]; rfl`",
+          "columns": {
+            "Goal Shape": "`fastStep s = specStep s` on fixed schedule",
+            "Target Typeclass / Lemma": "`Computational Reflection`",
+            "Proof Template": "`change denote env (compileFast s) = denote env (compileSpec s); rw [compile_sound]; rfl`"
+          }
+        },
+        {
+          "handbook": "lean-computational-reflection-handbook",
+          "goal_shape": "`impl n = spec n` over inductive domain",
+          "route_or_concordance": "`Section 1/2/3 Induction Bridge`",
+          "template": "`intro n; induction n with | zero => rfl | succ n ih => exact step_bridge n ih`",
+          "columns": {
+            "Goal Shape": "`impl n = spec n` over inductive domain",
+            "Target Typeclass / Lemma": "`Section 1/2/3 Induction Bridge`",
+            "Proof Template": "`intro n; induction n with | zero => rfl | succ n ih => exact step_bridge n ih`"
+          }
+        },
+        {
+          "handbook": "lean-computational-reflection-handbook",
+          "goal_shape": "Monolithic 2,000-line tactic unfolding",
+          "route_or_concordance": "`Reflective Normalization`",
+          "template": "`have h : e = reify e' := rfl; rw [h, <- norm_sound]; rfl`",
+          "columns": {
+            "Goal Shape": "Monolithic 2,000-line tactic unfolding",
+            "Target Typeclass / Lemma": "`Reflective Normalization`",
+            "Proof Template": "`have h : e = reify e' := rfl; rw [h, <- norm_sound]; rfl`"
+          }
+        },
+        {
+          "handbook": "lean-computational-reflection-handbook",
+          "goal_shape": "Equivalence of 64-round word circuits",
+          "route_or_concordance": "`denote (compile c) = eval c`",
+          "template": "`refine Circuit.soundness_reflection _ _ _ rfl`",
+          "columns": {
+            "Goal Shape": "Equivalence of 64-round word circuits",
+            "Target Typeclass / Lemma": "`denote (compile c) = eval c`",
+            "Proof Template": "`refine Circuit.soundness_reflection _ _ _ rfl`"
+          }
+        },
+        {
+          "handbook": "lean-computational-reflection-handbook",
+          "goal_shape": "Proof-cone isolation audit",
+          "route_or_concordance": "`KERNEL-LAW-22 0-Prop Leakage`",
+          "template": "`set_option pp.all true in #check impl -- verify 0 Prop dependencies`",
+          "columns": {
+            "Goal Shape": "Proof-cone isolation audit",
+            "Target Typeclass / Lemma": "`KERNEL-LAW-22 0-Prop Leakage`",
+            "Proof Template": "`set_option pp.all true in #check impl -- verify 0 Prop dependencies`"
+          }
+        }
+      ],
+      "intent_phrasebook": [
+        {
+          "handbook": "lean-computational-reflection-handbook",
+          "intent": "Compress 3,000-line tactical proof into reflection",
+          "tactic_or_idiom": "`rw [<- norm_sound]; rfl`",
+          "notes": "Replaces repetitive rewrite sequences with certified decision procedure",
+          "columns": {
+            "Mathematical Intent": "Compress 3,000-line tactical proof into reflection",
+            "Lean 4 / Mathlib Tactic": "`rw [<- norm_sound]; rfl`",
+            "Notes": "Replaces repetitive rewrite sequences with certified decision procedure"
+          }
+        },
+        {
+          "handbook": "lean-computational-reflection-handbook",
+          "intent": "Enforce Section 1/2/3 Abstraction-Concrete Split",
+          "tactic_or_idiom": "`#verso split directives`",
+          "notes": "Separates motives, concrete kernel implementation, and correctness proofs",
+          "columns": {
+            "Mathematical Intent": "Enforce Section 1/2/3 Abstraction-Concrete Split",
+            "Lean 4 / Mathlib Tactic": "`#verso split directives`",
+            "Notes": "Separates motives, concrete kernel implementation, and correctness proofs"
+          }
+        },
+        {
+          "handbook": "lean-computational-reflection-handbook",
+          "intent": "Eliminate Prop leakage from computational core",
+          "tactic_or_idiom": "`extract_pure_computation`",
+          "notes": "Audits runtime definitions to ensure zero equality witnesses or proof types",
+          "columns": {
+            "Mathematical Intent": "Eliminate Prop leakage from computational core",
+            "Lean 4 / Mathlib Tactic": "`extract_pure_computation`",
+            "Notes": "Audits runtime definitions to ensure zero equality witnesses or proof types"
+          }
+        },
+        {
+          "handbook": "lean-computational-reflection-handbook",
+          "intent": "Verify reflection soundness via structural induction",
+          "tactic_or_idiom": "`induction e with ... <;> (dsimp [simplify]; omega)`",
+          "notes": "Establishes `denote (norm e) = denote e` for all AST instances",
+          "columns": {
+            "Mathematical Intent": "Verify reflection soundness via structural induction",
+            "Lean 4 / Mathlib Tactic": "`induction e with ... <;> (dsimp [simplify]; omega)`",
+            "Notes": "Establishes `denote (norm e) = denote e` for all AST instances"
+          }
+        }
+      ],
+      "error_to_fix": [
+        {
+          "handbook": "lean-computational-reflection-handbook",
+          "error_pattern": "`maximum recursion depth exceeded during rfl`",
+          "cause": "Reified AST contains unreduced non-constructor redexes",
+          "fix": "Ensure reified expressions use closed inductive constructors; avoid unfolding large lambdas",
+          "columns": {
+            "Error / Symptom": "`maximum recursion depth exceeded during rfl`",
+            "Root Cause": "Reified AST contains unreduced non-constructor redexes",
+            "Fix": "Ensure reified expressions use closed inductive constructors; avoid unfolding large lambdas"
+          }
+        },
+        {
+          "handbook": "lean-computational-reflection-handbook",
+          "error_pattern": "`Lean.ofReduceBool introduced in axiom check`",
+          "cause": "Usage of `native_decide` or `bv_decide` on proof path",
+          "fix": "Replace with computational reflection (`rfl`) or kernel-verified decision procedure",
+          "columns": {
+            "Error / Symptom": "`Lean.ofReduceBool introduced in axiom check`",
+            "Root Cause": "Usage of `native_decide` or `bv_decide` on proof path",
+            "Fix": "Replace with computational reflection (`rfl`) or kernel-verified decision procedure"
+          }
+        },
+        {
+          "handbook": "lean-computational-reflection-handbook",
+          "error_pattern": "`motive is not type correct in Nat.rec`",
+          "cause": "Dependent motive in recursor carries `Prop` payload",
+          "fix": "Use monomorphic non-dependent motive; separate proof witness from computational accumulator",
+          "columns": {
+            "Error / Symptom": "`motive is not type correct in Nat.rec`",
+            "Root Cause": "Dependent motive in recursor carries `Prop` payload",
+            "Fix": "Use monomorphic non-dependent motive; separate proof witness from computational accumulator"
+          }
+        },
+        {
+          "handbook": "lean-computational-reflection-handbook",
+          "error_pattern": "`kernel WHNF heartbeat timeout on step`",
+          "cause": "Complex branching step body inside recursor",
+          "fix": "Factor branch arms into top-level helper definitions (`stepAux`) or use branch-free ANF",
+          "columns": {
+            "Error / Symptom": "`kernel WHNF heartbeat timeout on step`",
+            "Root Cause": "Complex branching step body inside recursor",
+            "Fix": "Factor branch arms into top-level helper definitions (`stepAux`) or use branch-free ANF"
+          }
+        }
+      ]
+    },
     "lean-core-only-handbook": {
       "file": "references/handbooks/lean-core-only-handbook.md",
       "skill_ref": "skills/lean-core-only/SKILL.md",
@@ -5535,11 +6562,11 @@
         {
           "handbook": "lean-core-only-handbook",
           "goal_shape": "Decidable finite identity without `Lean.ofReduceBool`",
-          "route_or_concordance": "`sair_decide` (`rfl",
+          "route_or_concordance": "`kernel_decide` (`rfl",
           "template": "decide +kernel",
           "columns": {
             "Goal / Term Shape": "Decidable finite identity without `Lean.ofReduceBool`",
-            "Primary Tactic / Pattern": "`sair_decide` (`rfl",
+            "Primary Tactic / Pattern": "`kernel_decide` (`rfl",
             "Canonical Recipe / Notes": "decide +kernel"
           }
         }
@@ -5852,6 +6879,162 @@
         }
       ]
     },
+    "lean-egraph-cpsat-superopt-handbook": {
+      "file": "references/handbooks/lean-egraph-cpsat-superopt-handbook.md",
+      "skill_ref": "skills/lean-specification/SKILL.md",
+      "goal_shape_count": 5,
+      "intent_count": 4,
+      "error_count": 4,
+      "goal_shape_templates": [
+        {
+          "handbook": "lean-egraph-cpsat-superopt-handbook",
+          "goal_shape": "Common subexpressions across e-graph",
+          "route_or_concordance": "`CP-SAT Exact DAG Extraction`",
+          "template": "`model := CpModel(); model.Minimize(sum(cost * x)); solver.Solve(model)`",
+          "columns": {
+            "Goal Shape": "Common subexpressions across e-graph",
+            "Target Typeclass / Lemma": "`CP-SAT Exact DAG Extraction`",
+            "Proof Template": "`model := CpModel(); model.Minimize(sum(cost * x)); solver.Solve(model)`"
+          }
+        },
+        {
+          "handbook": "lean-egraph-cpsat-superopt-handbook",
+          "goal_shape": "Candidate rewrite rule `lhs -> rhs`",
+          "route_or_concordance": "`Dual-Certified Rewriting`",
+          "template": "`theorem sound : eval lhs = eval rhs; theorem cost : cost rhs <= cost lhs`",
+          "columns": {
+            "Goal Shape": "Candidate rewrite rule `lhs -> rhs`",
+            "Target Typeclass / Lemma": "`Dual-Certified Rewriting`",
+            "Proof Template": "`theorem sound : eval lhs = eval rhs; theorem cost : cost rhs <= cost lhs`"
+          }
+        },
+        {
+          "handbook": "lean-egraph-cpsat-superopt-handbook",
+          "goal_shape": "Bitwise logic simplification",
+          "route_or_concordance": "`3-Gate Zhegalkin Normal Form`",
+          "template": "`theorem maj_zhegalkin : (a &&& (b ^^^ c)) ^^^ (b &&& c) = (a &&& b) ^^^ (a &&& c) ^^^ (b &&& c)`",
+          "columns": {
+            "Goal Shape": "Bitwise logic simplification",
+            "Target Typeclass / Lemma": "`3-Gate Zhegalkin Normal Form`",
+            "Proof Template": "`theorem maj_zhegalkin : (a &&& (b ^^^ c)) ^^^ (b &&& c) = (a &&& b) ^^^ (a &&& c) ^^^ (b &&& c)`"
+          }
+        },
+        {
+          "handbook": "lean-egraph-cpsat-superopt-handbook",
+          "goal_shape": "Fixed schedule constant folding",
+          "route_or_concordance": "`E-Graph Equality Saturation`",
+          "template": "`egg_saturate rules [const_fold, shift_fold]; extract_dag`",
+          "columns": {
+            "Goal Shape": "Fixed schedule constant folding",
+            "Target Typeclass / Lemma": "`E-Graph Equality Saturation`",
+            "Proof Template": "`egg_saturate rules [const_fold, shift_fold]; extract_dag`"
+          }
+        },
+        {
+          "handbook": "lean-egraph-cpsat-superopt-handbook",
+          "goal_shape": "SWAR lane bit-budget allocation",
+          "route_or_concordance": "`CP-SAT Knapsack Model`",
+          "template": "`model.Add(sum(lane_widths) <= 62); solver.Solve(model)`",
+          "columns": {
+            "Goal Shape": "SWAR lane bit-budget allocation",
+            "Target Typeclass / Lemma": "`CP-SAT Knapsack Model`",
+            "Proof Template": "`model.Add(sum(lane_widths) <= 62); solver.Solve(model)`"
+          }
+        }
+      ],
+      "intent_phrasebook": [
+        {
+          "handbook": "lean-egraph-cpsat-superopt-handbook",
+          "intent": "Extract sharing-optimal DAG from e-graph",
+          "tactic_or_idiom": "`CP-SAT ILP solver`",
+          "notes": "Solves 0-1 integer model minimizing shared node cost with acyclicity levels",
+          "columns": {
+            "Mathematical Intent": "Extract sharing-optimal DAG from e-graph",
+            "Lean 4 / Mathlib Tactic": "`CP-SAT ILP solver`",
+            "Notes": "Solves 0-1 integer model minimizing shared node cost with acyclicity levels"
+          }
+        },
+        {
+          "handbook": "lean-egraph-cpsat-superopt-handbook",
+          "intent": "Prove semantic soundness of rewrite rule",
+          "tactic_or_idiom": "`omega / bitwise lemmas`",
+          "notes": "Discharges algebraic equivalence without `bv_decide` or `native_decide`",
+          "columns": {
+            "Mathematical Intent": "Prove semantic soundness of rewrite rule",
+            "Lean 4 / Mathlib Tactic": "`omega / bitwise lemmas`",
+            "Notes": "Discharges algebraic equivalence without `bv_decide` or `native_decide`"
+          }
+        },
+        {
+          "handbook": "lean-egraph-cpsat-superopt-handbook",
+          "intent": "Prove cost reduction under KernelModel",
+          "tactic_or_idiom": "`by decide`",
+          "notes": "Verifies `whnfCost rhs <= whnfCost lhs` counting AST nodes and scalar limbs",
+          "columns": {
+            "Mathematical Intent": "Prove cost reduction under KernelModel",
+            "Lean 4 / Mathlib Tactic": "`by decide`",
+            "Notes": "Verifies `whnfCost rhs <= whnfCost lhs` counting AST nodes and scalar limbs"
+          }
+        },
+        {
+          "handbook": "lean-egraph-cpsat-superopt-handbook",
+          "intent": "Synthesize optimal schedule unrolling",
+          "tactic_or_idiom": "`CP-SAT sequence formulation`",
+          "notes": "Finds optimal operation ordering minimizing peak register pressure",
+          "columns": {
+            "Mathematical Intent": "Synthesize optimal schedule unrolling",
+            "Lean 4 / Mathlib Tactic": "`CP-SAT sequence formulation`",
+            "Notes": "Finds optimal operation ordering minimizing peak register pressure"
+          }
+        }
+      ],
+      "error_to_fix": [
+        {
+          "handbook": "lean-egraph-cpsat-superopt-handbook",
+          "error_pattern": "Tree-greedy extractor increases instruction count",
+          "cause": "Greedy tree extraction duplicates shared subterms",
+          "fix": "Use CP-SAT sharing-aware DAG extractor with e-class activation variables",
+          "columns": {
+            "Error / Symptom": "Tree-greedy extractor increases instruction count",
+            "Root Cause": "Greedy tree extraction duplicates shared subterms",
+            "Fix": "Use CP-SAT sharing-aware DAG extractor with e-class activation variables"
+          }
+        },
+        {
+          "handbook": "lean-egraph-cpsat-superopt-handbook",
+          "error_pattern": "Cycle detected in extracted e-graph expression",
+          "cause": "E-graph rewrite cycles permitted circular dependency",
+          "fix": "Add topological level constraints `l_c >= l_child + 1` in CP-SAT model",
+          "columns": {
+            "Error / Symptom": "Cycle detected in extracted e-graph expression",
+            "Root Cause": "E-graph rewrite cycles permitted circular dependency",
+            "Fix": "Add topological level constraints `l_c >= l_child + 1` in CP-SAT model"
+          }
+        },
+        {
+          "handbook": "lean-egraph-cpsat-superopt-handbook",
+          "error_pattern": "`Nat` subtraction underflow in rewrite proof",
+          "cause": "Truncated subtraction hazard on `Nat`",
+          "fix": "Guard rewrite with hypothesis `b <= a` or use bitwise XOR masking",
+          "columns": {
+            "Error / Symptom": "`Nat` subtraction underflow in rewrite proof",
+            "Root Cause": "Truncated subtraction hazard on `Nat`",
+            "Fix": "Guard rewrite with hypothesis `b <= a` or use bitwise XOR masking"
+          }
+        },
+        {
+          "handbook": "lean-egraph-cpsat-superopt-handbook",
+          "error_pattern": "Solver timeout on massive e-graphs",
+          "cause": "Excessive e-class count without pruning",
+          "fix": "Apply e-graph class compaction and greedy domain tightening before CP-SAT",
+          "columns": {
+            "Error / Symptom": "Solver timeout on massive e-graphs",
+            "Root Cause": "Excessive e-class count without pruning",
+            "Fix": "Apply e-graph class compaction and greedy domain tightening before CP-SAT"
+          }
+        }
+      ]
+    },
     "lean-gateway-handbook": {
       "file": "references/handbooks/lean-gateway-handbook.md",
       "skill_ref": "skills/lean-gateway/SKILL.md",
@@ -5884,12 +7067,12 @@
         {
           "handbook": "lean-gateway-handbook",
           "goal_shape": "Slow `rfl` / `decide` or C++/SIMD extraction",
-          "route_or_concordance": "`prover`/`editor` -> `@lean-sair-kernel-optimization`",
-          "template": "Bridge clean spec via `@[csimp]` twin (`SAIR-LAW-07`)",
+          "route_or_concordance": "`prover`/`editor` -> `@lean-kernel-optimization`",
+          "template": "Bridge clean spec via `@[csimp]` twin (`KERNEL-LAW-07`)",
           "columns": {
             "Goal / Term Shape": "Slow `rfl` / `decide` or C++/SIMD extraction",
-            "Primary Tactic / Pattern": "`prover`/`editor` -> `@lean-sair-kernel-optimization`",
-            "Canonical Recipe / Notes": "Bridge clean spec via `@[csimp]` twin (`SAIR-LAW-07`)"
+            "Primary Tactic / Pattern": "`prover`/`editor` -> `@lean-kernel-optimization`",
+            "Canonical Recipe / Notes": "Bridge clean spec via `@[csimp]` twin (`KERNEL-LAW-07`)"
           }
         }
       ],
@@ -5938,6 +7121,330 @@
             "Symptom / Error / Bottleneck": "Generative prover edits its own soundness audit",
             "Root Cause": "Role-container boundary violation",
             "Remediating Fix": "Keep `auditor` strictly read-only in a separate subagent turn"
+          }
+        }
+      ]
+    },
+    "lean-kernel-optimization-handbook": {
+      "file": "references/handbooks/lean-kernel-optimization-handbook.md",
+      "skill_ref": "skills/lean-kernel-optimization/SKILL.md",
+      "goal_shape_count": 14,
+      "intent_count": 7,
+      "error_count": 6,
+      "goal_shape_templates": [
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "goal_shape": "`let x := e` inside hot `@Nat.rec` step body",
+          "route_or_concordance": "`KERNEL-LAW-01`, `KERNEL-LAW-01B`, `ADR-INV-0025`",
+          "template": "`kernel-friendly-term-design`",
+          "columns": {
+            "Goal / Term Shape": "`let x := e` inside hot `@Nat.rec` step body",
+            "Primary Kernel Law(s)": "`KERNEL-LAW-01`, `KERNEL-LAW-01B`, `ADR-INV-0025`",
+            "Recommended AltProof Route": "`kernel-friendly-term-design`",
+            "Canonical Kernel Pattern / Tactic": "Inline single-use `let` bindings (`Expr::Let` + zeta tax); bind `let x := e` only when `>= 2` uses are dynamically evaluated on the active path AND confirmed by `real - twinlit` PMU"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "goal_shape": "Sibling calls `(f x, g (f x))` or `Nat.add (f x) (f x)`",
+          "route_or_concordance": "`KERNEL-LAW-01C`",
+          "template": "`kernel-friendly-term-design`",
+          "columns": {
+            "Goal / Term Shape": "Sibling calls `(f x, g (f x))` or `Nat.add (f x) (f x)`",
+            "Primary Kernel Law(s)": "`KERNEL-LAW-01C`",
+            "Recommended AltProof Route": "`kernel-friendly-term-design`",
+            "Canonical Kernel Pattern / Tactic": "Lean's WHNF cache is NOT shared across sibling `Expr` nodes; hoist `let fx := f x` once when `f` is non-trivial"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "goal_shape": "Closed expression `(1 <<< 64) - 1` or table inside lambda",
+          "route_or_concordance": "`KERNEL-LAW-02`, `KERNEL-LAW-11`",
+          "template": "`closed-def-whnf-caching`",
+          "columns": {
+            "Goal / Term Shape": "Closed expression `(1 <<< 64) - 1` or table inside lambda",
+            "Primary Kernel Law(s)": "`KERNEL-LAW-02`, `KERNEL-LAW-11`",
+            "Recommended AltProof Route": "`closed-def-whnf-caching`",
+            "Canonical Kernel Pattern / Tactic": "Hoist to a top-level closed `def` (memoized in `m_st->m_whnf`) or pre-evaluate at elaboration time via `eval_nat%`"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "goal_shape": "Deeply curried `fun a b c d => ...` or `k + 1` step increment",
+          "route_or_concordance": "`KERNEL-LAW-02B`, `KERNEL-LAW-03`, `KERNEL-LAW-03B`",
+          "template": "`kernel-friendly-term-design`",
+          "columns": {
+            "Goal / Term Shape": "Deeply curried `fun a b c d => ...` or `k + 1` step increment",
+            "Primary Kernel Law(s)": "`KERNEL-LAW-02B`, `KERNEL-LAW-03`, `KERNEL-LAW-03B`",
+            "Recommended AltProof Route": "`kernel-friendly-term-design`",
+            "Canonical Kernel Pattern / Tactic": "Place invariant binders outermost; prefer `Nat.succ k` on `@Nat.rec` step accumulators and `Nat.add 1 q` (constant on LHS) on non-structural counters (`ADR-INV-0025`)"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "goal_shape": "`termination_by` / `brecOn` or `if h : c then ... else ...`",
+          "route_or_concordance": "`KERNEL-LAW-06`, `KERNEL-LAW-07`, `KERNEL-LAW-08`",
+          "template": "`kernel-friendly-term-design`",
+          "columns": {
+            "Goal / Term Shape": "`termination_by` / `brecOn` or `if h : c then ... else ...`",
+            "Primary Kernel Law(s)": "`KERNEL-LAW-06`, `KERNEL-LAW-07`, `KERNEL-LAW-08`",
+            "Recommended AltProof Route": "`kernel-friendly-term-design`",
+            "Canonical Kernel Pattern / Tactic": "Replace `WellFounded.fix`/`brecOn` with direct `@Nat.rec`; replace `ite`/`dite` (`Decidable` synthesis) with `@Bool.rec` or `cond` (`cond` also compiles in LCNF)"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "goal_shape": "Nested tuple state `(a, (b, (c, d)))` or wide CPS arity",
+          "route_or_concordance": "`KERNEL-LAW-09`, `KERNEL-LAW-10`, `KERNEL-LAW-24`",
+          "template": "`kernel-friendly-term-design`",
+          "columns": {
+            "Goal / Term Shape": "Nested tuple state `(a, (b, (c, d)))` or wide CPS arity",
+            "Primary Kernel Law(s)": "`KERNEL-LAW-09`, `KERNEL-LAW-10`, `KERNEL-LAW-24`",
+            "Recommended AltProof Route": "`kernel-friendly-term-design`",
+            "Canonical Kernel Pattern / Tactic": "Flatten into unboxed CPS (`<= 6` scalar registers) or SWAR width-2 word pairs (`KERNEL-LAW-24`: width-2 + 1-bit step beats width-1, width-3, and width-4)"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "goal_shape": "Signed recurrence `a - b` or modular polynomial GCD",
+          "route_or_concordance": "`KERNEL-LAW-12`, `KERNEL-LAW-12B`",
+          "template": "`kernel-friendly-term-design`",
+          "columns": {
+            "Goal / Term Shape": "Signed recurrence `a - b` or modular polynomial GCD",
+            "Primary Kernel Law(s)": "`KERNEL-LAW-12`, `KERNEL-LAW-12B`",
+            "Recommended AltProof Route": "`kernel-friendly-term-design`",
+            "Canonical Kernel Pattern / Tactic": "Avoid `Int`/`Rat`/`ZMod` boxing in hot kernels; use direct `@Nat.rec` sign-magnitude or unnormalized `(pos, neg)` `Nat` pairs"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "goal_shape": "`x * x` on multi-limb (`>= 32` limbs) vs single-limb `Nat`",
+          "route_or_concordance": "`KERNEL-LAW-13`, `KERNEL-LAW-13B`",
+          "template": "`gmp-swar-word-packing`",
+          "columns": {
+            "Goal / Term Shape": "`x * x` on multi-limb (`>= 32` limbs) vs single-limb `Nat`",
+            "Primary Kernel Law(s)": "`KERNEL-LAW-13`, `KERNEL-LAW-13B`",
+            "Recommended AltProof Route": "`gmp-swar-word-packing`",
+            "Canonical Kernel Pattern / Tactic": "`mpz_mul(r, a, a)` triggers `mpn_sqr` above `SQR_TOOM2_THRESHOLD` (~30 limbs), saving `-14%..-21%` in own window (`NR-076`); below ~20 limbs `let`-sharing overhead dominates"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "goal_shape": "`n / 2^k`, `n % 2^k`, or base-`B` Horner digit packing",
+          "route_or_concordance": "`KERNEL-LAW-14`, `KERNEL-LAW-14B`, `KERNEL-LAW-14C`",
+          "template": "`gmp-swar-word-packing`",
+          "columns": {
+            "Goal / Term Shape": "`n / 2^k`, `n % 2^k`, or base-`B` Horner digit packing",
+            "Primary Kernel Law(s)": "`KERNEL-LAW-14`, `KERNEL-LAW-14B`, `KERNEL-LAW-14C`",
+            "Recommended AltProof Route": "`gmp-swar-word-packing`",
+            "Canonical Kernel Pattern / Tactic": "Replace `/ 2^k` and `% 2^k` with `Nat.shiftRight` and `Nat.land`; aggregate Horner digits in balanced binary chunks aligned to 64-bit GMP limbs (`KERNEL-LAW-16B`)"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "goal_shape": "Fixed-width array/DP recurrence or bitboard transition",
+          "route_or_concordance": "`KERNEL-LAW-15`, `KERNEL-LAW-16`, `KERNEL-LAW-20`",
+          "template": "`gmp-swar-word-packing`",
+          "columns": {
+            "Goal / Term Shape": "Fixed-width array/DP recurrence or bitboard transition",
+            "Primary Kernel Law(s)": "`KERNEL-LAW-15`, `KERNEL-LAW-16`, `KERNEL-LAW-20`",
+            "Recommended AltProof Route": "`gmp-swar-word-packing`",
+            "Canonical Kernel Pattern / Tactic": "Pack `k` lanes into one GMP `Nat` word (Kronecker SWAR); unroll fixed-trip kernels via binary-doubling combinators (`t0..t6`); evaluate cellular/crypto rules in ANF (`^^^`, `&&&`, `"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "goal_shape": "Finite-state graph/polyomino/automaton frontier search",
+          "route_or_concordance": "`KERNEL-LAW-17`, `KERNEL-LAW-18`, `KERNEL-LAW-18B`",
+          "template": "`algorithm-class-substitution`",
+          "columns": {
+            "Goal / Term Shape": "Finite-state graph/polyomino/automaton frontier search",
+            "Primary Kernel Law(s)": "`KERNEL-LAW-17`, `KERNEL-LAW-18`, `KERNEL-LAW-18B`",
+            "Recommended AltProof Route": "`algorithm-class-substitution`",
+            "Canonical Kernel Pattern / Tactic": "Canonicalize states as CBV `Nat` words (never tree-recurse over lists); compress frontiers as ZDD/bitmasks; count/test 1-bit shift overlaps (`overlap := w &&& (w >>> 1)`) without `Nat` underflow"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "goal_shape": "Branching search with lookahead constraints & symmetry",
+          "route_or_concordance": "`KERNEL-LAW-19`, `KERNEL-LAW-19B`, `KERNEL-LAW-21`",
+          "template": "`algorithm-class-substitution`",
+          "columns": {
+            "Goal / Term Shape": "Branching search with lookahead constraints & symmetry",
+            "Primary Kernel Law(s)": "`KERNEL-LAW-19`, `KERNEL-LAW-19B`, `KERNEL-LAW-21`",
+            "Recommended AltProof Route": "`algorithm-class-substitution`",
+            "Canonical Kernel Pattern / Tactic": "Fuse lookahead checks into one bitwise mask guard; short-circuit `Nat.beq avail 0` immediately; prove finite symmetry/heuristic reorderings via decoupled `List.Perm` certificates"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "goal_shape": "Parametric hot `def step (cfg : Config)` vs concrete loop",
+          "route_or_concordance": "`KERNEL-LAW-22..25B`, `WAVE-13 G1`",
+          "template": "`abstraction-concrete-duality`",
+          "columns": {
+            "Goal / Term Shape": "Parametric hot `def step (cfg : Config)` vs concrete loop",
+            "Primary Kernel Law(s)": "`KERNEL-LAW-22..25B`, `WAVE-13 G1`",
+            "Recommended AltProof Route": "`abstraction-concrete-duality`",
+            "Canonical Kernel Pattern / Tactic": "Specialize hot `def`s to raw unboxed `Nat` literals (`1,600x..3,345x` penalty for parametric hot steps!); state general parametric theorems separately and bridge via `rfl` (`<= 1%` cost)"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "goal_shape": "Hardware codegen from verified Lean bit/word kernel",
+          "route_or_concordance": "`PolyBitOp`, Exact-vs-Packed Lowering",
+          "template": "`proof-carrying-codegen`",
+          "columns": {
+            "Goal / Term Shape": "Hardware codegen from verified Lean bit/word kernel",
+            "Primary Kernel Law(s)": "`PolyBitOp`, Exact-vs-Packed Lowering",
+            "Recommended AltProof Route": "`proof-carrying-codegen`",
+            "Canonical Kernel Pattern / Tactic": "Emit MLIR (`ctpop`/`gpu.shuffle xor`), Ada `sm_89` PTX, AVX2/AVX-512 Rust, or freestanding C++20; enforce `exact` (`GMP`/`rug`) vs `checked-small -> NeedsWide` overflow traps (`N01..N12`)"
+          }
+        }
+      ],
+      "intent_phrasebook": [
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "intent": "\"Speed up `rfl` / `decide +kernel` on a recursive function\"",
+          "tactic_or_idiom": "`KERNEL-LAW-06`, `KERNEL-LAW-02`, `KERNEL-LAW-23`",
+          "notes": "Replace `WellFounded.fix` with direct `@Nat.rec`; hoist closed constants outside step lambdas; replace polymorphic `+`/`*` with `Nat.add`/`Nat.mul`",
+          "columns": {
+            "User / Engineer Intent": "\"Speed up `rfl` / `decide +kernel` on a recursive function\"",
+            "Target Kernel Law(s)": "`KERNEL-LAW-06`, `KERNEL-LAW-02`, `KERNEL-LAW-23`",
+            "Actionable Transformation Recipe": "Replace `WellFounded.fix` with direct `@Nat.rec`; hoist closed constants outside step lambdas; replace polymorphic `+`/`*` with `Nat.add`/`Nat.mul`"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "intent": "\"Abstract repeated proof logic without slowing down the kernel\"",
+          "tactic_or_idiom": "`WAVE-13 G1`, `KERNEL-LAW-07`, `KERNEL-LAW-22B`",
+          "notes": "Keep hot `def` specialized to raw unboxed `Nat` + inline `nat_lit`s; state a parametric proof theorem over abstract step parameters and discharge the concrete instance by `rfl`",
+          "columns": {
+            "User / Engineer Intent": "\"Abstract repeated proof logic without slowing down the kernel\"",
+            "Target Kernel Law(s)": "`WAVE-13 G1`, `KERNEL-LAW-07`, `KERNEL-LAW-22B`",
+            "Actionable Transformation Recipe": "Keep hot `def` specialized to raw unboxed `Nat` + inline `nat_lit`s; state a parametric proof theorem over abstract step parameters and discharge the concrete instance by `rfl`"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "intent": "\"Choose `Nat.succ k` vs `Nat.add 1 k` in a tight loop\"",
+          "tactic_or_idiom": "`ADR-INV-0025`, `KERNEL-LAW-03`",
+          "notes": "Use `Nat.succ k` when `k` is consumed by a structural `@Nat.rec` eliminator (`Expr::App(Const(\"Nat.succ\"), k)` directly matches the `succ` arm); use `Nat.add 1 q` for arithmetic counters evaluated to `nat_lit`",
+          "columns": {
+            "User / Engineer Intent": "\"Choose `Nat.succ k` vs `Nat.add 1 k` in a tight loop\"",
+            "Target Kernel Law(s)": "`ADR-INV-0025`, `KERNEL-LAW-03`",
+            "Actionable Transformation Recipe": "Use `Nat.succ k` when `k` is consumed by a structural `@Nat.rec` eliminator (`Expr::App(Const(\"Nat.succ\"), k)` directly matches the `succ` arm); use `Nat.add 1 q` for arithmetic counters evaluated to `nat_lit`"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "intent": "\"Eliminate `Classical.choice` and `Lean.ofReduceBool` from a proof\"",
+          "tactic_or_idiom": "`KERNEL-LAW-08`, `KERNEL-LAW-22`, `kernel_decide`",
+          "notes": "Replace `if`/`split` with `@Bool.rec`/`cond`; close concrete goals with 3-rung `kernel_decide` (`first",
+          "columns": {
+            "User / Engineer Intent": "\"Eliminate `Classical.choice` and `Lean.ofReduceBool` from a proof\"",
+            "Target Kernel Law(s)": "`KERNEL-LAW-08`, `KERNEL-LAW-22`, `kernel_decide`",
+            "Actionable Transformation Recipe": "Replace `if`/`split` with `@Bool.rec`/`cond`; close concrete goals with 3-rung `kernel_decide` (`first"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "intent": "\"Implement branch-free low-bit cut/mask on `Nat` words\"",
+          "tactic_or_idiom": "`KERNEL-LAW-14`, Nov 11-12 Cut/Mask Contract",
+          "notes": "Exploit truncating `Nat.sub`: when `k <= s`, `k - s = 0` yields `1 <<< 0 - 1 = 0` mask automatically; guard multi-limb shifts with `Nat.ble a (1 <<< (k - s) - 1)` skip-to-plain-shift when profitable",
+          "columns": {
+            "User / Engineer Intent": "\"Implement branch-free low-bit cut/mask on `Nat` words\"",
+            "Target Kernel Law(s)": "`KERNEL-LAW-14`, Nov 11-12 Cut/Mask Contract",
+            "Actionable Transformation Recipe": "Exploit truncating `Nat.sub`: when `k <= s`, `k - s = 0` yields `1 <<< 0 - 1 = 0` mask automatically; guard multi-limb shifts with `Nat.ble a (1 <<< (k - s) - 1)` skip-to-plain-shift when profitable"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "intent": "\"Lower a Lean SWAR/BitVec kernel to C++20, Rust SIMD, or CUDA PTX\"",
+          "tactic_or_idiom": "`PolyBitOp`, Exact-vs-Packed Lowering",
+          "notes": "Prove equivalence to spec in Lean (`Template_ProofCarryingCodegen.lean`), lower pure bitwise kernels via `PolyBitOp`, and guard multi-limb arithmetic with `checked-small -> NeedsWide` + operand snapshotting",
+          "columns": {
+            "User / Engineer Intent": "\"Lower a Lean SWAR/BitVec kernel to C++20, Rust SIMD, or CUDA PTX\"",
+            "Target Kernel Law(s)": "`PolyBitOp`, Exact-vs-Packed Lowering",
+            "Actionable Transformation Recipe": "Prove equivalence to spec in Lean (`Template_ProofCarryingCodegen.lean`), lower pure bitwise kernels via `PolyBitOp`, and guard multi-limb arithmetic with `checked-small -> NeedsWide` + operand snapshotting"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "intent": "\"Stream verified state transitions over zero-copy IPC / NVMe\"",
+          "tactic_or_idiom": "`alignas(128)` SPSC, `.leangrph`, `io_uring`",
+          "notes": "Separate cache lines to `128 B` (Zen 3 L2 streamer prefetch pair), align `.leangrph` CSR headers to `128 B` (`64 B` magic/counts + `64 B` SHA-256), and register `2 MB` `HugeTLB` buffers with `io_uring`",
+          "columns": {
+            "User / Engineer Intent": "\"Stream verified state transitions over zero-copy IPC / NVMe\"",
+            "Target Kernel Law(s)": "`alignas(128)` SPSC, `.leangrph`, `io_uring`",
+            "Actionable Transformation Recipe": "Separate cache lines to `128 B` (Zen 3 L2 streamer prefetch pair), align `.leangrph` CSR headers to `128 B` (`64 B` magic/counts + `64 B` SHA-256), and register `2 MB` `HugeTLB` buffers with `io_uring`"
+          }
+        }
+      ],
+      "error_to_fix": [
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "error_pattern": "`(deterministic) timeout at whnf, maximum number of heartbeats`",
+          "cause": "Unfolding `WellFounded.fix`/`brecOn`, parametric typeclass dictionaries in hot step (`WAVE-13 G1`), or unshared sibling WHNF trees",
+          "fix": "`KERNEL-LAW-06` (`@Nat.rec`), `KERNEL-LAW-23` (primitive `Nat.*` constants), `WAVE-13 G1` (monomorphize hot `def`)",
+          "columns": {
+            "Symptom / Elaborator Error / Bottleneck": "`(deterministic) timeout at whnf, maximum number of heartbeats`",
+            "Root Cause in `type_checker.cpp` / Lowering": "Unfolding `WellFounded.fix`/`brecOn`, parametric typeclass dictionaries in hot step (`WAVE-13 G1`), or unshared sibling WHNF trees",
+            "Remediating Kernel Law(s) & Fix": "`KERNEL-LAW-06` (`@Nat.rec`), `KERNEL-LAW-23` (primitive `Nat.*` constants), `WAVE-13 G1` (monomorphize hot `def`)"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "error_pattern": "`code generator does not support recursor 'Nat.rec' / 'Bool.rec'`",
+          "cause": "Raw `@Nat.rec` / `@Bool.rec` is fast in kernel WHNF (`rfl`), but Lean 4's LCNF native compiler requires structural `match` / `cond`",
+          "fix": "Use `@Nat.rec`/`@Bool.rec` only in kernel-evaluated `rfl` lanes, OR pair with a computable `@[csimp]` twin using `cond` + structural pattern matching (`KERNEL-LAW-07`, `KERNEL-LAW-08`)",
+          "columns": {
+            "Symptom / Elaborator Error / Bottleneck": "`code generator does not support recursor 'Nat.rec' / 'Bool.rec'`",
+            "Root Cause in `type_checker.cpp` / Lowering": "Raw `@Nat.rec` / `@Bool.rec` is fast in kernel WHNF (`rfl`), but Lean 4's LCNF native compiler requires structural `match` / `cond`",
+            "Remediating Kernel Law(s) & Fix": "Use `@Nat.rec`/`@Bool.rec` only in kernel-evaluated `rfl` lanes, OR pair with a computable `@[csimp]` twin using `cond` + structural pattern matching (`KERNEL-LAW-07`, `KERNEL-LAW-08`)"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "error_pattern": "Microbenchmark win (`-5%`) turns into full-file regression (`+3%`)",
+          "cause": "`ADR-INV-0025` Single-Consumer Isolation Paradox: microbench evaluated result directly to WHNF without realistic downstream consumer",
+          "fix": "Always benchmark inside the real consumer pipeline using `real - twinlit` PMU **sum-of-per-slot-medians-of-three** (`instructions:u`)",
+          "columns": {
+            "Symptom / Elaborator Error / Bottleneck": "Microbenchmark win (`-5%`) turns into full-file regression (`+3%`)",
+            "Root Cause in `type_checker.cpp` / Lowering": "`ADR-INV-0025` Single-Consumer Isolation Paradox: microbench evaluated result directly to WHNF without realistic downstream consumer",
+            "Remediating Kernel Law(s) & Fix": "Always benchmark inside the real consumer pipeline using `real - twinlit` PMU **sum-of-per-slot-medians-of-three** (`instructions:u`)"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "error_pattern": "Wrong answer `0` when isolating lowest set bit with `x &&& (0 - x)`",
+          "cause": "Truncating `Nat` subtraction evaluates `0 - x = 0` for all `x : Nat`! Two's-complement `-x` only holds on `BitVec w` / `UInt64`",
+          "fix": "Never write `0 - x` on `Nat`! On `BitVec w` use `x &&& (-x)`; on `Nat` clear lowest bit via `x &&& (x - 1)` (for `x > 0`) or compute 1-bit shift overlap `x &&& (x >>> 1)` (`KERNEL-LAW-18B`)",
+          "columns": {
+            "Symptom / Elaborator Error / Bottleneck": "Wrong answer `0` when isolating lowest set bit with `x &&& (0 - x)`",
+            "Root Cause in `type_checker.cpp` / Lowering": "Truncating `Nat` subtraction evaluates `0 - x = 0` for all `x : Nat`! Two's-complement `-x` only holds on `BitVec w` / `UInt64`",
+            "Remediating Kernel Law(s) & Fix": "Never write `0 - x` on `Nat`! On `BitVec w` use `x &&& (-x)`; on `Nat` clear lowest bit via `x &&& (x - 1)` (for `x > 0`) or compute 1-bit shift overlap `x &&& (x >>> 1)` (`KERNEL-LAW-18B`)"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "error_pattern": "`depends on axiom Lean.ofReduceBool` / `Lean.trustCompiler`",
+          "cause": "Proof invoked `native_decide`, `decide +native`, or `bv_decide` on a strict 3-axiom target",
+          "fix": "Switch to 3-rung `kernel_decide` (`first",
+          "columns": {
+            "Symptom / Elaborator Error / Bottleneck": "`depends on axiom Lean.ofReduceBool` / `Lean.trustCompiler`",
+            "Root Cause in `type_checker.cpp` / Lowering": "Proof invoked `native_decide`, `decide +native`, or `bv_decide` on a strict 3-axiom target",
+            "Remediating Kernel Law(s) & Fix": "Switch to 3-rung `kernel_decide` (`first"
+          }
+        },
+        {
+          "handbook": "lean-kernel-optimization-handbook",
+          "error_pattern": "Native Rust/C++ port silently overflows or corrupts aliased buffer",
+          "cause": "Arbitrary-precision Lean `Nat`/`Int` lowered to fixed `u64`/`i64` without width guard, or in-place `out == lhs` clobbered before read",
+          "fix": "Enforce `checked-small -> NeedsWide` fallback to `GMP`/`rug`, snapshot aliased inputs before mutation, and run `#eval` vs native conformance vectors `N01..N12`",
+          "columns": {
+            "Symptom / Elaborator Error / Bottleneck": "Native Rust/C++ port silently overflows or corrupts aliased buffer",
+            "Root Cause in `type_checker.cpp` / Lowering": "Arbitrary-precision Lean `Nat`/`Int` lowered to fixed `u64`/`i64` without width guard, or in-place `out == lhs` clobbered before read",
+            "Remediating Kernel Law(s) & Fix": "Enforce `checked-small -> NeedsWide` fallback to `GMP`/`rug`, snapshot aliased inputs before mutation, and run `#eval` vs native conformance vectors `N01..N12`"
           }
         }
       ]
@@ -6285,11 +7792,11 @@
         },
         {
           "handbook": "lean-math-analysis-handbook",
-          "intent": "Work with eventualities `forall  x in l, P x`",
+          "intent": "Work with eventualities `forall ^f x in l, P x`",
           "tactic_or_idiom": "`filter_upwards [h1, h2] with x hx1 hx2`",
           "notes": "Avoids unfolding `Filter.Eventually`",
           "columns": {
-            "Mathematical Intent": "Work with eventualities `forall  x in l, P x`",
+            "Mathematical Intent": "Work with eventualities `forall ^f x in l, P x`",
             "Lean 4 / Mathlib Tactic": "`filter_upwards [h1, h2] with x hx1 hx2`",
             "Notes": "Avoids unfolding `Filter.Eventually`"
           }
@@ -7293,11 +8800,11 @@
           "handbook": "lean-proof-handbook",
           "intent": "Get ranked alternative proof candidates",
           "tactic_or_idiom": "`lean_goal(filePath, line, col, target: \"altproof\")`",
-          "notes": "Queries SAIR/AltProof advisor",
+          "notes": "Queries AltProof/kernel advisor",
           "columns": {
             "Proving Intent": "Get ranked alternative proof candidates",
             "Canonical Action (`lean-lsp` + Lean 4)": "`lean_goal(filePath, line, col, target: \"altproof\")`",
-            "Notes": "Queries SAIR/AltProof advisor"
+            "Notes": "Queries AltProof/kernel advisor"
           }
         },
         {
@@ -7424,11 +8931,11 @@
         {
           "handbook": "lean-proof-refactor-handbook",
           "goal_shape": "Slow `Prop`-friendly `specFn` vs fast monomorphic `fastFn`",
-          "route_or_concordance": "`@[csimp] theorem specFn_eq_fastFn` (`SAIR-LAW-07`)",
+          "route_or_concordance": "`@[csimp] theorem specFn_eq_fastFn` (`KERNEL-LAW-07`)",
           "template": "Keep `specFn` clean for proofs; route LCNF execution & `rw` to `fastFn`",
           "columns": {
             "Goal / Term Shape": "Slow `Prop`-friendly `specFn` vs fast monomorphic `fastFn`",
-            "Primary Tactic / Pattern": "`@[csimp] theorem specFn_eq_fastFn` (`SAIR-LAW-07`)",
+            "Primary Tactic / Pattern": "`@[csimp] theorem specFn_eq_fastFn` (`KERNEL-LAW-07`)",
             "Canonical Recipe / Notes": "Keep `specFn` clean for proofs; route LCNF execution & `rw` to `fastFn`"
           }
         },
@@ -7807,11 +9314,11 @@
           "handbook": "lean-proof-review-handbook",
           "error_pattern": "`#print axioms` reveals `Classical.choice` in constructive lane",
           "cause": "`open Classical` or `by_cases` used on decidable predicate",
-          "fix": "Route to `@lean-sair-kernel-optimization` Route 9 (`Bool.rec` / `decide`)",
+          "fix": "Route to `@lean-kernel-optimization` Route 9 (`Bool.rec` / `decide`)",
           "columns": {
             "Symptom / Error / Bottleneck": "`#print axioms` reveals `Classical.choice` in constructive lane",
             "Root Cause": "`open Classical` or `by_cases` used on decidable predicate",
-            "Remediating Fix": "Route to `@lean-sair-kernel-optimization` Route 9 (`Bool.rec` / `decide`)"
+            "Remediating Fix": "Route to `@lean-kernel-optimization` Route 9 (`Bool.rec` / `decide`)"
           }
         },
         {
@@ -8060,330 +9567,6 @@
             "Symptom / Error / Bottleneck": "RALPH loop exceeds 3 iterations without convergence",
             "Root Cause": "Specification ambiguity rather than tactic defect",
             "Remediating Fix": "Escalate specification dispute to human / `specifier` ADR"
-          }
-        }
-      ]
-    },
-    "lean-sair-kernel-optimization-handbook": {
-      "file": "references/handbooks/lean-sair-kernel-optimization-handbook.md",
-      "skill_ref": "skills/lean-sair-kernel-optimization/SKILL.md",
-      "goal_shape_count": 14,
-      "intent_count": 7,
-      "error_count": 6,
-      "goal_shape_templates": [
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "goal_shape": "`let x := e` inside hot `@Nat.rec` step body",
-          "route_or_concordance": "`SAIR-LAW-01`, `SAIR-LAW-01B`, `ADR-INV-0025`",
-          "template": "`kernel-friendly-term-design`",
-          "columns": {
-            "Goal / Term Shape": "`let x := e` inside hot `@Nat.rec` step body",
-            "Primary SAIR Law(s)": "`SAIR-LAW-01`, `SAIR-LAW-01B`, `ADR-INV-0025`",
-            "Recommended AltProof Route": "`kernel-friendly-term-design`",
-            "Canonical Kernel Pattern / Tactic": "Inline single-use `let` bindings (`Expr::Let` + zeta tax); bind `let x := e` only when `>= 2` uses are dynamically evaluated on the active path AND confirmed by `real - twinlit` PMU"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "goal_shape": "Sibling calls `(f x, g (f x))` or `Nat.add (f x) (f x)`",
-          "route_or_concordance": "`SAIR-LAW-01C`",
-          "template": "`kernel-friendly-term-design`",
-          "columns": {
-            "Goal / Term Shape": "Sibling calls `(f x, g (f x))` or `Nat.add (f x) (f x)`",
-            "Primary SAIR Law(s)": "`SAIR-LAW-01C`",
-            "Recommended AltProof Route": "`kernel-friendly-term-design`",
-            "Canonical Kernel Pattern / Tactic": "Lean's WHNF cache is NOT shared across sibling `Expr` nodes; hoist `let fx := f x` once when `f` is non-trivial"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "goal_shape": "Closed expression `(1 <<< 64) - 1` or table inside lambda",
-          "route_or_concordance": "`SAIR-LAW-02`, `SAIR-LAW-11`",
-          "template": "`closed-def-whnf-caching`",
-          "columns": {
-            "Goal / Term Shape": "Closed expression `(1 <<< 64) - 1` or table inside lambda",
-            "Primary SAIR Law(s)": "`SAIR-LAW-02`, `SAIR-LAW-11`",
-            "Recommended AltProof Route": "`closed-def-whnf-caching`",
-            "Canonical Kernel Pattern / Tactic": "Hoist to a top-level closed `def` (memoized in `m_st->m_whnf`) or pre-evaluate at elaboration time via `eval_nat%`"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "goal_shape": "Deeply curried `fun a b c d => ...` or `k + 1` step increment",
-          "route_or_concordance": "`SAIR-LAW-02B`, `SAIR-LAW-03`, `SAIR-LAW-03B`",
-          "template": "`kernel-friendly-term-design`",
-          "columns": {
-            "Goal / Term Shape": "Deeply curried `fun a b c d => ...` or `k + 1` step increment",
-            "Primary SAIR Law(s)": "`SAIR-LAW-02B`, `SAIR-LAW-03`, `SAIR-LAW-03B`",
-            "Recommended AltProof Route": "`kernel-friendly-term-design`",
-            "Canonical Kernel Pattern / Tactic": "Place invariant binders outermost; prefer `Nat.succ k` on `@Nat.rec` step accumulators and `Nat.add 1 q` (constant on LHS) on non-structural counters (`ADR-INV-0025`)"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "goal_shape": "`termination_by` / `brecOn` or `if h : c then ... else ...`",
-          "route_or_concordance": "`SAIR-LAW-06`, `SAIR-LAW-07`, `SAIR-LAW-08`",
-          "template": "`kernel-friendly-term-design`",
-          "columns": {
-            "Goal / Term Shape": "`termination_by` / `brecOn` or `if h : c then ... else ...`",
-            "Primary SAIR Law(s)": "`SAIR-LAW-06`, `SAIR-LAW-07`, `SAIR-LAW-08`",
-            "Recommended AltProof Route": "`kernel-friendly-term-design`",
-            "Canonical Kernel Pattern / Tactic": "Replace `WellFounded.fix`/`brecOn` with direct `@Nat.rec`; replace `ite`/`dite` (`Decidable` synthesis) with `@Bool.rec` or `cond` (`cond` also compiles in LCNF)"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "goal_shape": "Nested tuple state `(a, (b, (c, d)))` or wide CPS arity",
-          "route_or_concordance": "`SAIR-LAW-09`, `SAIR-LAW-10`, `SAIR-LAW-24`",
-          "template": "`kernel-friendly-term-design`",
-          "columns": {
-            "Goal / Term Shape": "Nested tuple state `(a, (b, (c, d)))` or wide CPS arity",
-            "Primary SAIR Law(s)": "`SAIR-LAW-09`, `SAIR-LAW-10`, `SAIR-LAW-24`",
-            "Recommended AltProof Route": "`kernel-friendly-term-design`",
-            "Canonical Kernel Pattern / Tactic": "Flatten into unboxed CPS (`<= 6` scalar registers) or SWAR width-2 word pairs (`SAIR-LAW-24`: width-2 + 1-bit step beats width-1, width-3, and width-4)"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "goal_shape": "Signed recurrence `a - b` or modular polynomial GCD",
-          "route_or_concordance": "`SAIR-LAW-12`, `SAIR-LAW-12B`",
-          "template": "`kernel-friendly-term-design`",
-          "columns": {
-            "Goal / Term Shape": "Signed recurrence `a - b` or modular polynomial GCD",
-            "Primary SAIR Law(s)": "`SAIR-LAW-12`, `SAIR-LAW-12B`",
-            "Recommended AltProof Route": "`kernel-friendly-term-design`",
-            "Canonical Kernel Pattern / Tactic": "Avoid `Int`/`Rat`/`ZMod` boxing in hot kernels; use direct `@Nat.rec` sign-magnitude or unnormalized `(pos, neg)` `Nat` pairs"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "goal_shape": "`x * x` on multi-limb (`>= 32` limbs) vs single-limb `Nat`",
-          "route_or_concordance": "`SAIR-LAW-13`, `SAIR-LAW-13B`",
-          "template": "`gmp-swar-word-packing`",
-          "columns": {
-            "Goal / Term Shape": "`x * x` on multi-limb (`>= 32` limbs) vs single-limb `Nat`",
-            "Primary SAIR Law(s)": "`SAIR-LAW-13`, `SAIR-LAW-13B`",
-            "Recommended AltProof Route": "`gmp-swar-word-packing`",
-            "Canonical Kernel Pattern / Tactic": "`mpz_mul(r, a, a)` triggers `mpn_sqr` above `SQR_TOOM2_THRESHOLD` (~30 limbs), saving `-14%..-21%` in own window (`NR-076`); below ~20 limbs `let`-sharing overhead dominates"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "goal_shape": "`n / 2^k`, `n % 2^k`, or base-`B` Horner digit packing",
-          "route_or_concordance": "`SAIR-LAW-14`, `SAIR-LAW-14B`, `SAIR-LAW-14C`",
-          "template": "`gmp-swar-word-packing`",
-          "columns": {
-            "Goal / Term Shape": "`n / 2^k`, `n % 2^k`, or base-`B` Horner digit packing",
-            "Primary SAIR Law(s)": "`SAIR-LAW-14`, `SAIR-LAW-14B`, `SAIR-LAW-14C`",
-            "Recommended AltProof Route": "`gmp-swar-word-packing`",
-            "Canonical Kernel Pattern / Tactic": "Replace `/ 2^k` and `% 2^k` with `Nat.shiftRight` and `Nat.land`; aggregate Horner digits in balanced binary chunks aligned to 64-bit GMP limbs (`SAIR-LAW-16B`)"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "goal_shape": "Fixed-width array/DP recurrence or bitboard transition",
-          "route_or_concordance": "`SAIR-LAW-15`, `SAIR-LAW-16`, `SAIR-LAW-20`",
-          "template": "`gmp-swar-word-packing`",
-          "columns": {
-            "Goal / Term Shape": "Fixed-width array/DP recurrence or bitboard transition",
-            "Primary SAIR Law(s)": "`SAIR-LAW-15`, `SAIR-LAW-16`, `SAIR-LAW-20`",
-            "Recommended AltProof Route": "`gmp-swar-word-packing`",
-            "Canonical Kernel Pattern / Tactic": "Pack `k` lanes into one GMP `Nat` word (Kronecker SWAR); unroll fixed-trip kernels via binary-doubling combinators (`t0..t6`); evaluate cellular/crypto rules in ANF (`^^^`, `&&&`, `"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "goal_shape": "Finite-state graph/polyomino/automaton frontier search",
-          "route_or_concordance": "`SAIR-LAW-17`, `SAIR-LAW-18`, `SAIR-LAW-18B`",
-          "template": "`algorithm-class-substitution`",
-          "columns": {
-            "Goal / Term Shape": "Finite-state graph/polyomino/automaton frontier search",
-            "Primary SAIR Law(s)": "`SAIR-LAW-17`, `SAIR-LAW-18`, `SAIR-LAW-18B`",
-            "Recommended AltProof Route": "`algorithm-class-substitution`",
-            "Canonical Kernel Pattern / Tactic": "Canonicalize states as CBV `Nat` words (never tree-recurse over lists); compress frontiers as ZDD/bitmasks; count/test 1-bit shift overlaps (`overlap := w &&& (w >>> 1)`) without `Nat` underflow"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "goal_shape": "Branching search with lookahead constraints & symmetry",
-          "route_or_concordance": "`SAIR-LAW-19`, `SAIR-LAW-19B`, `SAIR-LAW-21`",
-          "template": "`algorithm-class-substitution`",
-          "columns": {
-            "Goal / Term Shape": "Branching search with lookahead constraints & symmetry",
-            "Primary SAIR Law(s)": "`SAIR-LAW-19`, `SAIR-LAW-19B`, `SAIR-LAW-21`",
-            "Recommended AltProof Route": "`algorithm-class-substitution`",
-            "Canonical Kernel Pattern / Tactic": "Fuse lookahead checks into one bitwise mask guard; short-circuit `Nat.beq avail 0` immediately; prove finite symmetry/heuristic reorderings via decoupled `List.Perm` certificates"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "goal_shape": "Parametric hot `def step (cfg : Config)` vs concrete loop",
-          "route_or_concordance": "`SAIR-LAW-22..25B`, `WAVE-13 G1`",
-          "template": "`abstraction-concrete-duality`",
-          "columns": {
-            "Goal / Term Shape": "Parametric hot `def step (cfg : Config)` vs concrete loop",
-            "Primary SAIR Law(s)": "`SAIR-LAW-22..25B`, `WAVE-13 G1`",
-            "Recommended AltProof Route": "`abstraction-concrete-duality`",
-            "Canonical Kernel Pattern / Tactic": "Specialize hot `def`s to raw unboxed `Nat` literals (`1,600x..3,345x` penalty for parametric hot steps!); state general parametric theorems separately and bridge via `rfl` (`<= 1%` cost)"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "goal_shape": "Hardware codegen from verified Lean bit/word kernel",
-          "route_or_concordance": "`PolyBitOp`, Exact-vs-Packed Lowering",
-          "template": "`proof-carrying-codegen`",
-          "columns": {
-            "Goal / Term Shape": "Hardware codegen from verified Lean bit/word kernel",
-            "Primary SAIR Law(s)": "`PolyBitOp`, Exact-vs-Packed Lowering",
-            "Recommended AltProof Route": "`proof-carrying-codegen`",
-            "Canonical Kernel Pattern / Tactic": "Emit MLIR (`ctpop`/`gpu.shuffle xor`), Ada `sm_89` PTX, AVX2/AVX-512 Rust, or freestanding C++20; enforce `exact` (`GMP`/`rug`) vs `checked-small -> NeedsWide` overflow traps (`N01..N12`)"
-          }
-        }
-      ],
-      "intent_phrasebook": [
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "intent": "\"Speed up `rfl` / `decide +kernel` on a recursive function\"",
-          "tactic_or_idiom": "`SAIR-LAW-06`, `SAIR-LAW-02`, `SAIR-LAW-23`",
-          "notes": "Replace `WellFounded.fix` with direct `@Nat.rec`; hoist closed constants outside step lambdas; replace polymorphic `+`/`*` with `Nat.add`/`Nat.mul`",
-          "columns": {
-            "User / Engineer Intent": "\"Speed up `rfl` / `decide +kernel` on a recursive function\"",
-            "Target SAIR Law(s)": "`SAIR-LAW-06`, `SAIR-LAW-02`, `SAIR-LAW-23`",
-            "Actionable Transformation Recipe": "Replace `WellFounded.fix` with direct `@Nat.rec`; hoist closed constants outside step lambdas; replace polymorphic `+`/`*` with `Nat.add`/`Nat.mul`"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "intent": "\"Abstract repeated proof logic without slowing down the kernel\"",
-          "tactic_or_idiom": "`WAVE-13 G1`, `SAIR-LAW-07`, `SAIR-LAW-22B`",
-          "notes": "Keep hot `def` specialized to raw unboxed `Nat` + inline `nat_lit`s; state a parametric proof theorem over abstract step parameters and discharge the concrete instance by `rfl`",
-          "columns": {
-            "User / Engineer Intent": "\"Abstract repeated proof logic without slowing down the kernel\"",
-            "Target SAIR Law(s)": "`WAVE-13 G1`, `SAIR-LAW-07`, `SAIR-LAW-22B`",
-            "Actionable Transformation Recipe": "Keep hot `def` specialized to raw unboxed `Nat` + inline `nat_lit`s; state a parametric proof theorem over abstract step parameters and discharge the concrete instance by `rfl`"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "intent": "\"Choose `Nat.succ k` vs `Nat.add 1 k` in a tight loop\"",
-          "tactic_or_idiom": "`ADR-INV-0025`, `SAIR-LAW-03`",
-          "notes": "Use `Nat.succ k` when `k` is consumed by a structural `@Nat.rec` eliminator (`Expr::App(Const(\"Nat.succ\"), k)` directly matches the `succ` arm); use `Nat.add 1 q` for arithmetic counters evaluated to `nat_lit`",
-          "columns": {
-            "User / Engineer Intent": "\"Choose `Nat.succ k` vs `Nat.add 1 k` in a tight loop\"",
-            "Target SAIR Law(s)": "`ADR-INV-0025`, `SAIR-LAW-03`",
-            "Actionable Transformation Recipe": "Use `Nat.succ k` when `k` is consumed by a structural `@Nat.rec` eliminator (`Expr::App(Const(\"Nat.succ\"), k)` directly matches the `succ` arm); use `Nat.add 1 q` for arithmetic counters evaluated to `nat_lit`"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "intent": "\"Eliminate `Classical.choice` and `Lean.ofReduceBool` from a proof\"",
-          "tactic_or_idiom": "`SAIR-LAW-08`, `SAIR-LAW-22`, `sair_decide`",
-          "notes": "Replace `if`/`split` with `@Bool.rec`/`cond`; close concrete goals with 3-rung `sair_decide` (`first",
-          "columns": {
-            "User / Engineer Intent": "\"Eliminate `Classical.choice` and `Lean.ofReduceBool` from a proof\"",
-            "Target SAIR Law(s)": "`SAIR-LAW-08`, `SAIR-LAW-22`, `sair_decide`",
-            "Actionable Transformation Recipe": "Replace `if`/`split` with `@Bool.rec`/`cond`; close concrete goals with 3-rung `sair_decide` (`first"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "intent": "\"Implement branch-free low-bit cut/mask on `Nat` words\"",
-          "tactic_or_idiom": "`SAIR-LAW-14`, Nov 11-12 Cut/Mask Contract",
-          "notes": "Exploit truncating `Nat.sub`: when `k <= s`, `k - s = 0` yields `1 <<< 0 - 1 = 0` mask automatically; guard multi-limb shifts with `Nat.ble a (1 <<< (k - s) - 1)` skip-to-plain-shift when profitable",
-          "columns": {
-            "User / Engineer Intent": "\"Implement branch-free low-bit cut/mask on `Nat` words\"",
-            "Target SAIR Law(s)": "`SAIR-LAW-14`, Nov 11-12 Cut/Mask Contract",
-            "Actionable Transformation Recipe": "Exploit truncating `Nat.sub`: when `k <= s`, `k - s = 0` yields `1 <<< 0 - 1 = 0` mask automatically; guard multi-limb shifts with `Nat.ble a (1 <<< (k - s) - 1)` skip-to-plain-shift when profitable"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "intent": "\"Lower a Lean SWAR/BitVec kernel to C++20, Rust SIMD, or CUDA PTX\"",
-          "tactic_or_idiom": "`PolyBitOp`, Exact-vs-Packed Lowering",
-          "notes": "Prove equivalence to spec in Lean (`Template_ProofCarryingCodegen.lean`), lower pure bitwise kernels via `PolyBitOp`, and guard multi-limb arithmetic with `checked-small -> NeedsWide` + operand snapshotting",
-          "columns": {
-            "User / Engineer Intent": "\"Lower a Lean SWAR/BitVec kernel to C++20, Rust SIMD, or CUDA PTX\"",
-            "Target SAIR Law(s)": "`PolyBitOp`, Exact-vs-Packed Lowering",
-            "Actionable Transformation Recipe": "Prove equivalence to spec in Lean (`Template_ProofCarryingCodegen.lean`), lower pure bitwise kernels via `PolyBitOp`, and guard multi-limb arithmetic with `checked-small -> NeedsWide` + operand snapshotting"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "intent": "\"Stream verified state transitions over zero-copy IPC / NVMe\"",
-          "tactic_or_idiom": "`alignas(128)` SPSC, `.leangrph`, `io_uring`",
-          "notes": "Separate cache lines to `128 B` (Zen 3 L2 streamer prefetch pair), align `.leangrph` CSR headers to `128 B` (`64 B` magic/counts + `64 B` SHA-256), and register `2 MB` `HugeTLB` buffers with `io_uring`",
-          "columns": {
-            "User / Engineer Intent": "\"Stream verified state transitions over zero-copy IPC / NVMe\"",
-            "Target SAIR Law(s)": "`alignas(128)` SPSC, `.leangrph`, `io_uring`",
-            "Actionable Transformation Recipe": "Separate cache lines to `128 B` (Zen 3 L2 streamer prefetch pair), align `.leangrph` CSR headers to `128 B` (`64 B` magic/counts + `64 B` SHA-256), and register `2 MB` `HugeTLB` buffers with `io_uring`"
-          }
-        }
-      ],
-      "error_to_fix": [
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "error_pattern": "`(deterministic) timeout at whnf, maximum number of heartbeats`",
-          "cause": "Unfolding `WellFounded.fix`/`brecOn`, parametric typeclass dictionaries in hot step (`WAVE-13 G1`), or unshared sibling WHNF trees",
-          "fix": "`SAIR-LAW-06` (`@Nat.rec`), `SAIR-LAW-23` (primitive `Nat.*` constants), `WAVE-13 G1` (monomorphize hot `def`)",
-          "columns": {
-            "Symptom / Elaborator Error / Bottleneck": "`(deterministic) timeout at whnf, maximum number of heartbeats`",
-            "Root Cause in `type_checker.cpp` / Lowering": "Unfolding `WellFounded.fix`/`brecOn`, parametric typeclass dictionaries in hot step (`WAVE-13 G1`), or unshared sibling WHNF trees",
-            "Remediating SAIR Law(s) & Fix": "`SAIR-LAW-06` (`@Nat.rec`), `SAIR-LAW-23` (primitive `Nat.*` constants), `WAVE-13 G1` (monomorphize hot `def`)"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "error_pattern": "`code generator does not support recursor 'Nat.rec' / 'Bool.rec'`",
-          "cause": "Raw `@Nat.rec` / `@Bool.rec` is fast in kernel WHNF (`rfl`), but Lean 4's LCNF native compiler requires structural `match` / `cond`",
-          "fix": "Use `@Nat.rec`/`@Bool.rec` only in kernel-evaluated `rfl` lanes, OR pair with a computable `@[csimp]` twin using `cond` + structural pattern matching (`SAIR-LAW-07`, `SAIR-LAW-08`)",
-          "columns": {
-            "Symptom / Elaborator Error / Bottleneck": "`code generator does not support recursor 'Nat.rec' / 'Bool.rec'`",
-            "Root Cause in `type_checker.cpp` / Lowering": "Raw `@Nat.rec` / `@Bool.rec` is fast in kernel WHNF (`rfl`), but Lean 4's LCNF native compiler requires structural `match` / `cond`",
-            "Remediating SAIR Law(s) & Fix": "Use `@Nat.rec`/`@Bool.rec` only in kernel-evaluated `rfl` lanes, OR pair with a computable `@[csimp]` twin using `cond` + structural pattern matching (`SAIR-LAW-07`, `SAIR-LAW-08`)"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "error_pattern": "Microbenchmark win (`-5%`) turns into full-file regression (`+3%`)",
-          "cause": "`ADR-INV-0025` Single-Consumer Isolation Paradox: microbench evaluated result directly to WHNF without realistic downstream consumer",
-          "fix": "Always benchmark inside the real consumer pipeline using `real - twinlit` PMU **sum-of-per-slot-medians-of-three** (`instructions:u`)",
-          "columns": {
-            "Symptom / Elaborator Error / Bottleneck": "Microbenchmark win (`-5%`) turns into full-file regression (`+3%`)",
-            "Root Cause in `type_checker.cpp` / Lowering": "`ADR-INV-0025` Single-Consumer Isolation Paradox: microbench evaluated result directly to WHNF without realistic downstream consumer",
-            "Remediating SAIR Law(s) & Fix": "Always benchmark inside the real consumer pipeline using `real - twinlit` PMU **sum-of-per-slot-medians-of-three** (`instructions:u`)"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "error_pattern": "Wrong answer `0` when isolating lowest set bit with `x &&& (0 - x)`",
-          "cause": "Truncating `Nat` subtraction evaluates `0 - x = 0` for all `x : Nat`! Two's-complement `-x` only holds on `BitVec w` / `UInt64`",
-          "fix": "Never write `0 - x` on `Nat`! On `BitVec w` use `x &&& (-x)`; on `Nat` clear lowest bit via `x &&& (x - 1)` (for `x > 0`) or compute 1-bit shift overlap `x &&& (x >>> 1)` (`SAIR-LAW-18B`)",
-          "columns": {
-            "Symptom / Elaborator Error / Bottleneck": "Wrong answer `0` when isolating lowest set bit with `x &&& (0 - x)`",
-            "Root Cause in `type_checker.cpp` / Lowering": "Truncating `Nat` subtraction evaluates `0 - x = 0` for all `x : Nat`! Two's-complement `-x` only holds on `BitVec w` / `UInt64`",
-            "Remediating SAIR Law(s) & Fix": "Never write `0 - x` on `Nat`! On `BitVec w` use `x &&& (-x)`; on `Nat` clear lowest bit via `x &&& (x - 1)` (for `x > 0`) or compute 1-bit shift overlap `x &&& (x >>> 1)` (`SAIR-LAW-18B`)"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "error_pattern": "`depends on axiom Lean.ofReduceBool` / `Lean.trustCompiler`",
-          "cause": "Proof invoked `native_decide`, `decide +native`, or `bv_decide` on a strict 3-axiom target",
-          "fix": "Switch to 3-rung `sair_decide` (`first",
-          "columns": {
-            "Symptom / Elaborator Error / Bottleneck": "`depends on axiom Lean.ofReduceBool` / `Lean.trustCompiler`",
-            "Root Cause in `type_checker.cpp` / Lowering": "Proof invoked `native_decide`, `decide +native`, or `bv_decide` on a strict 3-axiom target",
-            "Remediating SAIR Law(s) & Fix": "Switch to 3-rung `sair_decide` (`first"
-          }
-        },
-        {
-          "handbook": "lean-sair-kernel-optimization-handbook",
-          "error_pattern": "Native Rust/C++ port silently overflows or corrupts aliased buffer",
-          "cause": "Arbitrary-precision Lean `Nat`/`Int` lowered to fixed `u64`/`i64` without width guard, or in-place `out == lhs` clobbered before read",
-          "fix": "Enforce `checked-small -> NeedsWide` fallback to `GMP`/`rug`, snapshot aliased inputs before mutation, and run `#eval` vs native conformance vectors `N01..N12`",
-          "columns": {
-            "Symptom / Elaborator Error / Bottleneck": "Native Rust/C++ port silently overflows or corrupts aliased buffer",
-            "Root Cause in `type_checker.cpp` / Lowering": "Arbitrary-precision Lean `Nat`/`Int` lowered to fixed `u64`/`i64` without width guard, or in-place `out == lhs` clobbered before read",
-            "Remediating SAIR Law(s) & Fix": "Enforce `checked-small -> NeedsWide` fallback to `GMP`/`rug`, snapshot aliased inputs before mutation, and run `#eval` vs native conformance vectors `N01..N12`"
           }
         }
       ]
@@ -8737,6 +9920,162 @@
         }
       ]
     },
+    "lean-unboxed-limbs-swar-handbook": {
+      "file": "references/handbooks/lean-unboxed-limbs-swar-handbook.md",
+      "skill_ref": "skills/lean-math-discrete/SKILL.md",
+      "goal_shape_count": 5,
+      "intent_count": 4,
+      "error_count": 4,
+      "goal_shape_templates": [
+        {
+          "handbook": "lean-unboxed-limbs-swar-handbook",
+          "goal_shape": "Wide state accumulator (256/512-bit)",
+          "route_or_concordance": "`Fiat-Crypto Unsaturated Limbs`",
+          "template": "`structure Limbs where (l0 l1 l2 l3 l4 : Nat); def add := ...`",
+          "columns": {
+            "Goal Shape": "Wide state accumulator (256/512-bit)",
+            "Target Typeclass / Lemma": "`Fiat-Crypto Unsaturated Limbs`",
+            "Proof Template": "`structure Limbs where (l0 l1 l2 l3 l4 : Nat); def add := ...`"
+          }
+        },
+        {
+          "handbook": "lean-unboxed-limbs-swar-handbook",
+          "goal_shape": "Parallel 2-lane 31-bit addition",
+          "route_or_concordance": "`Guarded SWAR Addition`",
+          "template": "`((a &&& mask) + (b &&& mask)) ^^^ ((a ^^^ b) &&& guard)`",
+          "columns": {
+            "Goal Shape": "Parallel 2-lane 31-bit addition",
+            "Target Typeclass / Lemma": "`Guarded SWAR Addition`",
+            "Proof Template": "`((a &&& mask) + (b &&& mask)) ^^^ ((a ^^^ b) &&& guard)`"
+          }
+        },
+        {
+          "handbook": "lean-unboxed-limbs-swar-handbook",
+          "goal_shape": "Bitfield extraction `(x / 2^s) % 2^k`",
+          "route_or_concordance": "`Branch-Free Low Cut`",
+          "template": "`(w >>> s) &&& ((1 <<< k) - 1)`",
+          "columns": {
+            "Goal Shape": "Bitfield extraction `(x / 2^s) % 2^k`",
+            "Target Typeclass / Lemma": "`Branch-Free Low Cut`",
+            "Proof Template": "`(w >>> s) &&& ((1 <<< k) - 1)`"
+          }
+        },
+        {
+          "handbook": "lean-unboxed-limbs-swar-handbook",
+          "goal_shape": "Ternary conditional `if c then a else b`",
+          "route_or_concordance": "`Zhegalkin Multiplexer`",
+          "template": "`b ^^^ (c &&& (a ^^^ b))`",
+          "columns": {
+            "Goal Shape": "Ternary conditional `if c then a else b`",
+            "Target Typeclass / Lemma": "`Zhegalkin Multiplexer`",
+            "Proof Template": "`b ^^^ (c &&& (a ^^^ b))`"
+          }
+        },
+        {
+          "handbook": "lean-unboxed-limbs-swar-handbook",
+          "goal_shape": "Bitwise choice `(e &&& f) ^^^ (~~~e &&& g)`",
+          "route_or_concordance": "`3-Gate Ch Circuit`",
+          "template": "`g ^^^ (e &&& (f ^^^ g))`",
+          "columns": {
+            "Goal Shape": "Bitwise choice `(e &&& f) ^^^ (~~~e &&& g)`",
+            "Target Typeclass / Lemma": "`3-Gate Ch Circuit`",
+            "Proof Template": "`g ^^^ (e &&& (f ^^^ g))`"
+          }
+        }
+      ],
+      "intent_phrasebook": [
+        {
+          "handbook": "lean-unboxed-limbs-swar-handbook",
+          "intent": "Eliminate heap GMP allocations in wide states",
+          "tactic_or_idiom": "`Limb tuple unboxing`",
+          "notes": "Replaces single `Nat >= 2^63` with 5-tuple of 52-bit `< 2^63` limbs",
+          "columns": {
+            "Mathematical Intent": "Eliminate heap GMP allocations in wide states",
+            "Lean 4 / Mathlib Tactic": "`Limb tuple unboxing`",
+            "Notes": "Replaces single `Nat >= 2^63` with 5-tuple of 52-bit `< 2^63` limbs"
+          }
+        },
+        {
+          "handbook": "lean-unboxed-limbs-swar-handbook",
+          "intent": "Pack two 31-bit lanes into one 63-bit scalar",
+          "tactic_or_idiom": "`(x &&& 0x7FFFFFFF) ||| ((y &&& 0x7FFFFFFF) <<< 31)`",
+          "notes": "Keeps value strictly `< 2^62 < 2^63` (lean_box scalar)",
+          "columns": {
+            "Mathematical Intent": "Pack two 31-bit lanes into one 63-bit scalar",
+            "Lean 4 / Mathlib Tactic": "`(x &&& 0x7FFFFFFF) ||| ((y &&& 0x7FFFFFFF) <<< 31)`",
+            "Notes": "Keeps value strictly `< 2^62 < 2^63` (lean_box scalar)"
+          }
+        },
+        {
+          "handbook": "lean-unboxed-limbs-swar-handbook",
+          "intent": "Prevent cross-lane carry corruption",
+          "tactic_or_idiom": "`Bitwise SWAR guard mask`",
+          "notes": "Separates carry bits with top-lane zero guard positions",
+          "columns": {
+            "Mathematical Intent": "Prevent cross-lane carry corruption",
+            "Lean 4 / Mathlib Tactic": "`Bitwise SWAR guard mask`",
+            "Notes": "Separates carry bits with top-lane zero guard positions"
+          }
+        },
+        {
+          "handbook": "lean-unboxed-limbs-swar-handbook",
+          "intent": "Prove branch-free circuit equivalence",
+          "tactic_or_idiom": "`dsimp; omega`",
+          "notes": "Verifies `g ^^^ (e &&& (f ^^^ g)) = (e &&& f) ^^^ (~~~e &&& g)`",
+          "columns": {
+            "Mathematical Intent": "Prove branch-free circuit equivalence",
+            "Lean 4 / Mathlib Tactic": "`dsimp; omega`",
+            "Notes": "Verifies `g ^^^ (e &&& (f ^^^ g)) = (e &&& f) ^^^ (~~~e &&& g)`"
+          }
+        }
+      ],
+      "error_to_fix": [
+        {
+          "handbook": "lean-unboxed-limbs-swar-handbook",
+          "error_pattern": "Kernel WHNF slows down by 10x",
+          "cause": "Limb value exceeded `2^63 - 1`, allocating GMP mpz",
+          "fix": "Insert `&&& 0xFFFFFFFFFFFFF` mask at consumption points to maintain unboxed bound",
+          "columns": {
+            "Error / Symptom": "Kernel WHNF slows down by 10x",
+            "Root Cause": "Limb value exceeded `2^63 - 1`, allocating GMP mpz",
+            "Fix": "Insert `&&& 0xFFFFFFFFFFFFF` mask at consumption points to maintain unboxed bound"
+          }
+        },
+        {
+          "handbook": "lean-unboxed-limbs-swar-handbook",
+          "error_pattern": "`0 - x evaluates to 0 on Nat`",
+          "cause": "Truncated subtraction on Lean 4 `Nat`",
+          "fix": "Use bitwise NOT via XOR with explicit mask `x ^^^ 0xFFFFFFFF` rather than subtraction from zero",
+          "columns": {
+            "Error / Symptom": "`0 - x evaluates to 0 on Nat`",
+            "Root Cause": "Truncated subtraction on Lean 4 `Nat`",
+            "Fix": "Use bitwise NOT via XOR with explicit mask `x ^^^ 0xFFFFFFFF` rather than subtraction from zero"
+          }
+        },
+        {
+          "handbook": "lean-unboxed-limbs-swar-handbook",
+          "error_pattern": "Carry bits corrupt adjacent SWAR lane",
+          "cause": "Insufficient guard bits in SWAR packing",
+          "fix": "Restrict lane width to 31 bits with explicit MSB zero guard bit",
+          "columns": {
+            "Error / Symptom": "Carry bits corrupt adjacent SWAR lane",
+            "Root Cause": "Insufficient guard bits in SWAR packing",
+            "Fix": "Restrict lane width to 31 bits with explicit MSB zero guard bit"
+          }
+        },
+        {
+          "handbook": "lean-unboxed-limbs-swar-handbook",
+          "error_pattern": "Recursion timeout on wide limb propagation",
+          "cause": "Monolithic loop unrolling",
+          "fix": "Factor carry chain into linear unrolled struct update with tail-call passing",
+          "columns": {
+            "Error / Symptom": "Recursion timeout on wide limb propagation",
+            "Root Cause": "Monolithic loop unrolling",
+            "Fix": "Factor carry chain into linear unrolled struct update with tail-call passing"
+          }
+        }
+      ]
+    },
     "lean-upstream-pr-handbook": {
       "file": "references/handbooks/lean-upstream-pr-handbook.md",
       "skill_ref": "skills/lean-upstream-pr/SKILL.md",
@@ -8897,11 +10236,167 @@
           "handbook": "lean-verification-gate-handbook",
           "error_pattern": "`depends on axiom Lean.ofReduceBool`",
           "cause": "`native_decide` or `bv_decide` used in strict kernel lane",
-          "fix": "Replace with `sair_decide` (`rfl",
+          "fix": "Replace with `kernel_decide` (`rfl",
           "columns": {
             "Symptom / Error / Bottleneck": "`depends on axiom Lean.ofReduceBool`",
             "Root Cause": "`native_decide` or `bv_decide` used in strict kernel lane",
-            "Remediating Fix": "Replace with `sair_decide` (`rfl"
+            "Remediating Fix": "Replace with `kernel_decide` (`rfl"
+          }
+        }
+      ]
+    },
+    "lean-worker-wrapper-cps-handbook": {
+      "file": "references/handbooks/lean-worker-wrapper-cps-handbook.md",
+      "skill_ref": "skills/lean-proof-refactor/SKILL.md",
+      "goal_shape_count": 5,
+      "intent_count": 4,
+      "error_count": 4,
+      "goal_shape_templates": [
+        {
+          "handbook": "lean-worker-wrapper-cps-handbook",
+          "goal_shape": "Typeclass dictionaries in tight recursor",
+          "route_or_concordance": "`Worker/Wrapper Monomorphization`",
+          "template": "`def worker (x : Nat) : Nat; @[inline] def wrapper [C] (x) := worker x`",
+          "columns": {
+            "Goal Shape": "Typeclass dictionaries in tight recursor",
+            "Target Typeclass / Lemma": "`Worker/Wrapper Monomorphization`",
+            "Proof Template": "`def worker (x : Nat) : Nat; @[inline] def wrapper [C] (x) := worker x`"
+          }
+        },
+        {
+          "handbook": "lean-worker-wrapper-cps-handbook",
+          "goal_shape": "Merge branch subterms duplicating AST",
+          "route_or_concordance": "`Join Point Abstraction`",
+          "template": "`let joinPt := fun acc => ...; if c then joinPt a else joinPt b`",
+          "columns": {
+            "Goal Shape": "Merge branch subterms duplicating AST",
+            "Target Typeclass / Lemma": "`Join Point Abstraction`",
+            "Proof Template": "`let joinPt := fun acc => ...; if c then joinPt a else joinPt b`"
+          }
+        },
+        {
+          "handbook": "lean-worker-wrapper-cps-handbook",
+          "goal_shape": "Inductive constructor match in loop body",
+          "route_or_concordance": "`SpecConstr Specialization`",
+          "template": "`def workerA ...; def workerB ...; match c with | .A => workerA | .B => workerB`",
+          "columns": {
+            "Goal Shape": "Inductive constructor match in loop body",
+            "Target Typeclass / Lemma": "`SpecConstr Specialization`",
+            "Proof Template": "`def workerA ...; def workerB ...; match c with | .A => workerA | .B => workerB`"
+          }
+        },
+        {
+          "handbook": "lean-worker-wrapper-cps-handbook",
+          "goal_shape": "Higher-order continuation closure `(a -> b) -> b`",
+          "route_or_concordance": "`Defunctionalized Inductive Cont`",
+          "template": "`inductive Cont | halt | step (k : Cont); def applyCont : Cont -> a -> b`",
+          "columns": {
+            "Goal Shape": "Higher-order continuation closure `(a -> b) -> b`",
+            "Target Typeclass / Lemma": "`Defunctionalized Inductive Cont`",
+            "Proof Template": "`inductive Cont | halt | step (k : Cont); def applyCont : Cont -> a -> b`"
+          }
+        },
+        {
+          "handbook": "lean-worker-wrapper-cps-handbook",
+          "goal_shape": "Non-tail-recursive tuple re-boxing",
+          "route_or_concordance": "`Tail-Call Scalar Accumulator`",
+          "template": "`@Nat.rec (fun _ => Nat -> Nat -> Nat) (fun a b => a) (fun _ loop a b => loop (a+1) b)`",
+          "columns": {
+            "Goal Shape": "Non-tail-recursive tuple re-boxing",
+            "Target Typeclass / Lemma": "`Tail-Call Scalar Accumulator`",
+            "Proof Template": "`@Nat.rec (fun _ => Nat -> Nat -> Nat) (fun a b => a) (fun _ loop a b => loop (a+1) b)`"
+          }
+        }
+      ],
+      "intent_phrasebook": [
+        {
+          "handbook": "lean-worker-wrapper-cps-handbook",
+          "intent": "Apply Worker/Wrapper split",
+          "tactic_or_idiom": "`Unpack structure at entry`",
+          "notes": "Keeps inner loop free of projections, dictionaries, and boxing",
+          "columns": {
+            "Mathematical Intent": "Apply Worker/Wrapper split",
+            "Lean 4 / Mathlib Tactic": "`Unpack structure at entry`",
+            "Notes": "Keeps inner loop free of projections, dictionaries, and boxing"
+          }
+        },
+        {
+          "handbook": "lean-worker-wrapper-cps-handbook",
+          "intent": "Establish Join Point in recursor",
+          "tactic_or_idiom": "`let joinPt := fun ...`",
+          "notes": "Retains single shared subterm node in kernel pointer cache",
+          "columns": {
+            "Mathematical Intent": "Establish Join Point in recursor",
+            "Lean 4 / Mathlib Tactic": "`let joinPt := fun ...`",
+            "Notes": "Retains single shared subterm node in kernel pointer cache"
+          }
+        },
+        {
+          "handbook": "lean-worker-wrapper-cps-handbook",
+          "intent": "Specialize call pattern (SpecConstr)",
+          "tactic_or_idiom": "`Split into monomorphic workers`",
+          "notes": "Eliminates inner pattern matching and branching overhead",
+          "columns": {
+            "Mathematical Intent": "Specialize call pattern (SpecConstr)",
+            "Lean 4 / Mathlib Tactic": "`Split into monomorphic workers`",
+            "Notes": "Eliminates inner pattern matching and branching overhead"
+          }
+        },
+        {
+          "handbook": "lean-worker-wrapper-cps-handbook",
+          "intent": "Defunctionalize closure continuation",
+          "tactic_or_idiom": "`First-order inductive dispatch`",
+          "notes": "Replaces lambda closures with token constructor matching",
+          "columns": {
+            "Mathematical Intent": "Defunctionalize closure continuation",
+            "Lean 4 / Mathlib Tactic": "`First-order inductive dispatch`",
+            "Notes": "Replaces lambda closures with token constructor matching"
+          }
+        }
+      ],
+      "error_to_fix": [
+        {
+          "handbook": "lean-worker-wrapper-cps-handbook",
+          "error_pattern": "Excessive `instantiate_rev` overhead in kernel",
+          "cause": "Lambda abstractions with open bound variables in loop",
+          "fix": "Lift to top-level auxiliary definition or defunctionalize into first-order inductive type",
+          "columns": {
+            "Error / Symptom": "Excessive `instantiate_rev` overhead in kernel",
+            "Root Cause": "Lambda abstractions with open bound variables in loop",
+            "Fix": "Lift to top-level auxiliary definition or defunctionalize into first-order inductive type"
+          }
+        },
+        {
+          "handbook": "lean-worker-wrapper-cps-handbook",
+          "error_pattern": "Heap allocation inside recursor step",
+          "cause": "Constructor boxing `(a, b)` on each step",
+          "fix": "Unbox into separate scalar accumulator arguments in `@Nat.rec`",
+          "columns": {
+            "Error / Symptom": "Heap allocation inside recursor step",
+            "Root Cause": "Constructor boxing `(a, b)` on each step",
+            "Fix": "Unbox into separate scalar accumulator arguments in `@Nat.rec`"
+          }
+        },
+        {
+          "handbook": "lean-worker-wrapper-cps-handbook",
+          "error_pattern": "Typeclass projection cannot be reduced",
+          "cause": "Opaque dictionary in kernel",
+          "fix": "Supply explicit monomorphic instance or use Worker/Wrapper to eliminate typeclass before loop",
+          "columns": {
+            "Error / Symptom": "Typeclass projection cannot be reduced",
+            "Root Cause": "Opaque dictionary in kernel",
+            "Fix": "Supply explicit monomorphic instance or use Worker/Wrapper to eliminate typeclass before loop"
+          }
+        },
+        {
+          "handbook": "lean-worker-wrapper-cps-handbook",
+          "error_pattern": "Stack overflow on deep CPS reduction",
+          "cause": "Non-tail-recursive continuation chain",
+          "fix": "Convert continuation evaluator to tail-recursive accumulator loop",
+          "columns": {
+            "Error / Symptom": "Stack overflow on deep CPS reduction",
+            "Root Cause": "Non-tail-recursive continuation chain",
+            "Fix": "Convert continuation evaluator to tail-recursive accumulator loop"
           }
         }
       ]
@@ -9680,7 +11175,7 @@
             "Tendsto.comp",
             "Tendsto.add"
           ],
-          "lean4_target_syntax": "Tendsto f ( x) ( y) | Tendsto u atTop ( l) | forall  n in atTop, P n"
+          "lean4_target_syntax": "Tendsto f ( x) ( y) | Tendsto u atTop ( l) | forall ^f n in atTop, P n"
         }
       ]
     },
@@ -10148,7 +11643,7 @@
           "dialect_syntax_pattern": "(f --> l) (at a within s) | (s ---> l) sequentially",
           "dialect_idiom": "Map `(s ---> l) sequentially` -> `Tendsto s atTop ( l)` and `(f --> l) (at a)` -> `Tendsto f ([!=] a) ( l)`.",
           "dialect_pitfalls": [
-            "Like Isabelle, HOL Light's `at a` is punctured (`0 < dist(x,a) < d`), corresponding to `[!=] a` (`nhdsWithin a {a}`) in Mathlib"
+            "Like Isabelle, HOL Light's `at a` is punctured (`0 < dist(x,a) < d`), corresponding to `[!=] a` (`nhdsWithin a {a}^c`) in Mathlib"
           ],
           "lean4_target_tactics": [
             "fun_prop",
@@ -10157,7 +11652,7 @@
             "Tendsto.comp",
             "Tendsto.add"
           ],
-          "lean4_target_syntax": "Tendsto f ( x) ( y) | Tendsto u atTop ( l) | forall  n in atTop, P n"
+          "lean4_target_syntax": "Tendsto f ( x) ( y) | Tendsto u atTop ( l) | forall ^f n in atTop, P n"
         }
       ]
     },
@@ -10562,7 +12057,7 @@
           "dialect_syntax_pattern": "(sumxinA. f x) | (xinA. f x)",
           "dialect_idiom": "Translate `(sumxinA. f x)` under `finite A` to `sum x in A, f x` over `A : Finset `.",
           "dialect_pitfalls": [
-            "Isabelle `sumxinA. f x` defaults to `0` on infinite sets; if finiteness is not obvious in Lean 4, use `finsum` (`sum x, f x`) or carry `A : Finset `"
+            "Isabelle `sumxinA. f x` defaults to `0` on infinite sets; if finiteness is not obvious in Lean 4, use `finsum` (`sum^f x, f x`) or carry `A : Finset `"
           ],
           "lean4_target_tactics": [
             "Finset.sum_congr",
@@ -10645,7 +12140,7 @@
             "Tendsto.comp",
             "Tendsto.add"
           ],
-          "lean4_target_syntax": "Tendsto f ( x) ( y) | Tendsto u atTop ( l) | forall  n in atTop, P n"
+          "lean4_target_syntax": "Tendsto f ( x) ( y) | Tendsto u atTop ( l) | forall ^f n in atTop, P n"
         }
       ]
     },
@@ -11141,8 +12636,8 @@
             "Tendsto.comp",
             "Tendsto.add"
           ],
-          "dialect_syntax_pattern": "Tendsto f ( x) ( y) | Tendsto u atTop ( l) | forall  n in atTop, P n",
-          "dialect_idiom": "Prove continuity with `fun_prop` (or `continuity`), combine eventualities `forall ` with `filter_upwards`, and compose limits via `Tendsto.comp` instead of unfolding `(, )`.",
+          "dialect_syntax_pattern": "Tendsto f ( x) ( y) | Tendsto u atTop ( l) | forall ^f n in atTop, P n",
+          "dialect_idiom": "Prove continuity with `fun_prop` (or `continuity`), combine eventualities `forall ^f` with `filter_upwards`, and compose limits via `Tendsto.comp` instead of unfolding `(, )`.",
           "dialect_pitfalls": [
             "Avoid unfolding `Metric.tendsto_nhds` to `(, )` unless proving a base metric primitive",
             "Distinguish ` x` (includes `x`) from `[!=] x` (punctured neighborhood used in derivatives)"
@@ -11154,7 +12649,7 @@
             "Tendsto.comp",
             "Tendsto.add"
           ],
-          "lean4_target_syntax": "Tendsto f ( x) ( y) | Tendsto u atTop ( l) | forall  n in atTop, P n"
+          "lean4_target_syntax": "Tendsto f ( x) ( y) | Tendsto u atTop ( l) | forall ^f n in atTop, P n"
         }
       ]
     },
@@ -11656,7 +13151,7 @@
             "Tendsto.comp",
             "Tendsto.add"
           ],
-          "lean4_target_syntax": "Tendsto f ( x) ( y) | Tendsto u atTop ( l) | forall  n in atTop, P n"
+          "lean4_target_syntax": "Tendsto f ( x) ( y) | Tendsto u atTop ( l) | forall ^f n in atTop, P n"
         }
       ]
     },
@@ -12153,7 +13648,7 @@
             "Tendsto.comp",
             "Tendsto.add"
           ],
-          "lean4_target_syntax": "Tendsto f ( x) ( y) | Tendsto u atTop ( l) | forall  n in atTop, P n"
+          "lean4_target_syntax": "Tendsto f ( x) ( y) | Tendsto u atTop ( l) | forall ^f n in atTop, P n"
         }
       ]
     }

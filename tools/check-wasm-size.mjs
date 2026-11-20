@@ -7,7 +7,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-export const MAX_WASM_BYTES = 131_072;
+export const MAX_WASM_BYTES = 163_840;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

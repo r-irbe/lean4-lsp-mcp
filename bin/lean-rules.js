@@ -297,12 +297,16 @@ export function runScan({
   const cfgPath = config ?? findConfig(targets[0] ?? ".");
   const cfg = cfgPath ? parseToml(fs.readFileSync(cfgPath, "utf-8")) : null;
   const cfgDir = cfgPath ? path.dirname(cfgPath) : ".";
+  const rulesCfgProfile =
+    typeof cfg?.rules?.profile === "string" && cfg.rules.profile.trim().length > 0
+      ? cfg.rules.profile.trim()
+      : undefined;
+  const defaultCfgProfile =
+    typeof cfg?.profile?.default === "string" && cfg.profile.default.trim().length > 0
+      ? cfg.profile.default.trim()
+      : undefined;
   const effectiveProfile =
-    profile !== undefined
-      ? profile
-      : typeof cfg?.profile?.default === "string" && cfg.profile.default.trim().length > 0
-        ? cfg.profile.default.trim()
-        : "default";
+    profile !== undefined && profile !== null ? profile : (rulesCfgProfile ?? defaultCfgProfile ?? "default");
   const normalizedProfile = String(effectiveProfile || "default").toLowerCase();
   if (!VALID_PROFILES.has(normalizedProfile)) {
     throw new CliUsageError(`unknown profile: ${effectiveProfile} (expected core|default|kernel|fluid-pde|p2m|all)`);

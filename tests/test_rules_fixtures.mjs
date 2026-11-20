@@ -271,6 +271,15 @@ test("kernel profile activates rule-lean-kernel-submission-gate via runScan and 
     const overrideJson = JSON.parse(overrideCli.stdout);
     assert.equal(overrideJson.profile, "default");
     assert.equal(overrideJson.findings.length, 0);
+
+    const rulesDir = path.join(tmp, "cfg-rules-kernel");
+    fs.mkdirSync(rulesDir, { recursive: true });
+    fs.writeFileSync(path.join(rulesDir, "lean-project.toml"), '[rules]\nprofile = "kernel"\n');
+    const rulesTarget = path.join(rulesDir, "Sub.leanfix");
+    fs.writeFileSync(rulesTarget, "theorem bad_bv (x : BitVec 8) : x = x := by\n  bv_decide\n");
+    const rulesScan = runScan({ targets: [rulesTarget] });
+    assert.equal(rulesScan.profile, "kernel");
+    assert.ok(rulesScan.findings.some((f) => f.ruleId === "rule-lean-kernel-submission-gate"));
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
