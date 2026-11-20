@@ -279,3 +279,43 @@ test("lean_server_status supports text and json introspection and explainLeanFai
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+
+test("knowledge graphs require an explicit source and respect disabled archives", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "kuzu-source-test-"));
+  const cwd = process.cwd();
+  const keys = ["LEAN_KUZU_CONFIG_PATH", "KUZU_CONFIG", "LEAN_KUZU_DB_PATH", "KUZU_DB_PATH",
+    "KUZU_ARCHIVE_PATH", "LEAN_KNOWLEDGE_KZ", "PROVER_KNOWLEDGE_KZ"];
+  const previous = new Map(keys.map((key) => [key, process.env[key]]));
+  try {
+    keys.forEach((key) => delete process.env[key]);
+    fs.mkdirSync(path.join(directory, "kuzu"));
+    const archive = path.join(directory, "kuzu", "prover_knowledge.kz");
+    fs.writeFileSync(archive, buildTestZipBuffer([
+      { name: "Book.csv", content: "id,title,total_rows,license,format\n" },
+      { name: "Section.csv", content: "id,book_id,heading,leittext,page\n" },
+      { name: "Concept.csv", content: "id,name,msc2020,domain_theory\nc_galois,GaloisInsertion,06A15,order_theory\n" },
+    ]));
+    const config = path.join(directory, ".kuzu-config.json");
+    const relativeArchive = "kuzu/prover_knowledge.kz";
+    fs.writeFileSync(config, JSON.stringify({ databases: [{ archive_path: relativeArchive, enabled: false }] }));
+    process.chdir(directory);
+    assert.equal(new KuzuKnowledgeGraph().load(), false);
+    assert.equal(new KuzuKnowledgeGraph({ configPath: config }).load(), false);
+    fs.writeFileSync(config, JSON.stringify({ databases: [{ archive_path: relativeArchive, enabled: true }] }));
+    assert.equal(new KuzuKnowledgeGraph().load(), false);
+    assert.equal(new KuzuKnowledgeGraph({ configPath: config }).load(), true);
+    assert.equal(new KuzuKnowledgeGraph({ configPath: config, kzPath: "missing.kz" }).load(), false);
+    process.env.PROVER_KNOWLEDGE_KZ = archive;
+    const graph = new KuzuKnowledgeGraph();
+    assert.equal(graph.searchConcepts("galois")[0].id, "c_galois");
+    assert.deepEqual(graph.search("galois"), []);
+  } finally {
+    process.chdir(cwd);
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
