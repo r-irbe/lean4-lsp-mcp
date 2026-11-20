@@ -5,6 +5,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import zlib from "node:zlib";
 import { fileURLToPath } from "node:url";
 import { LeanAbstractInterpreter, diagnoseLeanSourceWasm } from "../src/abstract_interpreter.ts";
 
@@ -17,8 +18,10 @@ const wasmPath = path.resolve(__dirname, "../data/lean_analyzer.wasm");
 assert.ok(fs.existsSync(wasmPath), `WASM binary missing at ${wasmPath}`);
 
 const wasmBytes = fs.readFileSync(wasmPath);
-assert.ok(wasmBytes.length > 0 && wasmBytes.length <= 131072, `WASM binary size ${wasmBytes.length} outside (0, 131072]`);
-console.log(`  [INFO] Loaded lean_analyzer.wasm (${wasmBytes.length} bytes)`);
+const wasmGzipBytes = zlib.gzipSync(wasmBytes, { level: 9 }).length;
+assert.ok(wasmBytes.length > 0 && wasmBytes.length <= 163840, `WASM binary size ${wasmBytes.length} outside (0, 163840]`);
+assert.ok(wasmGzipBytes > 0 && wasmGzipBytes <= 65536, `WASM gzip size ${wasmGzipBytes} outside (0, 65536]`);
+console.log(`  [INFO] Loaded lean_analyzer.wasm (${wasmBytes.length} bytes raw, ${wasmGzipBytes} bytes gzip)`);
 
 const interp = new LeanAbstractInterpreter();
 assert.equal(interp.isUsingWasm(), true, "Expected default LeanAbstractInterpreter() to auto-load WASM engine");

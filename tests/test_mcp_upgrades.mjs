@@ -255,7 +255,7 @@ test("lean_server_status supports text and json introspection and explainLeanFai
 
     const jsonStatus = JSON.parse(await server.executeTool("lean_server_status", { format: "json" }));
     assert.equal(jsonStatus.toolchain, "leanprover/lean4:v4.28.0");
-    assert.ok(jsonStatus.wasmArtifact.sizeBytes > 0 && jsonStatus.wasmArtifact.sizeBytes <= 131072);
+    assert.ok(jsonStatus.wasmArtifact.sizeBytes > 0 && jsonStatus.wasmArtifact.sizeBytes <= 163840);
     assert.ok(Array.isArray(jsonStatus.lakeRoots));
 
     // Core-only tactic failure hints

@@ -42,6 +42,7 @@ export function parseArgs(argv) {
     json: false,
     minSeverity: "warning",
     profile: "default",
+    profileExplicit: false,
     help: false,
   };
   let positionalOnly = false;
@@ -90,6 +91,7 @@ export function parseArgs(argv) {
     } else if (flag === "--profile") {
       const { value, nextIdx } = takeValue(flag, inlineVal, i);
       opts.profile = value.toLowerCase();
+      opts.profileExplicit = true;
       i = nextIdx;
     } else if (a.startsWith("-")) {
       throw new CliUsageError(`unknown option: ${a}`);
@@ -290,11 +292,20 @@ export function runScan({
   targets,
   minSeverity = "warning",
   config = null,
-  profile = "default",
+  profile = undefined,
 }) {
-  const normalizedProfile = String(profile || "default").toLowerCase();
+  const cfgPath = config ?? findConfig(targets[0] ?? ".");
+  const cfg = cfgPath ? parseToml(fs.readFileSync(cfgPath, "utf-8")) : null;
+  const cfgDir = cfgPath ? path.dirname(cfgPath) : ".";
+  const effectiveProfile =
+    profile !== undefined
+      ? profile
+      : typeof cfg?.profile?.default === "string" && cfg.profile.default.trim().length > 0
+        ? cfg.profile.default.trim()
+        : "default";
+  const normalizedProfile = String(effectiveProfile || "default").toLowerCase();
   if (!VALID_PROFILES.has(normalizedProfile)) {
-    throw new CliUsageError(`unknown profile: ${profile} (expected core|default|kernel|fluid-pde|p2m|all)`);
+    throw new CliUsageError(`unknown profile: ${effectiveProfile} (expected core|default|kernel|fluid-pde|p2m|all)`);
   }
   const dirs =
     rulesDirs ??
@@ -306,9 +317,6 @@ export function runScan({
     rules.push(...r.rules.filter((rule) => ruleMatchesProfile(rule, normalizedProfile)));
     warnings.push(...r.warnings);
   }
-  const cfgPath = config ?? findConfig(targets[0] ?? ".");
-  const cfg = cfgPath ? parseToml(fs.readFileSync(cfgPath, "utf-8")) : null;
-  const cfgDir = cfgPath ? path.dirname(cfgPath) : ".";
   if (cfg) for (const d of cfg.rules?.extra_dirs ?? []) {
     const full = path.resolve(cfgDir, d);
     if (fs.existsSync(full)) {
@@ -428,7 +436,7 @@ function main() {
     targets,
     minSeverity: opts.minSeverity,
     config: opts.config,
-    profile: opts.profile,
+    profile: opts.profileExplicit ? opts.profile : undefined,
   });
   if (opts.json) {
     console.log(JSON.stringify({ profile, ruleCount, fileCount, findings, warnings, compileWarnRules }, null, 2));

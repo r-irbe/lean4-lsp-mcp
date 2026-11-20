@@ -1394,7 +1394,17 @@ export class Lean4IleanIndex {
 
   public getProjectConeIndex(projectRoot: string): { declToRefs: Map<string, Set<string>> } {
     if (this.lastScanTime === 0) this.refresh();
-    return { declToRefs: this.coneRefsByProject.get(path.resolve(projectRoot)) ?? new Map() };
+    else this.refreshIfStale();
+    const resolved = path.resolve(projectRoot);
+    let declToRefs = this.coneRefsByProject.get(resolved);
+    if (!declToRefs) {
+      try {
+        declToRefs = this.coneRefsByProject.get(fs.realpathSync(resolved));
+      } catch {
+        // nonexistent path falls back to empty map
+      }
+    }
+    return { declToRefs: declToRefs ?? new Map() };
   }
   /** constant id "Module.name" -> declarations that reference it. */
   private refToDecls: Map<string, Set<string>> = new Map();
@@ -7844,7 +7854,7 @@ export class McpServer {
             trackCsimp: args.trackCsimp,
             strictZeroProp: args.strictZeroProp,
             permittedAxioms: args.permittedAxioms,
-            filePath: args.filePath ?? (typeof target === "string" && target.endsWith(".lean") ? target : undefined),
+            filePath: args.filePath ?? args.path ?? args.file ?? (typeof target === "string" && target.endsWith(".lean") ? target : undefined),
             format: args.format,
           });
         } else if (action === "proof_clones" || action === "clones") {

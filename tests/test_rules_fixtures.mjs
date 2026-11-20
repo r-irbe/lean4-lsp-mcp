@@ -245,6 +245,32 @@ test("kernel profile activates rule-lean-kernel-submission-gate via runScan and 
       encoding: "utf-8",
     });
     assert.equal(badFlagCli.status, 2);
+
+    // lean-project.toml [profile].default = "kernel" auto-enables kernel profile when --profile is omitted,
+    // while an explicit --profile=default overrides it.
+    const cfgDir = path.join(tmp, "cfg-kernel");
+    fs.mkdirSync(cfgDir, { recursive: true });
+    fs.writeFileSync(path.join(cfgDir, "lean-project.toml"), '[profile]\ndefault = "kernel"\n');
+    const cfgTarget = path.join(cfgDir, "Sub.leanfix");
+    fs.writeFileSync(cfgTarget, "theorem bad_bv (x : BitVec 8) : x = x := by\n  bv_decide\n");
+
+    const autoCfgScan = runScan({ targets: [cfgTarget] });
+    assert.equal(autoCfgScan.profile, "kernel");
+    assert.ok(autoCfgScan.findings.some((f) => f.ruleId === "rule-lean-kernel-submission-gate"));
+
+    const autoCfgCli = spawnSync(process.execPath, [cliPath, "--json", cfgTarget], { encoding: "utf-8" });
+    assert.equal(autoCfgCli.status, 1, autoCfgCli.stderr);
+    const autoCfgJson = JSON.parse(autoCfgCli.stdout);
+    assert.equal(autoCfgJson.profile, "kernel");
+    assert.ok(autoCfgJson.findings.some((f) => f.ruleId === "rule-lean-kernel-submission-gate"));
+
+    const overrideCli = spawnSync(process.execPath, [cliPath, "--profile=default", "--json", cfgTarget], {
+      encoding: "utf-8",
+    });
+    assert.equal(overrideCli.status, 0, overrideCli.stderr);
+    const overrideJson = JSON.parse(overrideCli.stdout);
+    assert.equal(overrideJson.profile, "default");
+    assert.equal(overrideJson.findings.length, 0);
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
