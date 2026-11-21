@@ -246,7 +246,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
             "proof_steps",
             "workspace_symbols",
           ],
-          description: "Search domain and engine (default: code / local declaration search)",
+          description: "Search domain (default: code). graph searches an explicit Kuzu archive; concordance looks up cross-prover mappings.",
         },
         file: { type: "string", description: "Optional file path filter (or anchor file for source='similar_proofs')" },
         filePath: { type: "string", description: "Synonym for file" },
@@ -255,7 +255,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
           enum: ["summary", "full"],
           description: "Result granularity: 'summary' (compact name + signature + module) or 'full' (default: full)",
         },
-        limit: { type: "integer", description: "Max results to return (default: 10)" },
+        limit: { type: "integer", description: "Max results (default: 10). For graph this applies per result type, up to 50." },
         prover: { type: "string", description: "Optional target prover filter for ontology / concordance" },
         source_prover: { type: "string", description: "Optional source prover filter for concordance" },
         target_prover: { type: "string", description: "Optional target prover filter for concordance" },
@@ -282,7 +282,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         },
         symbol: { type: "string", description: "Lean declaration name (e.g. EulerPacketPiola.matrixAntisym_congruence)" },
         filePath: { type: "string", description: "Path to .lean file (relative or absolute)" },
-        sectionId: { type: "string", description: "Section ID for graph_neighborhood (e.g. from Kuzu graph)" },
+        sectionId: { type: "string", description: "Section ID from lean_search source=graph. Returns the section and up to two neighbors on each side in its book." },
         formalizationDir: { type: "string", description: "Root formalization directory for status audit" },
         blueprintDir: { type: "string", description: "Root blueprint directory for status audit" },
         outputPath: { type: "string", description: "Optional output file path for generated scaffold or zettel" },
@@ -5366,7 +5366,7 @@ export class McpServer {
     this.ileanIndex = new Lean4IleanIndex(projectRoot, this.leanContext);
     this.ileanIndex.refresh();
     this.lakeManager = new LakeServerManager(projectRoot, this.leanContext, options);
-    this.kuzuGraph = new KuzuKnowledgeGraph(undefined, { workspaceRoot: projectRoot });
+    this.kuzuGraph = new KuzuKnowledgeGraph();
   }
 
   /** Atomically re-bind admitted context across both live LSP sessions and the .ilean index (NavigationLifecycle ReAdmitContext). */
@@ -5412,6 +5412,17 @@ export class McpServer {
       throw new Error("Invalid graph query file: expected a regular .lean source");
     }
     return real;
+  }
+
+  private graphAvailabilityMessage(): string | undefined {
+    const status = this.kuzuGraph.archiveStatus();
+    if (status === "unconfigured") {
+      return "No Kuzu archive configured. Set PROVER_KNOWLEDGE_KZ or KUZU_ARCHIVE_PATH before starting the server.";
+    }
+    if (status === "unavailable") {
+      return "The configured Kuzu archive could not be loaded. Check that it is readable and contains Book.csv and Section.csv.";
+    }
+    return undefined;
   }
 
   public getKuzuGraph(): KuzuKnowledgeGraph {
@@ -6180,11 +6191,21 @@ export class McpServer {
         } else if (source === "symbol") {
           return formatWithDetail(await this.executeTool("lean_lookup_symbol", { symbol: query }));
         } else if (source === "graph") {
-          const sections = this.kuzuGraph.search(String(query), limit);
-          const concepts = this.kuzuGraph.searchConcepts(String(query), limit);
-          const zettels = this.kuzuGraph.searchZettels(String(query), limit);
+          const unavailable = this.graphAvailabilityMessage();
+          if (unavailable) return unavailable;
+          const graphLimit = clampInt(limit, 1, 50, 10);
+          const sections = this.kuzuGraph.search(String(query), graphLimit);
+          const concepts = this.kuzuGraph.searchConcepts(String(query), graphLimit);
+          const zettels = this.kuzuGraph.searchZettels(String(query), graphLimit);
           if (sections.length === 0 && concepts.length === 0 && zettels.length === 0) {
-            return "No matching sections found in Kuzu knowledge graph.";
+            return "No matching sections, concepts or zettels in the configured Kuzu archive.";
+          }
+          if (detail === "summary") {
+            return [
+              ...sections.map(r => `Section: ${r.sectionId} | ${r.sectionTitle}`),
+              ...concepts.map(c => `Concept: ${c.id} | ${c.name}`),
+              ...zettels.map(z => `Zettel: ${z.id} | ${z.title}`),
+            ].join("\n");
           }
           const blocks: string[] = [];
           for (const r of sections) {
@@ -7836,6 +7857,8 @@ export class McpServer {
         } else if (action === "graph_neighborhood") {
           const sectionId = args.sectionId || args.symbol || args.query;
           if (!sectionId) throw new Error("Missing required argument: 'sectionId' or 'symbol'");
+          const unavailable = this.graphAvailabilityMessage();
+          if (unavailable) return unavailable;
           const n = this.kuzuGraph.getNeighborhood(sectionId);
           if (!n.section) return `Section '${sectionId}' not found in Kuzu knowledge graph.`;
           return [
