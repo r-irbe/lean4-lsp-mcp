@@ -280,6 +280,10 @@ test("kernel profile activates rule-lean-kernel-submission-gate via runScan and 
     const rulesScan = runScan({ targets: [rulesTarget] });
     assert.equal(rulesScan.profile, "kernel");
     assert.ok(rulesScan.findings.some((f) => f.ruleId === "rule-lean-kernel-submission-gate"));
+
+    const sairScan = runScan({ targets: [rulesTarget], profile: "sair" });
+    assert.equal(sairScan.profile, "sair");
+    assert.ok(sairScan.findings.some((f) => f.ruleId === "rule-lean-kernel-submission-gate"));
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

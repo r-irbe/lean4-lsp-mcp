@@ -23,10 +23,10 @@ import yaml from "js-yaml";
 import { parseToml, findConfig, checkArchitecture } from "./lean-architecture.mjs";
 
 const SEVERITY_ORDER = { hint: 0, info: 1, warning: 2, error: 3 };
-const VALID_PROFILES = new Set(["core", "default", "kernel", "fluid-pde", "p2m", "all"]);
+const VALID_PROFILES = new Set(["core", "default", "kernel", "sair", "fluid-pde", "p2m", "all"]);
 const DEFAULT_RULES_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "rules");
 const USAGE_LINE =
-  "usage: lean-rules [files-or-dirs...] [--profile core|default|kernel|fluid-pde|p2m|all] [--rules <dir>]... [--config lean-project.toml] [--json] [--min-severity warning|error]";
+  "usage: lean-rules [files-or-dirs...] [--profile core|default|kernel|sair|fluid-pde|p2m|all] [--rules <dir>]... [--config lean-project.toml] [--json] [--min-severity warning|error]";
 
 export class CliUsageError extends Error {
   constructor(message) {
@@ -103,7 +103,7 @@ export function parseArgs(argv) {
     throw new CliUsageError(`unknown severity: ${opts.minSeverity}`);
   }
   if (!VALID_PROFILES.has(opts.profile)) {
-    throw new CliUsageError(`unknown profile: ${opts.profile} (expected core|default|kernel|fluid-pde|p2m|all)`);
+    throw new CliUsageError(`unknown profile: ${opts.profile} (expected core|default|kernel|sair|fluid-pde|p2m|all)`);
   }
   return opts;
 }
@@ -283,7 +283,9 @@ function ruleMatchesProfile(rule, profile) {
   const eff = profile === "core" ? "default" : profile;
   if (!Array.isArray(rule.profiles) || rule.profiles.length === 0) return true;
   if (eff === "default") return false;
-  return rule.profiles.map((p) => String(p).toLowerCase()).includes(eff);
+  const profiles = rule.profiles.map((p) => String(p).toLowerCase());
+  if (eff === "sair") return profiles.includes("sair") || profiles.includes("kernel");
+  return profiles.includes(eff);
 }
 
 export function runScan({
@@ -309,7 +311,7 @@ export function runScan({
     profile !== undefined && profile !== null ? profile : (rulesCfgProfile ?? defaultCfgProfile ?? "default");
   const normalizedProfile = String(effectiveProfile || "default").toLowerCase();
   if (!VALID_PROFILES.has(normalizedProfile)) {
-    throw new CliUsageError(`unknown profile: ${effectiveProfile} (expected core|default|kernel|fluid-pde|p2m|all)`);
+    throw new CliUsageError(`unknown profile: ${effectiveProfile} (expected core|default|kernel|sair|fluid-pde|p2m|all)`);
   }
   const dirs =
     rulesDirs ??

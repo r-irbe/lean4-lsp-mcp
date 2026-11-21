@@ -2506,6 +2506,21 @@ export function analyzeAltProofGoalAndBlock(
   };
 }
 
+export type DiagnosticEvidenceTier = "sound_static" | "heuristic_advisory";
+
+export function classifyWasmEvidenceTier(code: string): DiagnosticEvidenceTier {
+  const upper = String(code || "").toUpperCase();
+  if (
+    upper === "SOUND-01" ||
+    upper === "SOUND-02" ||
+    upper === "SOUND-03" ||
+    upper === "SOUND-04"
+  ) {
+    return "sound_static";
+  }
+  return "heuristic_advisory";
+}
+
 export interface WasmSourceDiagnostic {
   code: string;
   severity: number;
@@ -2513,6 +2528,7 @@ export interface WasmSourceDiagnostic {
   operator: string;
   summary: string;
   hint: string;
+  evidenceTier: DiagnosticEvidenceTier;
   altproofRoute?: string;
 }
 
@@ -2577,6 +2593,7 @@ export function diagnoseLeanSourceWasm(
       operator,
       summary,
       hint,
+      evidenceTier: classifyWasmEvidenceTier(code),
       ...(altproofRoute ? { altproofRoute } : {}),
     });
   }

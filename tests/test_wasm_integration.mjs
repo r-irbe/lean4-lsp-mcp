@@ -154,6 +154,9 @@ const kernelDiags = diagnoseLeanSourceWasm(
   1
 );
 assert.ok(kernelDiags.some((d) => d.code === "KERNEL-LAW-03"), "Expected KERNEL-LAW-03 for let inside by-block followed by top-level def");
+assert.ok(fullBufDiags.every((d) => d.evidenceTier === "sound_static" || d.evidenceTier === "heuristic_advisory"), "Expected evidenceTier on every WasmSourceDiagnostic");
+const soundDiag = diagnoseLeanSourceWasm("theorem sub_thm (a b : Nat) : a - b + b = a := by omega\n", 1).find((d) => d.code === "SOUND-01");
+assert.equal(soundDiag?.evidenceTier, "sound_static");
 console.log("  [PASS] WASM Full-Buffer UTF-8 Source Diagnostics (lean_analyzer_diagnose_utf8)");
 
 // Test KnownBits64 transfer function in WASM

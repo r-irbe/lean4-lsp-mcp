@@ -103,6 +103,22 @@ test("lean_axiom_closure enforces kernel axiom ceiling [propext, Classical.choic
     const resCustom = server.verifyKernelAxioms("MyTheorem", customOut);
     assert.match(resCustom, /\[KERNEL AXIOM GATE REJECTED\]/);
     assert.match(resCustom, /MyCustomAxiom/);
+
+    // 6. timeoutMs validation/clamping on lean_axiom_closure (1000..300000)
+    let capturedMax = null;
+    let capturedTimeoutArg = null;
+    server.runLeanStdin = async (_code, _ctx, timeoutArg, maxTimeout) => {
+      capturedTimeoutArg = timeoutArg;
+      capturedMax = maxTimeout;
+      return "'Demo.thm' depends on axioms: [propext]";
+    };
+    const closed = await server.executeTool("lean_axiom_closure", {
+      symbol: "Demo.thm",
+      timeoutMs: 240000,
+    });
+    assert.equal(capturedTimeoutArg, 240000);
+    assert.equal(capturedMax, 300000);
+    assert.match(closed, /propext/);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }

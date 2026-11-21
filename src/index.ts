@@ -318,6 +318,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
         transitive: { type: "boolean", description: "Whether to compute full transitive closure (default: false)" },
         maxDepth: { type: "integer", description: "Max traversal depth (default: 10)" },
         format: { type: "string", enum: ["markdown", "json", "summary", "mermaid", "dot"], description: "Output format (default: markdown)" },
+        profile: { type: "string", enum: ["default", "kernel", "sair"], description: "Diagnostic profile for proof_fidelity / kernel_audit (default: kernel)" },
       },
       required: ["target"],
     },
@@ -431,6 +432,7 @@ export const TOOL_DEFINITIONS: McpToolDefinition[] = [
       properties: {
         symbol: { type: "string", description: "Declaration name to check (bare or fully qualified)" },
         module: { type: "string", description: "Module to import first (the declaring module or a root re-export module), e.g. MyProject" },
+        timeoutMs: { type: "integer", description: "Execution timeout in milliseconds (default: 30000, clamped to 1000..300000)" },
       },
       required: ["symbol"],
     },
@@ -3539,6 +3541,13 @@ export class FileWorkerManager {
     parsed: any
   ): void {
     if (this.sessions.get(session.leanRoot) !== session) return;
+    const trackedFileForUri = (uri: string) => {
+      try {
+        return session.openFiles.get(fileURLToPath(uri));
+      } catch {
+        return undefined;
+      }
+    };
     if (parsed?.id !== undefined && session.pendingRequests.has(parsed.id)) {
       const handler = session.pendingRequests.get(parsed.id)!;
       session.pendingRequests.delete(parsed.id);
@@ -3555,6 +3564,11 @@ export class FileWorkerManager {
       // lean_diagnostics tool serves this stash on demand.
       const du = String(parsed.params?.uri ?? "");
       if (du) {
+        const trackedFile = trackedFileForUri(du);
+        const incomingVersion = parsed.params?.version;
+        // A delayed notification for an older open-document version must not
+        // overwrite diagnostics for the version currently requested by tools.
+        if (trackedFile && typeof incomingVersion === "number" && incomingVersion !== trackedFile.version) return;
         session.diagnostics.set(du, {
           version: parsed.params?.version ?? null,
           diags: Array.isArray(parsed.params?.diagnostics) ? parsed.params.diagnostics : [],
@@ -3566,6 +3580,9 @@ export class FileWorkerManager {
     if (parsed?.method === "$/lean/fileProgress") {
       const pu = String(parsed.params?.textDocument?.uri ?? "");
       if (pu) {
+        const trackedFile = trackedFileForUri(pu);
+        const incomingVersion = parsed.params?.textDocument?.version;
+        if (trackedFile && typeof incomingVersion === "number" && incomingVersion !== trackedFile.version) return;
         if (!session.progress) session.progress = new Map();
         session.progress.set(pu, {
           pending: Array.isArray(parsed.params?.processing) ? parsed.params.processing.length : 0,
@@ -4087,19 +4104,45 @@ export class FileWorkerManager {
       const srcText = fs.readFileSync(absPath, "utf-8");
       const srcLines = srcText.split(/\r?\n/);
       const session = await this.ensureSession(leanRoot);
+      const uri = pathToFileURL(absPath).href;
+      const priorFile = session.openFiles.get(absPath);
+      const priorEntry = session.diagnostics.get(uri);
+      const priorProgress = session.progress?.get(uri);
+      const sourceFingerprint = createHash("sha256").update(srcText).digest("hex").slice(0, 16);
+      const sourceWasAlreadyAnalyzed =
+        priorFile?.bytes === Buffer.byteLength(srcText, "utf-8") &&
+        priorFile.hash === sourceFingerprint &&
+        priorEntry !== undefined &&
+        priorProgress?.pending === 0;
       const startedAt = Date.now();
-      const uri = this.syncDocument(session, absPath);
+      this.syncDocument(session, absPath);
+      const syncedFile = session.openFiles.get(absPath);
+      const canReuseCompletedAnalysis = sourceWasAlreadyAnalyzed &&
+        syncedFile?.bytes === Buffer.byteLength(srcText, "utf-8") &&
+        syncedFile.hash === sourceFingerprint;
       const deadline = startedAt + Math.max(250, maxWaitMs);
       let entry = session.diagnostics.get(uri);
       const currentSession = () => this.sessions.get(leanRoot) === session;
+      const currentFileVersion = () => session.openFiles.get(absPath)?.version;
+      const versionIsCurrent = (version: number | null | undefined) => {
+        const current = currentFileVersion();
+        if (current === undefined) return false;
+        // If the LSP omits versions, tolerate it only for the initial didOpen.
+        // After an edit, unversioned progress cannot safely certify this source.
+        if (version == null) return current === 1;
+        return version === current;
+      };
       const analysisComplete = () => {
+        if (canReuseCompletedAnalysis) return true;
         const progress = session.progress?.get(uri);
         return (
           progress !== undefined &&
           progress.ts >= startedAt &&
           progress.pending === 0 &&
+          versionIsCurrent(progress.version) &&
           entry !== undefined &&
-          entry.ts >= startedAt
+          entry.ts >= startedAt &&
+          versionIsCurrent(entry.version)
         );
       };
       while (currentSession() && !analysisComplete() && Date.now() < deadline) {
@@ -5830,7 +5873,7 @@ export class McpServer {
           throw new Error("Invalid argument: 'module' (expected a Lean module name without whitespace/semicolons)");
         }
         const code = (module ? `import ${module}\n\n` : "") + `#print axioms ${symbol}\n`;
-        const out = await this.runLeanStdin(code);
+        const out = await this.runLeanStdin(code, this.leanContext, args.timeoutMs, 300000);
         if (out.startsWith("Error:")) return out;
         return out.trim() || `${symbol}: no axiom output (is the symbol in scope? pass the declaring module via 'module')`;
       }
@@ -7113,6 +7156,8 @@ export class McpServer {
         } else if (stat.isFile() && absTarget.endsWith(".lean")) {
           filesToScan.push(absTarget);
         }
+        const rawProfile = String(args.profile || "kernel").toLowerCase();
+        const profile = rawProfile === "default" ? "default" : rawProfile === "sair" ? "sair" : "kernel";
         const allDiags: Array<ProofFidelityDiagnostic & { file: string }> = [];
         const allWasmDiags: Array<any> = [];
         const allKernelDiags: Array<any> = [];
@@ -7121,7 +7166,7 @@ export class McpServer {
         for (const file of filesToScan) {
           const relPath = path.relative(this.projectRoot, file).replace(/\\/g, "/");
           const content = fs.readFileSync(file, "utf-8");
-          const rep = auditLeanProofFidelity(content);
+          const rep = auditLeanProofFidelity(content, { profile });
           totalTheorems += rep.theoremsScanned;
           totalBoolDefs += rep.boolDefsScanned;
           for (const d of rep.diagnostics) {
@@ -7138,6 +7183,7 @@ export class McpServer {
         if (format === "json") {
           return JSON.stringify({
             target: targetPath,
+            profile,
             modulesScanned: filesToScan.length,
             theoremsScanned: totalTheorems,
             boolDefsScanned: totalBoolDefs,
@@ -7149,6 +7195,7 @@ export class McpServer {
         }
         const out = [
           `# Lean Proof Fidelity Audit: ${targetPath}`,
+          `- **Profile**: \`${profile}\``,
           `- **Status**: ${allDiags.length === 0 ? "PASS (Zero Specification/Vacuity Defects)" : `WARN (${allDiags.length} Defect(s) Detected)`}`,
           `- **Scanned Modules**: ${filesToScan.length}`,
           `- **Scanned Theorems**: ${totalTheorems}`,
@@ -7875,6 +7922,7 @@ export class McpServer {
         } else if (action === "proof_fidelity" || action === "fidelity_audit" || action === "kernel_audit") {
           return await this.executeTool("lean_proof_fidelity_audit", {
             targetPath: target,
+            profile: args.profile,
             format: args.format || (action === "kernel_audit" ? "json" : undefined),
           });
         } else {
@@ -8352,7 +8400,8 @@ export class McpServer {
   private async runLeanStdin(
     code: string,
     context: LeanContext | undefined = this.leanContext,
-    timeoutMsArg?: unknown
+    timeoutMsArg?: unknown,
+    maxTimeoutMs: number = 120000
   ): Promise<string> {
     const invocation = planLeanInvocation(this.projectRoot, ["--stdin"], context);
     const unavailable = leanContextUnavailable(invocation);
@@ -8360,7 +8409,8 @@ export class McpServer {
     const rawDefaultTimeout = Number(process.env.LEAN_RUN_CODE_TIMEOUT_MS);
     const defaultTimeoutMs =
       Number.isInteger(rawDefaultTimeout) && rawDefaultTimeout >= 1000 ? rawDefaultTimeout : 30000;
-    const timeoutMs = clampInt(timeoutMsArg, 1000, 120000, defaultTimeoutMs);
+    const ceiling = Math.max(1000, maxTimeoutMs);
+    const timeoutMs = clampInt(timeoutMsArg, 1000, ceiling, defaultTimeoutMs);
 
     if (invocation.via === "explicit" || Boolean((execFileSync as any)?.mock)) {
       try {

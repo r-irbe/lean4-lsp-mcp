@@ -174,5 +174,88 @@ const diags = (n) =>
   console.log("  - completed clean analysis: PASS");
 }
 
+// 4. Repeating diagnostics for identical, already-completed source reuses the
+// current result. syncDocument deliberately emits no didChange for unchanged
+// content, so waiting for progress newer than this second request would stall.
+{
+  const { manager, session, send } = makeManager();
+  const file = makeFile("RepeatedClean.lean", "theorem t : 1 = 1 := by rfl\n");
+  setTimeout(() => {
+    send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri: uriOf(file), version: 1, diagnostics: [] } });
+    send({ jsonrpc: "2.0", method: "$/lean/fileProgress", params: { textDocument: { uri: uriOf(file), version: 1 }, processing: [] } });
+  }, 20);
+
+  session.child.stdout.on("data", (chunk) => {
+    session.buffer = Buffer.concat([session.buffer, chunk]);
+    while (true) {
+      const idx = session.buffer.indexOf("\r\n\r\n");
+      if (idx === -1) break;
+      const len = parseInt(/Content-Length:\s*(\d+)/i.exec(session.buffer.subarray(0, idx).toString("utf-8"))[1], 10);
+      if (session.buffer.length < idx + 4 + len) break;
+      const body = session.buffer.subarray(idx + 4, idx + 4 + len).toString("utf-8");
+      session.buffer = session.buffer.subarray(idx + 4 + len);
+      manager.handleServerMessage(session, JSON.parse(body));
+    }
+  });
+
+  const first = await manager.getDiagnostics(file, 1000);
+  assert.ok(first.includes("analysis completed, 0 findings"), `first completed result returned, got: ${first}`);
+  const started = Date.now();
+  const second = await manager.getDiagnostics(file, 1000);
+  const elapsed = Date.now() - started;
+  assert.ok(second.includes("analysis completed, 0 findings"), `cached completed result remains clean, got: ${second}`);
+  assert.ok(elapsed < 800, `unchanged completed analysis should not wait for nonexistent fresh progress, elapsed ${elapsed}ms`);
+  manager.dispose();
+  console.log("  - unchanged completed diagnostics reuse: PASS");
+}
+
+// 5. A changed document must not be declared clean from a delayed empty
+// diagnostics/progress pair for its previous LSP version.
+{
+  const { manager, session, send } = makeManager();
+  const file = makeFile("ChangedDuringSession.lean", "theorem t : 1 = 1 := by rfl\n");
+  setTimeout(() => {
+    send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri: uriOf(file), version: 1, diagnostics: [] } });
+    send({ jsonrpc: "2.0", method: "$/lean/fileProgress", params: { textDocument: { uri: uriOf(file), version: 1 }, processing: [] } });
+  }, 20);
+
+  session.child.stdout.on("data", (chunk) => {
+    session.buffer = Buffer.concat([session.buffer, chunk]);
+    while (true) {
+      const idx = session.buffer.indexOf("\r\n\r\n");
+      if (idx === -1) break;
+      const len = parseInt(/Content-Length:\s*(\d+)/i.exec(session.buffer.subarray(0, idx).toString("utf-8"))[1], 10);
+      if (session.buffer.length < idx + 4 + len) break;
+      const body = session.buffer.subarray(idx + 4, idx + 4 + len).toString("utf-8");
+      session.buffer = session.buffer.subarray(idx + 4 + len);
+      manager.handleServerMessage(session, JSON.parse(body));
+    }
+  });
+
+  const first = await manager.getDiagnostics(file, 1000);
+  assert.ok(first.includes("analysis completed, 0 findings"), `version 1 starts clean, got: ${first}`);
+  fs.writeFileSync(file, "theorem t : 1 = 2 := by rfl -- changed source\n");
+  setTimeout(() => {
+    // Stale version-1 and unversioned events must not supersede or certify v2.
+    send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri: uriOf(file), version: 1, diagnostics: [] } });
+    send({ jsonrpc: "2.0", method: "$/lean/fileProgress", params: { textDocument: { uri: uriOf(file), version: 1 }, processing: [] } });
+    send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri: uriOf(file), diagnostics: [] } });
+    send({ jsonrpc: "2.0", method: "$/lean/fileProgress", params: { textDocument: { uri: uriOf(file) }, processing: [] } });
+  }, 20);
+  setTimeout(() => {
+    send({ jsonrpc: "2.0", method: "textDocument/publishDiagnostics", params: { uri: uriOf(file), version: 2, diagnostics: diags(1) } });
+    send({ jsonrpc: "2.0", method: "$/lean/fileProgress", params: { textDocument: { uri: uriOf(file), version: 2 }, processing: [] } });
+  }, 350);
+  const started = Date.now();
+  const changed = await manager.getDiagnostics(file, 2000);
+  const elapsed = Date.now() - started;
+  assert.equal(session.openFiles.get(file).version, 2, "changed source increments the tracked LSP version");
+  assert.ok(elapsed >= 300, `stale/unknown-version events did not complete the request, elapsed ${elapsed}ms`);
+  assert.ok(changed.includes("1 diagnostic(s)"), `version-2 diagnostic is returned, got: ${changed}`);
+  assert.ok(!changed.includes("analysis completed, 0 findings"), `stale clean result is not returned, got: ${changed}`);
+  manager.dispose();
+  console.log("  - stale document-version notifications ignored: PASS");
+}
+
 fs.rmSync(root, { recursive: true, force: true });
 console.log("=== lean_diagnostics readiness suite: ALL PASS ===");

@@ -5,7 +5,14 @@
 // 4 soundness classes (`SOUND-01..04`), and 37 `KERNEL-LAW-*` diagnostics are reported from a single source.
 // Scoped Unicode policy (INV-001; typographic-free by default).
 
-import { LeanAbstractInterpreter, type WasmSourceDiagnostic } from "./abstract_interpreter.ts";
+import {
+  LeanAbstractInterpreter,
+  classifyWasmEvidenceTier,
+  type DiagnosticEvidenceTier,
+  type WasmSourceDiagnostic,
+} from "./abstract_interpreter.ts";
+
+export type AuditProfile = "default" | "kernel" | "sair";
 
 export type ProofFidelityDefectKind =
   | "HYPOTHESIS_ECHO"
@@ -27,9 +34,11 @@ export interface ProofFidelityDiagnostic {
   theoremName: string;
   summary: string;
   remediationHint: string;
+  evidenceTier?: DiagnosticEvidenceTier;
 }
 
 export interface ProofFidelityAuditReport {
+  profile: AuditProfile;
   theoremsScanned: number;
   boolDefsScanned: number;
   diagnostics: ProofFidelityDiagnostic[];
@@ -573,7 +582,13 @@ function isValueType(typeStr: string): boolean {
 /**
  * Audit a Lean 4 source file for all 7 specification and vacuity defect classes.
  */
-export function auditLeanProofFidelity(sourceText: string): ProofFidelityAuditReport {
+export function auditLeanProofFidelity(
+  sourceText: string,
+  options?: { profile?: AuditProfile }
+): ProofFidelityAuditReport {
+  const rawProfile = String(options?.profile ?? "kernel").toLowerCase();
+  const profile: AuditProfile =
+    rawProfile === "default" ? "default" : rawProfile === "sair" ? "sair" : "kernel";
   const diagnostics: ProofFidelityDiagnostic[] = [];
   const countsByKind: Record<ProofFidelityDefectKind, number> = {
     HYPOTHESIS_ECHO: 0,
@@ -589,7 +604,11 @@ export function auditLeanProofFidelity(sourceText: string): ProofFidelityAuditRe
   };
 
   const pushDiag = (d: ProofFidelityDiagnostic) => {
-    diagnostics.push(d);
+    const withTier: ProofFidelityDiagnostic = {
+      ...d,
+      evidenceTier: d.evidenceTier ?? classifyWasmEvidenceTier(d.code ?? d.kind),
+    };
+    diagnostics.push(withTier);
     countsByKind[d.kind] = (countsByKind[d.kind] || 0) + 1;
   };
 
@@ -1040,10 +1059,14 @@ export function auditLeanProofFidelity(sourceText: string): ProofFidelityAuditRe
 
   // Delegate to WASM single-source engine (`lean_analyzer.wasm`) for 37 kernel laws and soundness certificates
   const interp = new LeanAbstractInterpreter();
-  const wasmDiagnostics = interp.diagnoseSourceText(sourceText, 1);
-  const kernelDiagnostics = wasmDiagnostics.filter((d) => d.code.startsWith("KERNEL-LAW-"));
+  const profileFlag = profile === "default" ? 0 : 1;
+  const wasmDiagnostics = interp.diagnoseSourceText(sourceText, profileFlag);
+  const kernelDiagnostics = wasmDiagnostics.filter(
+    (d) => d.code.startsWith("KERNEL-LAW-") || d.code.startsWith("SAIR-LAW-")
+  );
 
   return {
+    profile,
     theoremsScanned: theoremBlocks.length,
     boolDefsScanned: boolDefs.size,
     diagnostics,
